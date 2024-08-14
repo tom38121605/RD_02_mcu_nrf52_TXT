@@ -1,0 +1,46 @@
+
+
+#define DEFAULT_CONFIG \
+{\
+        .dwt_config.chan            = DEFAULT_CHANNEL, \
+        .dwt_config.txPreambLength  = DEFAULT_TXPREAMBLENGTH, \
+        .dwt_config.rxPAC           = DEFAULT_RXPAC, \
+        .dwt_config.txCode          = DEFAULT_PCODE, \
+        .dwt_config.rxCode          = DEFAULT_PCODE, \
+        .dwt_config.sfdType         = DEFAULT_SFD, \
+        .dwt_config.dataRate        = DEFAULT_DATARATE, \
+        .dwt_config.phrMode         = DEFAULT_PHRMODE, \
+        .dwt_config.phrRate         = DEFAULT_PHRRATE, \
+        .dwt_config.sfdTO           = DEFAULT_SFDTO, \
+        .dwt_config.stsMode         = DEFAULT_STS_MODE, \
+        .dwt_config.stsLength       = DEFAULT_STS_LENGTH, \
+        .dwt_config.pdoaMode        = DEFAULT_PDOA_MODE, \
+        .dw_dev = {\
+                .xtaltrim = 0, \
+                .trx_ref_config = {\
+                        {\
+                                .ref_tx_pwr = DEFAULT_TXPWR_CH5, .ref_pgcnt = 0, .ref_pgdly = DEFAULT_PGDLY_CH5, \
+                                .rxa_ant_delay = (DEFAULT_ANTD/2), .txa_ant_delay = (DEFAULT_ANTD/2), .rxb_ant_delay = (DEFAULT_ANTD/2), \
+                        },\
+                        {\
+                                .ref_tx_pwr = DEFAULT_TXPWR_CH9, .ref_pgcnt = 0, .ref_pgdly = DEFAULT_PGDLY_CH9, \
+                                .rxa_ant_delay = (DEFAULT_ANTD/2), .txa_ant_delay = (DEFAULT_ANTD/2), .rxb_ant_delay = (DEFAULT_ANTD/2), \
+                        }\
+                },\
+                .tx_config = { \
+                        {.PGdly = DEFAULT_PGDLY_CH5, .power = DEFAULT_TXPWR_CH5, .PGcount = 0,}, \
+                        {.PGdly = DEFAULT_PGDLY_CH9, .power = DEFAULT_TXPWR_CH9, .PGcount = 0,} \
+                }\
+        }\
+}
+
+
+
+
+
+
+
+
+
+
+

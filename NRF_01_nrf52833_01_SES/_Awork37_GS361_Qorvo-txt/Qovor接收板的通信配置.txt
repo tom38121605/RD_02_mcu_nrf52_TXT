@@ -1,0 +1,121 @@
+
+
+=================nrf52833====软件烧录====================
+
+硬件连接：
+
+1. 先JlinkOB烧录器连电脑，凸头朝外（地）连接
+2. 再装电池 
+3. 装上跳线帽，选择电池供电
+
+软件操作;
+
+1. 运行Jlite V7.58b
+2. 芯片选择NRF52833_xxaa
+3. 选择hex文件
+4. 烧录
+
+
+
+=================绿板测试====DecaRangin====================
+
+Channel： 5
+pramble code： 9
+preamble len：  128
+pulse repetition Frequency： 64Mhz
+Data Rate：    6.81Mbits
+Non Std SFD:  yes
+
+
+
+===================白板测试====tera term========================
+
+
+硬件接线：
+
+1.  水晶头网口端的usb接电脑
+
+
+
+
+
+-----------------------------------Tera term设置：------------------------------------
+
+Tera term设置： CH9
+
+1. 白板通过usb线连电脑
+2. 打开Tera term串口助手
+3. 自动跳出的界面，点选下面的serial单选项，并在port的地方选择COM端口
+4. 菜单setup\serial port... , 设置波特率115200
+5. file\log... , 点选 append， 点选timestamp，并输入要保存的log文件名
+6. 菜单 setup \ termiral ， 选中 local echo  （如果可以在屏幕上输入字符并看到，则忽略这一步）
+7. 在Tera的屏幕上输入stop，可以看到返回 ok
+8. 输入uwbcfg 9 64 8 9 9 1 6810 0 0 65 0 64 0， 设置成功后会返回ok
+9. 输入 “listener 1” ，返回started，开启通讯
+10.  给Q-tag板上电，则可以看到不断收到的数据，并自动保存到什么的log文件里
+
+串口波特率： 115200
+
+
+
+
+
+-----------------------------------CH5设置------------------------------------------------------
+
+stop＋回车         //会返回ok
+uwbcfg＋回车     //会返回一大串配置参数 
+
+
+ uwbcfg 5 128 8 9 9 1 6810 0 0 129 0 256 0
+
+
+ 
+listener
+
+
+
+--------------------------------- CH9设置--------------------------------------------------------
+
+
+stop
+uwbcfg 9 64 8 9 9 1 6810 0 0 65 0 64 0
+listener 1
+
+
+
+
+================
+
+printcfg
+
+setcfg ch:5 plen:128 pac:8 txcode:9 rxcode:9 sfd:4z8 dr:6M8 phr:std phrr:std sfdto:65 sts:0x0 stslen:64 pdoa:0x0 pgdly:0x34 txpow:0xfdfdfdfd pgcnt:0x0 rxadly:16385 txadly:16385 dualrx:0x0 rxbm:0
+
+
+=================
+
+ch:5          //same	
+plen:64     //128
+pac:8        //-- 
+txcode:9   //seems same
+rxcode:9    //seems same
+sfd:4z8 
+dr:6M8          //same	
+phr:std 
+phrr:std 
+sfdto:65 
+sts:0x0     //seems same
+stslen:64 
+pdoa:0x0 
+pgdly:0x34 
+txpow:0xfdfdfdfd 
+pgcnt:0x0 
+rxadly:16385 
+txadly:16385 
+dualrx:0x0 
+rxbm:0
+
+
+
+
+
+

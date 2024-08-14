@@ -1,0 +1,176 @@
+  
+参考程序版本： 59bytes_gpio_20210820－ch9
+
+
+
+flow：   //main --> blink_app --> pre_init   --> port_timer_blink_cfg(1000) --> blink_radio_init --> blink 
+
+            //blink_radio_init --> BOOST上电 --> port_spi_set_fastrate --> port_reset_dw1000 --> dwt_checkidlerc --> dwt_initialise  --> dwt_check_dev_id
+           //                       --> dwt_configure --> dwt_configuretxrf --> dwt_configuresleep --> dwt_entersleep
+
+            //blink --> port_wakeup_dw3000  --> dwt_writetxdata --> dwt_starttx --> dwt_read32bitreg(SYS_STATUS_ID) --> dwt_entersleep -->  -->  --> 
+
+
+======================================
+
+ 
+main(void)
+
+    blink_app(); 
+
+------------------------
+
+blink_app( )
+
+    //pre_init(); 
+           PORT_CHARGE_EN(1);  
+
+           //blink_radio_1st_sleep(void)
+                port_spi_set_fastrate();
+                port_reset_dw1000(); 
+                port_timer_start(&timer1); 
+
+               //确认DW3000在IDLE RC模式
+               //while (!dwt_checkidlerc());   // Need to make sure DW IC is in IDLE_RC before proceeding  
+                   reg = ((uint32)dwt_read16bitoffsetreg(SYS_STATUS_ID, 2) << 16);
+                   return ( (reg & (SYS_STATUS_RCINIT_BIT_MASK)) == (SYS_STATUS_RCINIT_BIT_MASK));
+
+              //DW3000数据传输的初始化
+              //dwt_initialise(0)  
+                  dwt_check_dev_id();     //读取设备id
+                  pdw3000local=XXX...;
+
+    
+    while (1)
+
+           case FSM_CHARGE:
+
+                rc = do_something();           
+
+
+
+--------------
+
+do_something( )
+
+         radio_wakeup();   //唤醒dw3000
+         do_tx_sleep(59)； //发送59个字节，发送完后，马上自动進入休眠     //--slot1
+
+        port_wait_us(120);
+        port_wait_us(TICKS_TO_US(FIRA_WAKEUP_TICK) + WAITTIME_US_1 + (FIRA_SLOT_ADD_MS*1000));
+
+        //--slot1： 120u + 32*1000/32 +400 +1000 =1582.5us+
+
+        radio_wakeup();
+        //do_twr())  
+              ds_twr_initiator_single();   //--slot2，slot3，slot4
+
+        port_wait_us(120);
+        port_wait_us(TICKS_TO_US(FIRA_WAKEUP_TICK) + WAITTIME_US_2 + (FIRA_SLOT_ADD_MS*1000));
+
+        //--slot4： 120u + 32*1000/32 +360 +1000 = 1542.5us+
+
+        radio_wakeup();
+        do_tx_sleep(59))；  //--slot5
+ 
+        port_wait_us(120);
+        port_wait_us(TICKS_TO_US(FIRA_WAKEUP_TICK) + WAITTIME_US_3 + (FIRA_SLOT_ADD_MS*1000));
+ 
+        //--slot5： 120u + 32*1000/32 +550 +1000 =1732.5us+
+
+        radio_wakeup();
+        do_rx())；             //启动立即接收   //--slot6
+
+        port_wait_us(120);
+        dwt_entersleep(DWT_DW_IDLE_RC);
+
+        //--slot6： 120us+
+
+
+
+---------------------------------
+
+//启动立即接收
+do_rx( )
+ 
+    //启动立即接收
+   dwt_rxenable(DWT_START_RX_IMMEDIATE) ；
+    
+
+
+------
+
+//5a设置， 发送pollmsg，接收responsemsg，发送finalmsg
+ds_twr_initiator_single( )
+ 
+    tx_poll_msg[ALL_MSG_SN_IDX] = sn;
+    dwt_writetxdata(sizeof(tx_poll_msg), tx_poll_msg, 0);   //发送pollmsg 
+    dwt_writetxfctrl(38, 0, 1);                                            //发送长度，偏移，要测距
+
+    dwt_setrangingdelay();   //设置测距延时
+    port_timer_start(&timer1);
+    dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);      //开启发送pollmsg（需要回复）     //--slot2
+
+    //--slot2： 1850us+     //dwt_setrangingdelay
+
+    //等待接收结果（正确，超时或错误）    //读取reg0f.00， bit 14 + (17+21) + (12+15+8+9+11+10)
+    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (_RXFCG_BIT_MASK | _ALL_RX_TO | ALL_RX_ERR)))
+    {  }
+
+
+    if (1)        
+              sn++;
+               port_wait_us(700+EXTRA_WAIT_US);       //--slot3
+
+               //--slot3： 1700us+     
+
+                //发送finalmsg
+                tx_final_msg[ALL_MSG_SN_IDX] = sn;    
+                dwt_writetxfctrl(38, 0, 1);                  
+                dwt_entersleepaftertx(1);                
+                dwt_starttx(DWT_START_TX_IMMEDIATE);        //--slot4
+                
+                if (ret == DWT_SUCCESS)
+                
+                    frame_seq_nb++;                    
+                    sn++;
+                 
+
+--------
+
+//发送59个字节，发送完后，马上自动進入休眠
+do_tx_sleep(  length)  //length=59
+ 
+    param_block_t blink_cfg = DEFAULT_CONFIG;
+
+    tx_msg[2] = sn++;
+    tx_msg[0]=cnt16 & 0xff;   //--add
+    tx_msg[1]=cnt16 >> 8;     //--add
+
+    //设置发送结束后，進入sleep
+    dwt_entersleepaftertx(1);
+
+    blink_cfg.dwt_config.stsMode = DWT_STS_MODE_OFF;
+
+    //把dw3000要发送的数据放入buf中
+    rc |= dwt_writetxdata(3, (uint8_t *)tx_msg, 0);   //--add
+    dwt_writetxfctrl(length, 0, 0);                           //发送长度，偏移，不测距
+
+    //发送前做一些配置
+    if (dwt_configure(&blink_cfg.dwt_config) == DWT_ERROR)
+
+        DBG_MSG("dwt_configure FAILED\r\n");
+        return APP_ERR_OTHER;
+
+    //开启发送（不需回复）
+    dwt_starttx(DWT_START_TX_IMMEDIATE);
+    
+ 
+
+
+
+
+
+
+
+

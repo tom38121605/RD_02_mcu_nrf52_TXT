@@ -1,0 +1,157 @@
+
+ 
+
+#define DWT_C0_DEV_ID       (0xDECA0302)          //!< DW3000 MPW C0 (non PDOA) silicon device ID
+#define DWT_C0_PDOA_DEV_ID  (0xDECA0312)        //!< DW3000 MPW C0 (with PDOA) silicon device ID
+
+
+struct dw_dev_struct
+ {
+    uint32_t part_id;
+    uint32_t dev_id;
+    uint32_t lot_id;
+ 
+    uint8_t xtaltrim;
+    trx_config_t trx_ref_config[2];
+    dwt_txconfig_t tx_config[2];
+    uint32_t field_status;
+};
+typedef struct dw_dev_struct dw_dev_t;
+
+
+---
+
+struct trx_config_param_struct 
+{
+    uint32_t ref_tx_pwr;
+    uint16_t ref_pgcnt;
+    uint8_t  ref_pgdly;
+    float pdoa_offset;
+    uint16_t rxa_ant_delay;
+    uint16_t txa_ant_delay;
+    uint16_t rxb_ant_delay;
+};
+typedef struct trx_config_param_struct trx_config_t;
+
+typedef struct
+{
+    uint8   PGdly;
+    uint32  power;
+    uint16  PGcount;
+} dwt_txconfig_t ;
+
+
+---------------------------------------------------------------
+
+typedef struct param_block
+{
+    dwt_config_t    dwt_config;
+    uint8_t         tagID[8];
+    uint8_t         tagIDset;
+    const char      version[64];
+
+    dw_dev_t        dw_dev;
+} param_block_t;
+---
+
+#define DEFAULT_CONFIG
+
+        .dwt_config.chan            = 5, 
+        .dwt_config.txPreambLength  = DWT_PLEN_128,   //0x05
+        .dwt_config.rxPAC           = DWT_PAC8,               //0
+        .dwt_config.txCode          = 9,  
+        .dwt_config.rxCode          = 9,  
+        .dwt_config.sfdType         = 1,  
+        .dwt_config.dataRate        = DDWT_BR_6M8,  
+        .dwt_config.phrMode         = DWT_PHRMODE_STD,    //0
+        .dwt_config.phrRate         = DWT_PHRRATE_STD,        //0
+        .dwt_config.sfdTO           = (128 + 1 + 8 - 8),  
+        .dwt_config.stsMode         = DWT_STS_MODE_OFF,    //0
+        .dwt_config.stsLength       = DWT_STS_LEN_256,  
+        .dwt_config.pdoaMode        = DWT_PDOA_M3,    //Mode 3
+
+        .dw_dev = 
+                .xtaltrim = 0,  
+                .trx_ref_config = 
+                        { 
+                                .ref_tx_pwr = DEFAULT_TXPWR_CH5, 
+                                .ref_pgcnt = 0, .ref_pgdly = DEFAULT_PGDLY_CH5,  
+
+                                .rxa_ant_delay = (DEFAULT_ANTD/2), 
+                                .txa_ant_delay = (DEFAULT_ANTD/2), 
+                                .rxb_ant_delay = (DEFAULT_ANTD/2),  
+                        }, 
+                        { 
+                                .ref_tx_pwr = DEFAULT_TXPWR_CH9, 
+                                .ref_pgcnt = 0, .ref_pgdly = DEFAULT_PGDLY_CH9,  
+
+                                .rxa_ant_delay = (DEFAULT_ANTD/2), 
+                                .txa_ant_delay = (DEFAULT_ANTD/2), 
+                                .rxb_ant_delay = (DEFAULT_ANTD/2),  
+                        } 
+               , 
+ 
+                .tx_config =  
+                        {
+                                .PGdly = DEFAULT_PGDLY_CH5, 
+                                .power = DEFAULT_TXPWR_CH5, 
+                                .PGcount = 0,
+                        },  
+                        {
+                                .PGdly = DEFAULT_PGDLY_CH9, 
+                                .power = DEFAULT_TXPWR_CH9, 
+                                .PGcount = 0,
+                        }  
+                
+         
+-------------
+
+
+////DW3000 SLEEP and WAKEUP configuration parameters
+//#define DWT_PGFCAL       0x0800
+//#define DWT_GOTORX       0x0200
+//#define DWT_GOTOIDLE     0x0100
+//#define DWT_SEL_GEAR3    0x00C0
+//#define DWT_SEL_GEAR2    0x0080                     // Short gear table
+//#define DWT_SEL_GEAR1    0x0040                     // SCP
+//#define DWT_SEL_GEAR0    0x0000                     // Long gear table
+//#define DWT_ALT_GEAR     0x0020
+//#define DWT_LOADLDO      0x0010
+//#define DWT_LOADDGC      0x0008
+//#define DWT_LOADBIAS     0x0004
+//#define DWT_RUNSAR       0x0002
+#define DWT_CONFIG       0x0001                     // download the AON array into the HIF (configuration download)
+
+#define DWT_PRESRVE_SLP  0x20                       // allows for SLEEP_EN bit to be "preserved", although it will self - clear on wake up
+//#define DWT_WAKE_WK      0x10                       // wake up on WAKEUP PIN
+#define DWT_WAKE_CS      0x8                        // wake up on chip select
+//#define DWT_BR_DET       0x4                        // enable brownout detector during sleep/deep sleep
+//#define DWT_SLEEP        0x2                        // enable sleep (if this bit is clear the device will enter deep sleep)
+#define DWT_SLP_EN       0x1                        // enable sleep/deep sleep functionality
+
+//DW3000 IDLE/INIT mode definitions
+//#define DWT_DW_INIT      0x0
+#define DWT_DW_IDLE      0x1
+//#define DWT_DW_IDLE_RC   0x2
+
+//#define DWT_READ_OTP_PID  0x10    //read part ID from OTP
+//#define DWT_READ_OTP_LID  0x20    //read lot ID from OTP
+//#define DWT_READ_OTP_BAT  0x40    //read ref voltage from OTP
+//#define DWT_READ_OTP_TMP  0x80    //read ref temperature from OTP
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

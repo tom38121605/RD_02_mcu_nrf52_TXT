@@ -1,0 +1,246 @@
+ 
+ 
+flow：   main --> blink_app --> blink_radio_init
+
+            blink_radio_init --> BOOST上电 --> port_spi_set_fastrate --> port_reset_dw1000 --> dwt_checkidlerc --> dwt_initialise  --> dwt_check_dev_id
+
+            dwt_check_dev_id --> dwt_readdevid --> dwt_read32bitoffsetreg(DEV_ID_ID) --> dwt_readfromdevice --> dwt_xfer3000 --> readfromspi  
+
+
+
+======================================
+
+ 
+main(void)
+
+
+//-------------------DW3000 io口设置--------------------------------
+
+    //rst引脚
+    nrf_gpio_cfg_input(DWIC_RST, NRF_GPIO_PIN_NOPULL);
+
+    //cs引脚
+    nrf_gpio_cfg_output(SPI_CS_PIN);
+    nrf_gpio_pin_set(SPI_CS_PIN);
+
+    //BOOST IO，开电源
+    nrf_gpio_cfg_output(BOOST_EN_PIN);
+    nrf_gpio_pin_set(BOOST_EN_PIN);      
+
+
+    //irq引脚， 待理解
+    nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_LOTOHI(true);
+    in_config.pull = NRF_GPIO_PIN_NOPULL;
+
+    err_code = nrf_drv_gpiote_in_init(DW1000_IRQ, &in_config, dw1000_irq_handler);
+    APP_ERROR_CHECK(err_code);
+    nrf_drv_gpiote_in_event_enable(DW1000_IRQ, true);
+
+//-------------------DW3000 io口设置----end----------------------------
+
+
+    //blink_app();        
+       blink_radio_init();        //初始化dw3000
+
+     
+--------------
+
+//初始化dw3000
+blink_radio_init( )
+ 
+    //设置spi为快速模式，跳过
+    port_spi_set_fastrate();
+
+    //复位dw3000， 拉低reset脚一段时间，跳过
+    //port_reset_dw1000();    
+       nrf_gpio_cfg_output(DWIC_RST);
+       nrf_gpio_pin_clear(DWIC_RST);
+       port_wait(100);
+       nrf_gpio_cfg_input(DWIC_RST, NRF_GPIO_PIN_NOPULL); 
+       port_wait(5);  
+
+
+    //DW3000数据传输的初始化
+    //dwt_initialise(0)  
+    //   dwt_check_dev_id();
+          dev_id = dwt_readdevid();  //读取devid
+          if (!((DWT_C0_PDOA_DEV_ID == dev_id) || (DWT_C0_DEV_ID == dev_id))) 
+              return DWT_ERROR;
+
+
+---
+
+port_spi_set_fastrate(  )
+
+    if(spi_stat == SPI_FAST)
+        nrfx_spim_uninit(&spi);         //取消spi的功能
+        spi_stat = SPI_UNINIT;
+
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+    spi_config.frequency      = NRF_SPIM_FREQ_8M;                           //fast
+    spi_config.ss_pin         = NRFX_SPIM_PIN_NOT_USED;
+    spi_config.miso_pin       = SPI0_CONFIG_MISO_PIN;
+    spi_config.mosi_pin       = SPI0_CONFIG_MOSI_PIN;
+    spi_config.sck_pin        = SPI0_CONFIG_SCK_PIN;
+    spi_config.ss_active_high = false;
+
+    APP_ERROR_CHECK(nrfx_spim_init(&spi, &spi_config, spim_event_handler, NULL));   //重新设置spi的功能
+    spi_stat = SPI_FAST;
+
+
+---
+
+port_spi_set_slowrate(  )
+ 
+    if(spi_stat == SPI_SLOW)    
+        return;  
+
+    if(spi_stat == SPI_FAST)    
+        nrfx_spim_uninit(&spi);
+        spi_stat = SPI_UNINIT;   
+
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+    spi_config.frequency      = NRF_SPIM_FREQ_1M;                          //slow
+    spi_config.ss_pin         = NRFX_SPIM_PIN_NOT_USED;
+    spi_config.miso_pin       = SPI0_CONFIG_MISO_PIN;
+    spi_config.mosi_pin       = SPI0_CONFIG_MOSI_PIN;
+    spi_config.sck_pin        = SPI0_CONFIG_SCK_PIN;
+    spi_config.ss_active_high = false;
+    APP_ERROR_CHECK(nrfx_spim_init(&spi, &spi_config, spim_event_handler, NULL));
+    spi_stat = SPI_SLOW;
+ 
+
+---------------
+
+//读取devid
+dwt_readdevid(void)
+
+   dev_id =  dwt_read32bitoffsetreg(DEV_ID_ID, 0);
+
+          //dwt_readfromdevice(DEV_ID_ID,regOffset,4,buffer);      
+          //     dwt_xfer3000(regFileID, index, length, buffer, DW3000_SPI_RD_BIT);
+   
+                      calcheader()；   //虚拟函数，但实际上是有这么一个过程
+                      readfromspi(cnt, header, length, buffer);
+
+          //把读出来的4个字符，组合成一个U32的长整数据
+          for (j = 3 ; j >= 0 ; j --) 
+               regval = (regval << 8) + buffer[j] ;
+ 
+
+----------------
+
+
+#define DEV_ID_ID                            0x0                  
+#define DEV_ID_LEN                           (4U)      
+
+#define SYS_CFG_ID                          0x10                 
+#define SYS_CFG_LEN                         (4U)  
+
+#define PANADR_ID                          0xc                  
+#define PANADR_LEN                         (4U) 
+
+#define ACK_RESP_ID                       0x10008              
+#define ACK_RESP_LEN                      (4U)   
+
+
+#define DW3000_SPI_FAC      (0<<6 | 1<<0)
+#define DW3000_SPI_FARW     (0<<6 | 0<<0)
+#define DW3000_SPI_EAMRW    (1<<6)
+
+typedef enum {
+    DW3000_SPI_RD_BIT    = 0x0000U,
+    DW3000_SPI_WR_BIT    = 0x8000U,
+    DW3000_SPI_AND_OR_8  = 0x8001U,
+    DW3000_SPI_AND_OR_16 = 0x8002U,
+    DW3000_SPI_AND_OR_32 = 0x8003U,
+}spi_modes_e;
+
+
+//生成header，body数据包，发送到spi引脚  
+//参数： DEV_ID_ID=0
+//dw3000的地址，跟dw1000有一点不一样,dw1000的器件地址和子地址是分开的； 而dw3000是合并在一起的（对同一个reg00）
+//dw3000的地址，由三部分组成，总的子地址，mode，FAC.   //--待理解
+
+dwt_xfer3000( DEV_ID_ID, indx,   length, *buffer,   mode)
+ 
+    uint8  header[2];           
+    uint16 cnt = 0;          
+    uint16  addr;
+
+    //--uint16 reg_file     = 0x1F & (  (regFileID + indx) >> 16  ) ;   //对REG00中的DEV_ID_ID，SYS_CFG_ID 来讲，这句可以去掉或忽略，结果为0
+    uint16 reg_offset   = 0x7F &  (regFileID + indx);    //reg_offset是把器件地址和子地址合在一起组成一个总的子地址 （子地址是连续的）
+
+    addr = (reg_file << 9) | (reg_offset << 2);   // 低2位，用于放mode
+
+    header[0] = (mode | addr) >> 8;               //  mode.15 + reg_offset.6-12(高半部地址)     //--待理解
+    header[1] =addr | (mode & 0x03);             // reg_offset.0-5左移2位（低半部地址） ＋ mode.0-1, 把模式放在子地址的后面  --easy
+
+    if (length == 0) 
+
+        //--header[0] = (DW3000_SPI_WR_BIT>>8) | (regFileID<<1) | DW3000_SPI_FAC ;
+        header[0] = 0X80 | DW3000_SPI_FAC ;                      //   W(bit7=1) + FAC(bit6=0,bit0=1)，  FAC待理解
+
+        cnt = 1;
+   
+    else if (reg_offset == 0  && (mode == DW3000_SPI_WR_BIT || mode == DW3000_SPI_RD_BIT))
+        header[0] |= DW3000_SPI_FARW;    //把head[0]的bit0和bit6都置0   //--待理解
+        cnt = 1;
+
+    else
+        header[0] |= DW3000_SPI_EAMRW;    //把head[0]的bit6都置1   //--待理解
+        cnt = 2;  
+
+
+    switch (mode)
+
+      case    DW3000_SPI_WR_BIT:
+
+          writetospi(cnt, header, length, buffer);
+          break;
+
+
+      case DW3000_SPI_RD_BIT:
+ 
+            readfromspi(cnt, header, length, buffer);
+            break;
+
+
+
+－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－
+
+
+//直接往寄存器写入数据
+void dwt_write16bitoffsetreg(int regFileID, int regOffset, uint16 regval)
+{
+    uint8   buffer[2] ;
+
+    buffer[0] = regval & 0xFF;
+    buffer[1] = regval >> 8 ;
+
+    dwt_writetodevice(regFileID,regOffset,2,buffer);
+} // end dwt_write16bitoffsetreg()
+
+//把数据通过与，或方式添加到寄存器原来的数据上去
+void dwt_modify16bitoffsetreg(const int regFileID, const int regOffset, const uint16 _and, const uint16 _or)
+{
+    uint8 buf[4];
+    buf[0] = (uint8)_and;//       &0xFF;
+    buf[1] = (uint8)(_and>>8);//  &0xFF;
+    buf[2] = (uint8)_or;//        &0xFF;
+    buf[3] = (uint8)(_or>>8);//   &0xFF;
+    dwt_xfer3000(regFileID, regOffset, sizeof(buf), buf, DW3000_SPI_AND_OR_16);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

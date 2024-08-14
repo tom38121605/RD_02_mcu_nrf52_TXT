@@ -1,0 +1,66 @@
+
+
+typedef enum
+{
+    FSM_PRE_INIT,
+    FSM_INIT,
+    FSM_SLEEP,
+    FSM_CHARGE,
+    FSM_BLINK
+} fsm_e;
+
+
+const nrf_drv_timer_t TIMER_BLINK = NRF_DRV_TIMER_INSTANCE(0);            // timer0
+    .p_reg            = NRF_TIMER0,              
+    .instance_id      = NRFX_TIMER0_INST_IDX,  
+    .cc_channel_count = TIMER0 _CC_NUM,    
+
+
+
+#define TIMER_DEFAULT_CONFIG_FREQUENCY 0
+#define TIMER_DEFAULT_CONFIG_MODE 0
+#define TIMER_DEFAULT_CONFIG_BIT_WIDTH 3
+#define TIMER_DEFAULT_CONFIG_IRQ_PRIORITY 6
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                                                       
+    .frequency          = 0,
+    .mode               = 0,
+    .bit_width          = 3,
+    .interrupt_priority = 6,
+    .p_context          = NULL                                                       
+
+
+typedef struct
+{
+    nrfx_timer_event_handler_t handler;
+    void *                     context;
+    nrfx_drv_state_t           state;
+} timer_control_block_t;
+
+void timer_blink_event_handler(nrf_timer_event_t event_type, void* p_context)
+{
+    if (event_type == NRF_TIMER_EVENT_COMPARE0)
+    {
+        timer_blink_timeout = true;
+        port_timer_blink_disable();
+    }
+}
+
+#define INIT_PERIOD           (500)  
+#define BLINK_PERIOD_FAST     (200)   // 200 ms
+#define BLINK_PERIOD_SLOW     (1000)
+#define BLINK_FAST_PERIOD     (3000)  // 3 s
+#define BLINK_CHARGE_TIME     (60)    //
+
+#define BLINK_INTERVAL_FAST   (BLINK_PERIOD_FAST - BLINK_CHARGE_TIME)
+#define BLINK_INTERVAL_SLOW   (BLINK_PERIOD_SLOW - BLINK_CHARGE_TIME)
+#define BLINK_FAST_NUM        (BLINK_FAST_PERIOD / BLINK_PERIOD_FAST)  // 3s / 0.2S
+
+
+
+
+
+
+
+

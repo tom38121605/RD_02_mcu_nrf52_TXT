@@ -1,0 +1,51 @@
+F:\_Awork_all\_Awork37_GS361_Qorvo\QORVO\qorvotag_nrf3k_blink\examples\tag_blink_1_10Hz\main.c
+
+
+F:\_Awork_all\_Awork37_GS361_Qorvo\QORVO\qorvotag_nrf3k_blink\examples\tag_blink_1_10Hz\bsp\dw3000_shield_bsp.h
+
+F:\_Awork_all\_Awork37_GS361_Qorvo\tag_blink_1_10Hz_01_af_chg_IO_define_k\bsp\dw3000_shield_bsp.h
+
+
+
+F:\_Awork_all\_Awork37_GS361_Qorvo\QORVO\qorvotag_nrf3k_blink\examples\tag_blink_1_10Hz\bsp\dw3000_shield_bsp.h
+
+
+看程序里面 ：void SystemInit(void)里面
+
+#define CONFIG_NFCT_PINS_AS_GPIOS
+
+
+1。优化1： 在通信失败的时候， 考虑在dosomething函数结束的地方增加充电时间 （或可减少电容数量，节约成本）
+
+
+＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
+
+1。 不能加D3二极管，很容易停掉
+2.  10分钟计数： RX: 524 ,   CE: 6511   （理论上， 10分钟 6千次 或 6千×2次）
+
+
+
+
+============
+
+typedef enum
+{
+    NRFX_PWM_EVT_FINISHED, ///< Sequence playback finished.
+    NRFX_PWM_EVT_END_SEQ0, /**< End of sequence 0 reached. Its data can be
+                                safely modified now. */
+    NRFX_PWM_EVT_END_SEQ1, /**< End of sequence 1 reached. Its data can be
+                                safely modified now. */
+    NRFX_PWM_EVT_STOPPED,  ///< The PWM peripheral has been stopped.
+} nrfx_pwm_evt_type_t;
+
+void brnc_drv_motor_pwm_handler(nrf_drv_pwm_evt_type_t event_type) {
+  if (event_type == NRF_DRV_PWM_EVT_FINISHED) {
+  }
+}
+————————————————
+版权声明：本文为CSDN博主「leirifa」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/leirifa/article/details/86582593
+
+
+
+

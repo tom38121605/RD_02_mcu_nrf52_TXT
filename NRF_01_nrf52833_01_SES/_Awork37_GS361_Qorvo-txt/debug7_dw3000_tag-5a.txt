@@ -1,0 +1,346 @@
+ 
+ 
+flow：   main --> blink_app --> port_timer_blink_init   --> port_timer_blink_cfg(1000) --> blink_radio_init --> blink 
+
+            blink_radio_init --> BOOST上电 --> port_spi_set_fastrate --> port_reset_dw1000 --> dwt_checkidlerc --> dwt_initialise  --> dwt_check_dev_id
+                                  --> dwt_configure --> dwt_configuretxrf --> dwt_configuresleep --> dwt_entersleep
+
+            blink --> port_wakeup_dw3000  --> dwt_writetxdata --> dwt_starttx --> dwt_read32bitreg(SYS_STATUS_ID) --> dwt_entersleep -->  -->  --> 
+
+
+======================================
+
+ 
+main(void)
+
+    blink_app(); 
+
+------------------------
+
+blink_app(void)
+    
+    while (1)
+
+           //初始化dw3000
+           blink_radio_init();              
+
+           //dw3000发射数据
+           blink();                  
+              dwt_writetxdata();                         //dw3000发射数据
+              dwt_entersleep(DWT_DW_IDLE);     //dw3000進入休眠
+              BOOST_EN_PIN=0 ;                       //关电
+    
+
+--------------
+
+//初始化dw3000
+blink_radio_init( )
+ 
+    //赋值初始参数
+    blink_cfg = DEFAULT_CONFIG;
+
+    ch = blink_cfg.dwt_config.chan;  //5
+
+    //设置spi为快速模式
+    port_spi_set_fastrate();
+
+    //复位dw3000， 拉低reset脚一段时间
+    //port_reset_dw1000();    
+       nrf_gpio_cfg_output(DWIC_RST);
+       nrf_gpio_pin_clear(DWIC_RST);
+       port_wait(100);
+
+       nrf_gpio_cfg_input(DWIC_RST, NRF_GPIO_PIN_NOPULL); 
+       port_wait(5);  
+
+
+    port_wait(2);  
+
+    //确认DW3000在IDLE RC模式
+    //while (!dwt_checkidlerc());   // Need to make sure DW IC is in IDLE_RC before proceeding  
+        reg = ((uint32)dwt_read16bitoffsetreg(SYS_STATUS_ID, 2) << 16);
+        return ( (reg & (SYS_STATUS_RCINIT_BIT_MASK)) == (SYS_STATUS_RCINIT_BIT_MASK));
+
+
+    //DW3000数据传输的初始化
+    //dwt_initialise(0)  
+       dwt_check_dev_id();
+       pdw3000local=XXX...;
+
+   if  (err)  
+           printf("INIT FAILED\r\n");
+           while (1);
+
+   
+     //初始化配置， dw3000的寄存器参数
+    dwt_configure(&blink_cfg.dwt_config);
+
+    //配置dw3000的射频参数为CH5 （忽略跳过）
+    dwt_configuretxrf(&blink_cfg.dw_dev.tx_config[0]);
+
+    //配置sleep, 由cs唤醒 (bit3=1)，休眠方式为deep sleep（bit1=0），置能sleep（bit0=1）
+    dwt_configuresleep(DWT_CONFIG, 20H | 8| 1);    // 0B:  0010 1001
+
+    //進入sleep
+    dwt_entersleep(DWT_DW_IDLE);
+ 
+
+----
+
+//设置spi为快速模式
+port_spi_set_fastrate( )
+
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+    spi_config.frequency      = NRF_SPIM_FREQ_8M;
+    spi_config.ss_pin         = NRFX_SPIM_PIN_NOT_USED;
+    spi_config.miso_pin       = SPI0_CONFIG_MISO_PIN;
+    spi_config.mosi_pin       = SPI0_CONFIG_MOSI_PIN;
+    spi_config.sck_pin        = SPI0_CONFIG_SCK_PIN;
+    spi_config.ss_active_high = false;
+
+    //配置spi驱动，模式，引脚sck，mo，mi，频率
+    nrfx_spim_init(&spi, &spi_config, spim_event_handler, NULL);
+    spi_stat = SPI_FAST;
+ 
+---
+
+//配置spi驱动，模式，引脚sck，mo，mi，频率
+nrfx_spim_ini t( p_instance,  p_config,   handler,   * p_context)
+
+    * p_cb = &m_cb[p_instance->drv_inst_idx]; 
+
+    * p_spim = (NRF_SPIM_Type *)p_instance->p_reg;
+ 
+       irq_handlers[NRFX_SPIM_ENABLED_COUNT] =  nrfx_spim_0_irq_handler；
+   
+    if (nrfx_prs_acquire(p_instance->p_reg,   irq_handlers[p_instance->drv_inst_idx]) != NRFX_SUCCESS) 
+        err_code = NRFX_ERROR_BUSY;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+ 
+
+    p_cb->handler = handler;
+    p_cb->p_context = p_context;
+
+
+    if (p_config->mode <= NRF_SPIM_MODE_1)
+        nrf_gpio_pin_clear(p_config->sck_pin);
+    else
+        nrf_gpio_pin_set(p_config->sck_pin);
+
+    nrf_gpio_cfg(p_config->sck_pin,
+                 NRF_GPIO_PIN_DIR_OUTPUT,
+                 NRF_GPIO_PIN_INPUT_CONNECT,
+                 NRF_GPIO_PIN_NOPULL,
+                 NRF_GPIO_PIN_S0S1,
+                 NRF_GPIO_PIN_NOSENSE);
+
+    // - MOSI (optional) - output with initial value 0,
+        mosi_pin = p_config->mosi_pin;
+        nrf_gpio_pin_clear(mosi_pin);
+        nrf_gpio_cfg_output(mosi_pin);
+
+
+    // - MISO (optional) - input,
+        miso_pin = p_config->miso_pin;
+        nrf_gpio_cfg_input(miso_pin, (nrf_gpio_pin_pull_t)NRFX_SPIM_MISO_PULL_CFG);
+
+
+    p_cb->miso_pin = p_config->miso_pin;
+
+    // - Slave Select (optional) - output with initial value 1 (inactive).
+
+    // 'p_cb->ss_pin' variable is used during transfers to check if SS pin should be toggled,
+    // so this field needs to be initialized even if the pin is not used.
+
+    p_cb->ss_pin = p_config->ss_pin;
+
+    if (p_config->ss_pin != NRFX_SPIM_PIN_NOT_USED)
+
+        if (p_config->ss_active_high)
+            nrf_gpio_pin_clear(p_config->ss_pin);
+        else
+            nrf_gpio_pin_set(p_config->ss_pin);
+
+        nrf_gpio_cfg_output(p_config->ss_pin);
+        p_cb->ss_active_high = p_config->ss_active_high;
+
+
+    nrf_spim_pins_set(p_spim, p_config->sck_pin, mosi_pin, miso_pin);
+    nrf_spim_frequency_set(p_spim, p_config->frequency);
+    nrf_spim_configure(p_spim, p_config->mode, p_config->bit_order);
+
+    nrf_spim_orc_set(p_spim, p_config->orc);
+
+    if (p_cb->handler)
+        nrf_spim_int_enable(p_spim, NRF_SPIM_INT_END_MASK); 
+
+    nrf_spim_enable(p_spim);
+
+    if (p_cb->handler)
+
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg), p_config->irq_priority);
+        NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+  
+
+    p_cb->transfer_in_progress = false;
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+    err_code = NRFX_SUCCESS;
+    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+
+
+
+---------
+
+//复位dw3000， 拉低reset脚一段时间
+port_reset_dw1000()
+  
+    nrf_gpio_cfg_output(DWIC_RST);
+    nrf_gpio_pin_clear(DWIC_RST);
+
+    port_wait(100);
+
+    nrf_gpio_cfg_input(DWIC_RST, NRF_GPIO_PIN_NOPULL);
+    port_wait(5); 
+
+---
+
+//配置sleep, 由cs唤醒 (bit3=1)，休眠方式为deep sleep（bit1=0），置能sleep（bit0=1）
+dwt_configuresleep(mode, uint8 wake)
+ 
+    // Add predefined sleep settings before writing the mode
+    pdw3000local->sleep_mode |= mode;
+    dwt_write16bitoffsetreg(AON_DIG_CFG_ID, 0,  pdw3000local->sleep_mode);
+
+    dwt_write8bitoffsetreg(ANA_CFG_ID, 0, wake);    //bit 0 - SLEEP_EN, bit 1 - DEEP_SLEEP=0/SLEEP=1, bit 3 wake on CS
+ 
+
+----
+
+//DW3000初始化
+dwt_initialise( mode)
+
+    pdw3000local->dblbuffon = DBL_BUFF_OFF;    // Double buffer mode off by default / clear the flag
+    pdw3000local->sleep_mode = 0;
+    pdw3000local->spicrc = 0;
+    pdw3000local->stsconfig = 0;       //STS off
+    pdw3000local->vBatP = 0;
+    pdw3000local->tempP = 0;
+
+    pdw3000local->cbTxDone = NULL;
+    pdw3000local->cbRxOk = NULL;
+    pdw3000local->cbRxTo = NULL;
+    pdw3000local->cbRxErr = NULL;
+    pdw3000local->cbSPIRdy = NULL;
+    pdw3000local->cbSPIErr = NULL;
+
+    // 读取device ID 
+    //if (dwt_check_dev_id()!=DWT_SUCCESS)
+       dev_id = dwt_readdevid();
+       if (!((DWT_C0_PDOA_DEV_ID == dev_id) || (DWT_C0_DEV_ID == dev_id))) 
+            return DWT_ERROR;
+    
+    // Make sure the device is completely reset before starting initialisation
+    //dwt_softreset();
+    
+    //Read LDO_TUNE and BIAS_TUNE from OTP
+    ldo_tune_lo = _dwt_otpread(LDOTUNELO_ADDRESS);
+    ldo_tune_hi = _dwt_otpread(LDOTUNEHI_ADDRESS);
+    pdw3000local->bias_tune = (_dwt_otpread(BIAS_TUNE_ADDRESS) >> 16) & BIAS_CTRL_DIG_BIAS_DAC_ULV_BIT_MASK;
+
+    //待理解
+    if ((ldo_tune_lo != 0) && (ldo_tune_hi != 0) && (pdw3000local->bias_tune != 0))
+        _dwt_prog_ldo_and_bias_tune();
+	
+    // 从 OTP中读取数据  //待理解
+    if(mode & DWT_READ_OTP_PID)
+        pdw3000local->partID = _dwt_otpread(PARTID_ADDRESS);
+    if (mode & DWT_READ_OTP_LID)
+        pdw3000local->lotID = _dwt_otpread(LOTID_ADDRESS);
+    if (mode & DWT_READ_OTP_BAT)
+        pdw3000local->vBatP = _dwt_otpread(VBAT_ADDRESS) & 0xff;
+    if (mode & DWT_READ_OTP_TMP)
+        pdw3000local->tempP = _dwt_otpread(VTEMP_ADDRESS) & 0xff;
+
+
+    if(pdw3000local->tempP == 0) 
+        pdw3000local->tempP = 0x85 ; //@temp of 20 deg
+
+
+    if(pdw3000local->vBatP == 0) 
+        pdw3000local->vBatP = 0x74 ;  //@Vref of 3.0V
+
+    pdw3000local->otprev = (uint8) _dwt_otpread(OTPREV_ADDRESS);
+
+    pdw3000local->init_xtrim = _dwt_otpread(XTRIM_ADDRESS) & 0x7f;
+    if(pdw3000local->init_xtrim == 0)
+        pdw3000local->init_xtrim = 0x2E ; //set default value
+
+    dwt_write8bitoffsetreg(XTAL_ID, 0, pdw3000local->init_xtrim);
+
+    return DWT_SUCCESS ;
+ 
+-------------------
+
+//DW3000发射数据
+blink( )     
+
+     //使用cs唤醒dw3000
+    //port_wakeup_dw3000();
+        nrf_gpio_pin_clear(SPI_CS_PIN);
+        port_wait(1);
+        nrf_gpio_pin_set(SPI_CS_PIN);
+        while(nrf_gpio_pin_read(DWIC_RST) != 1)
+            port_wait(1);    
+
+
+    //把dw3000要发送的数据放入buf中
+    tx_msg[1]++;
+    dwt_writetxdata(len, (uint8_t *)tx_msg, 0);
+    dwt_writetxfctrl(len, 0, 0);
+
+    //开启发送
+    dwt_starttx(DWT_START_TX_IMMEDIATE);
+
+    exp_ms = 10;
+    port_timer_start(&start_ts);    //记录发送起始时间
+
+    do
+    {
+        status = dwt_read32bitreg(SYS_STATUS_ID);
+
+        if(port_timer_check(start_ts, exp_ms))
+            //printf("Tx failed ... \r\n");
+            return -1;
+
+        if(status & SYS_STATUS_VWARN_BIT_MASK)
+            //printf("Brownout detected ......... \r\n");
+            return -2;
+
+    }while (!(status & SYS_STATUS_TXFRS_BIT_MASK));
+
+    dwt_entersleep(DWT_DW_IDLE);
+ 
+ 
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+

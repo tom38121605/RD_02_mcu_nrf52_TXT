@@ -1,0 +1,89 @@
+
+
+
+
+int main(void)
+
+  pwm_init();   
+
+
+----------------------------------下面是p18引脚的pwm配置---------20kHz 占空比5%------------nrf52833-----------------
+
+
+#define PWM_TOP  400    //20Khz
+#define DUTE 5 
+#define PWMFIRST (PWM_TOP*DUTE/100) 
+
+void pwm_init()    
+{
+      NRF_PWM0->PSEL.OUT[0] = (PWM0_PIN << 0) |  (0 << 31UL);
+      //--NRF_PWM0->PSEL.OUT[1] = (ADC1_PIN << 0) |  (0 << 31UL);
+      NRF_PWM0->ENABLE = (1 << 0);
+      NRF_PWM0->MODE = (1 << 0);
+
+      NRF_PWM0->PRESCALER = (0 << 0);  // 1 DIV, 16MHz
+      //NRF_PWM0->PRESCALER = (4 << 0);  // 16 DIV, 1MHz
+
+      //NRF_PWM0->COUNTERTOP = (16000 << 0); //1 ms, 1KHz
+      NRF_PWM0->COUNTERTOP = (PWM_TOP << 0); //50us, 20KHz  xx
+
+
+      NRF_PWM0->LOOP = (0 << 0);   //UP
+      //NRF_PWM0->LOOP = (1 << 0);   //upanddown
+
+      //NRF_PWM0->DECODER = (0 << 0) |  (0 << 8);
+      NRF_PWM0->DECODER = (2 << 0) |  (0 << 8);
+
+
+      NRF_PWM0->SEQ[0].PTR = ((uint32_t)&ipwm_values[0] << 0);
+      NRF_PWM0->SEQ[0].CNT = ((sizeof(ipwm_values) / sizeof(uint16_t)) << 0);
+
+      NRF_PWM0->SEQ[0].REFRESH = 1;
+      NRF_PWM0->SEQ[0].ENDDELAY = 1;
+
+      NRF_PWM0->SEQ[1].PTR = ((uint32_t)&ipwm_values[0] << PWM_SEQ_PTR_PTR_Pos);
+      NRF_PWM0->SEQ[1].CNT = ((sizeof(ipwm_values) / sizeof(uint16_t)) <<  PWM_SEQ_CNT_CNT_Pos);
+      NRF_PWM0->SEQ[1].REFRESH = 0;
+      NRF_PWM0->SEQ[1].ENDDELAY = 0;
+
+      NRF_PWM0->TASKS_SEQSTART[0] = 1;
+
+      ipwm_values[0]=PWM_TOP-PWMFIRST; 
+      //--ipwm_values[1]=PWM_TOP-PWMFIRST; 
+
+}
+
+
+
+
+====================参考=========================
+
+官网pwm例程：
+
+      NRF_PWM0->PSEL.OUT[0] = (first_pin << PWM_PSEL_OUT_PIN_Pos) |  (PWM_PSEL_OUT_CONNECT_Connected <<  PWM_PSEL_OUT_CONNECT_Pos);
+
+
+      NRF_PWM0->ENABLE = (PWM_ENABLE_ENABLE_Enabled << PWM_ENABLE_ENABLE_Pos);
+      NRF_PWM0->MODE = (PWM_MODE_UPDOWN_Up << PWM_MODE_UPDOWN_Pos);
+      NRF_PWM0->PRESCALER = (PWM_PRESCALER_PRESCALER_DIV_1 <<
+      PWM_PRESCALER_PRESCALER_Pos);
+      NRF_PWM0->COUNTERTOP = (16000 << PWM_COUNTERTOP_COUNTERTOP_Pos); //1 msec
+      NRF_PWM0->LOOP = (1 << PWM_LOOP_CNT_Pos);
+      NRF_PWM0->DECODER = (PWM_DECODER_LOAD_Common << PWM_DECODER_LOAD_Pos) | 
+      (PWM_DECODER_MODE_RefreshCount << PWM_DECODER_MODE_Pos);
+      NRF_PWM0->SEQ[0].PTR = ((uint32_t)(seq0_ram) << PWM_SEQ_PTR_PTR_Pos);
+      NRF_PWM0->SEQ[0].CNT = ((sizeof(seq0_ram) / sizeof(uint16_t)) <<
+      PWM_SEQ_CNT_CNT_Pos);
+      NRF_PWM0->SEQ[0].REFRESH = 1;
+      NRF_PWM0->SEQ[0].ENDDELAY = 1;
+      NRF_PWM0->SEQ[1].PTR = ((uint32_t)(seq1_ram) << PWM_SEQ_PTR_PTR_Pos);
+      NRF_PWM0->SEQ[1].CNT = ((sizeof(seq1_ram) / sizeof(uint16_t)) <<
+      PWM_SEQ_CNT_CNT_Pos);
+      NRF_PWM0->SEQ[1].REFRESH = 0;
+      NRF_PWM0->SEQ[1].ENDDELAY = 0;
+      NRF_PWM0->TASKS_SEQSTART[0] = 1;
+
+--------
+
+
+

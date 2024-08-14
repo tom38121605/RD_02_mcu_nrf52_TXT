@@ -1,0 +1,205 @@
+ 
+ 
+flow：   main --> blink_app --> port_timer_blink_init  （设置timer0）
+            port_timer_blink_init  --> port_timer_blink_cfg(1000) --> blink_radio_init --> blink  （使用timer0）
+
+            blink_radio_init --> blink  （dw3000发射）
+
+
+
+
+
+
+===========main======设置timer0=====================
+ 
+main(void)
+
+    blink_app(); 
+
+
+------
+
+//配置timer0
+blink_app(void)
+
+    //初始化配置timer0
+    port_timer_blink_init();  
+        timer_cfg = NRF_DRV_TIMER_DEFAULT_CONFIG;
+        nrf_drv_timer_init(&NRF_DRV_TIMER_INSTANCE(0) , &timer_cfg, timer_blink_event_handler );
+        timer_blink_initiated = 1;
+
+    //设置timer0的时间
+    port_timer_blink_cfg(INIT_PERIOD);
+    
+    while (1)
+
+        __WFI();
+        
+        if(port_timer_has_event())       
+
+            。。。。。。
+
+
+
+－－－－－－－－－－－－
+
+//设置timer0新的频率  easy
+
+port_timer_blink_cfg(uint32_t delay)
+
+    //关闭timer0
+    port_timer_blink_disable();
+         nrf_drv_timer_disable(&TIMER_BLINK);
+             nrf_timer_task_trigger(p_instance->p_reg, NRF_TIMER_TASK_SHUTDOWN);   //关闭timer0的电源
+             m_cb[p_instance->instance_id].state = NRFX_DRV_STATE_INITIALIZED;
+             NRFX_LOG_INFO("Disabled instance: %d.", p_instance->instance_id);
+
+    //把定时时间转换为timer0的计数值
+    time_ticks = nrf_drv_timer_ms_to_ticks(&TIMER_BLINK, delay);
+
+    nrf_drv_timer_extended_compare(
+         &TIMER_BLINK, NRF_TIMER_CC_CHANNEL0, time_ticks, NRF_TIMER_SHORT_COMPARE0_CLEAR_MASK, true);
+
+
+   //开启timer0
+    port_timer_blink_enable();
+
+
+－－－
+
+//应是设置新的timer0的频率  （忽略跳过）
+nrfx_timer_extended_compare( const p_instance,  cc_channel, cc_value,  timer_short_mask, enable_int)
+
+    nrf_timer_shorts_disable(p_instance->p_reg,
+        (TIMER_SHORTS_COMPARE0_STOP_Msk  << cc_channel) |
+        (TIMER_SHORTS_COMPARE0_CLEAR_Msk << cc_channel));
+
+    nrf_timer_shorts_enable(p_instance->p_reg, timer_short_mask);
+
+    nrfx_timer_compare(p_instance, cc_channel,  cc_value,  enable_int);
+
+    NRFX_LOG_INFO("Timer id: %d, capture value set: %lu, channel: %d.",
+                  p_instance->instance_id, cc_value, cc_channel);
+
+
+
+
+－－－－－－－－－－－－－－－－－
+
+//初始化定时器 timer0 
+nrfx_timer_init( p_instance,  * p_config,  timer_event_handler)
+ 
+    timer_control_block_t * p_cb = &m_cb[p_instance->instance_id];
+
+    检查bit_with,判断是8位定时器，还是16位定时器
+    NRF_TIMER_IS_BIT_WIDTH_VALID( p_reg, bit_width) ;
+                        (p_reg == NRF_TIMER0) && TIMER_BIT_WIDTH_MAX(0, bit_width);
+                         TIMER0_MAX_SIZE== 8   ? (bit_width == NRF_TIMER_BIT_WIDTH_8)   :
+                         TIMER0_MAX_SIZE == 16  ? (bit_width == NRF_TIMER_BIT_WIDTH_8)  ||  
+                                 (bit_width == NRF_TIMER_BIT_WIDTH_16)  :
+                          false;
+
+    //lint -restore
+
+    p_cb->handler = timer_event_handler;
+    p_cb->context = p_config->p_context;
+
+    //清除timer0所有通道的中端事件
+    for (i = 0; i < p_instance->cc_channel_count; ++i)
+        nrf_timer_event_clear(p_instance->p_reg, nrf_timer_compare_event_get(i));
+
+    //设置timer0优先级
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg), p_config->interrupt_priority);
+
+    //......
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+
+    
+    nrf_timer_mode_set(p_instance->p_reg, p_config->mode);              //设置timer0模式
+    nrf_timer_bit_width_set(p_instance->p_reg, p_config->bit_width);     //设置位宽
+    nrf_timer_frequency_set(p_instance->p_reg, p_config->frequency);    //设置timer0频率
+
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+ 
+
+
+==============================================
+
+
+//定时器(timer0)的中断入口
+void timer_blink_event_handler(nrf_timer_event_t event_type, void* p_context)
+ 
+    if (event_type == NRF_TIMER_EVENT_COMPARE0)
+     
+        timer_blink_timeout = 1;
+ 
+        //关闭timer0
+        port_timer_blink_disable();
+
+
+ 
+
+======＝＝＝＝===main====blink（dw3000发射，详见debug7）====＝＝＝＝＝＝==========
+ 
+
+main(void)
+
+    blink_app(); 
+
+
+------
+
+blink_app(void)
+    
+    while (1)
+
+            port_timer_clear_event();
+            switch(stat)           
+
+                case FSM_PRE_INIT:
+                    stat = FSM_INIT;
+                    blink_radio_init();                 //初始化dw1000
+                    port_timer_blink_cfg(100);    //timer1 =100ms
+                    break;
+
+                case FSM_INIT:
+                    stat = FSM_CHARGE;
+                    prepare_to_charge();           //BOOST_EN_PIN=1
+                    port_timer_blink_cfg(100);    //timer1 =100ms
+                    break;
+
+                case FSM_SLEEP:
+                    stat = FSM_CHARGE;
+                    prepare_to_charge();                                    //BOOST_EN_PIN=1
+                    port_timer_blink_cfg(BLINK_CHARGE_TIME);    //timer1 =60ms
+                    break;
+
+                case FSM_CHARGE:
+                    stat = FSM_SLEEP;
+
+                     //dw3000发射数据
+                     blink();                  
+                           dwt_writetxdata();                       //dw3000发射数据
+                           dwt_entersleep(DWT_DW_IDLE);   //dw3000進入休眠
+                           BOOST_EN_PIN=0 ;                     //关电
+    
+                    if(imu_is_moving > 0)
+                        imu_is_moving--;
+                        port_timer_blink_cfg(BLINK_INTERVAL_FAST);
+                  
+                    else                  
+                        port_timer_blink_cfg(BLINK_INTERVAL_SLOW);
+                  
+                    break;
+ 
+
+
+
+
+
+
+
+
+
+
+
