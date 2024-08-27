@@ -1,12 +1,178 @@
 
+#define UART_ENABLED 1                //  sdk_config.h
+ 
+#define NRFX_UARTE_ENABLED 1           //  sdk_config.h 
+#define NRFX_UARTE0_ENABLED 0 
+#define NRFX_UARTE1_ENABLED 0
+ 
+---
+
+#define NRF_DRV_UART_WITH_UARTE    //nrf_drv_uart.h
+#define NRF_DRV_UART_WITH_UART     //nrf_drv_uart.h
+
+#define NRF_DRV_UART_USE_UARTE  (nrf_drv_uart_use_easy_dma[p_instance->inst_idx])   //nrf_drv_uart.h
+ 
+---------
+
+typedef struct
+{
+    uint8_t inst_idx;
+    nrfx_uarte_t uarte;
+    nrfx_uart_t uart;
+ 
+} nrf_drv_uart_t;
+
+typedef struct
+{
+    NRF_UART_Type * p_reg;        
+    uint8_t         drv_inst_idx;  
+} nrfx_uart_t;
+
+enum { 
+    NRFX_UART0_INST_IDX,                    // 0
+    NRFX_UART_ENABLED_COUNT          // 1
+};
+enum {
+    NRFX_UARTE0_INST_IDX,                // 0
+    NRFX_UARTE_ENABLED_COUNT      // 1
+};
+
+typedef struct
+{
+    uint32_t            pseltxd;            ///< TXD pin number.
+    uint32_t            pselrxd;            ///< RXD pin number.
+    uint32_t            pselcts;            ///< CTS pin number.
+    uint32_t            pselrts;            ///< RTS pin number.
+    void *              p_context;          ///< Context passed to interrupt handler.
+    nrf_uart_hwfc_t     hwfc;               ///< Flow control configuration.
+    nrf_uart_parity_t   parity;             ///< Parity configuration.
+    nrf_uart_baudrate_t baudrate;           ///< Baudrate.
+    uint8_t             interrupt_priority; ///< Interrupt priority. 
+    bool                use_easy_dma; 
+} nrf_drv_uart_config_t;
+
+======================================================================
+
+#define APP_UART_DRIVER_INSTANCE 0
+
+static nrf_drv_uart_t    app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INSTANCE);
+       .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
+       .uarte.p_reg         =  NRF_UARTE0
+       .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
+       .uart.p_reg           =  NRF_UART0     
+      .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    //0
+
+------推导过程如下--------------
+
+//     static nrf_drv_uart_t    app_uart_inst = NRF_DRV_UART_INSTANCE(0);
+
+       .inst_idx =0,              
+
+       //NRF_DRV_UART_CREATE_UARTE(0)  
+       //     .uarte = NRFX_UARTE_INSTANCE(0)
+                  .p_reg        = NRFX_CONCAT_2(NRF_UARTE, 0),                      //NRF_UARTE0
+                  .drv_inst_idx = NRFX_CONCAT_3(NRFX_UARTE,0, _INST_IDX),   //NRFX_UARTE0_INST_IDX  //0
+
+       //NRF_DRV_UART_CREATE_UART(0)   
+       //   _NRF_DRV_UART_CREATE_UART(id)
+       //     NRF_DRV_UART_CREATE_UART_##id
+       //         NRF_DRV_UART_CREATE_UART_0
+       //            .uart = NRFX_UART_INSTANCE(0),
+                         .p_reg        = NRFX_CONCAT_2(NRF_UART, id),                            // NRF_UART0     
+                         .drv_inst_idx = NRFX_CONCAT_3(NRFX_UART, id, _INST_IDX),        // NRFX_UART0_INST_IDX  //0
 
 
 
+#define NRF_UART0                   (  (NRF_UART_Type*)   NRF_UART0_BASE )    //nrf2840.h
+
+=================================================
+
+typedef struct
+{
+    app_uart_evt_type_t evt_type; 
+    union
+    {
+        uint32_t error_communication;  
+        uint32_t error_code;        
+        uint8_t  value;              
+    } data;
+} app_uart_evt_t;
+
+
+typedef void (* app_uart_event_handler_t) (app_uart_evt_t * p_app_uart_event);
+
+static app_uart_event_handler_t   m_event_handler;   
+
+
+void uart_error_handle(app_uart_evt_t * p_event)
+{
+    if (p_event->evt_type == APP_UART_COMMUNICATION_ERROR)
+    {
+        APP_ERROR_HANDLER(p_event->data.error_communication);
+    }
+    else if (p_event->evt_type == APP_UART_FIFO_ERROR)
+    {
+        APP_ERROR_HANDLER(p_event->data.error_code);
+    }
+}
+
+
+=========================
+
+ 
+
+#define NRF_DRV_UART_DEFAULT_CONFIG                                          
+{                                                                            
+    .pseltxd            = NRF_UART_PSEL_DISCONNECTED,               // ffffffff         
+    .pselrxd            = NRF_UART_PSEL_DISCONNECTED,                // ffffffff                               
+    .pselcts            = NRF_UART_PSEL_DISCONNECTED,                 // ffffffff                              
+    .pselrts            = NRF_UART_PSEL_DISCONNECTED,                 // ffffffff                              
+    .p_context          = NULL,                                              
+    .hwfc               = UART_DEFAULT_CONFIG_HWFC,                // 0
+    .parity             =  UART_DEFAULT_CONFIG_PARITY,              // 0
+    .baudrate           = UART_DEFAULT_CONFIG_BAUDRATE,       // 19200
+    .interrupt_priority = UART_DEFAULT_CONFIG_IRQ_PRIORITY,           // 6       
+    NRF_DRV_UART_DEFAULT_CONFIG_USE_EASY_DMA                   //.use_easy_dma = true                    
+}
 
 
 
+IS_POWER_OF_TWO(A)
+    A  != 0    
+   &&  
+    ( A - 1) &  A  == 0  
 
 
+
+==================
+
+BOARD_PCA10112
+BSP_DEFINES_ONLY
+
+CONFIG_GPIO_AS_PINRESET
+FLOAT_ABI_HARD
+
+INITIALIZE_USER_SECTIONS
+NO_VTOR_CONFIG
+
+NRF21540_DRIVER_ENABLE=0
+NRF52840_XXAA
+
+ 
+
+
+
+========================
+
+C:\workspace-test\ommo_nrf-handboard2\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk\nrf52840_peripherals.h
+
+/* Universal Asynchronous Receiver-Transmitter */
+#define UART_PRESENT
+#define UART_COUNT 1
+
+/* Universal Asynchronous Receiver-Transmitter with DMA */
+#define UARTE_PRESENT
+#define UARTE_COUNT 2
 
 
 

@@ -1,0 +1,75 @@
+
+
+
+
+===========================gpio init===================================
+
+int main( )
+
+    //bsp_board_init(BSP_INIT_LEDS);
+         bsp_board_leds_init();
+    
+
+--------------------
+
+
+bsp_board_leds_init( )
+ 
+    for (i = 0; i < 4; ++i)
+    
+        nrf_gpio_cfg_output(m_board_led_list[i]);
+ 
+
+    for (i = 0; i < 4++i)
+ 
+        //bsp_board_led_off(i);
+        //    nrf_gpio_pin_write(m_board_led_list[i], LEDS_ACTIVE_STATE ? 0 : 1);
+                nrf_gpio_pin_write(m_board_led_list[i], 1);                                         //写1，关闭小灯
+    
+ 
+
+------------------------
+
+//设置io口为： output，  disconnect input buffer ， no pull , S0S1 ，no sense
+nrf_gpio_cfg_output( pin_number)
+ 
+    //nrf_gpio_cfg(   pin_number,   NRF_GPIO_PIN_DIR_OUTPUT,   NRF_GPIO_PIN_INPUT_DISCONNECT,
+    //  NRF_GPIO_PIN_NOPULL,   NRF_GPIO_PIN_S0S1,  NRF_GPIO_PIN_NOSENSE);
+
+          reg->PIN_CNF[pin_number] = ( dir << GPIO_PIN_CNF_DIR_Pos)    // 1<<0 ， output
+                               | ( input << GPIO_PIN_CNF_INPUT_Pos)                  // 1<<1 ， disconnect input buffer
+                               | ( pull << GPIO_PIN_CNF_PULL_Pos)                      // 0<<2 ， no pull
+                               | ( drive << GPIO_PIN_CNF_DRIVE_Pos)                  // 0<<8  , S0S1, 0和1电平都是标准驱动，不是强驱动，也不是断开
+                               | ( sense << GPIO_PIN_CNF_SENSE_Pos);               // 0<<16 ， no sense
+ 
+
+
+
+
+===========================led control===================================
+
+
+
+
+
+
+
+bsp_board_led_on(i);
+   nrf_gpio_pin_write(m_board_led_list[i], LEDS_ACTIVE_STATE ? 1 : 0);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
