@@ -96,9 +96,9 @@ void uart_init(void)
 // 参数： &app_uart_inst,  &config,  uart_event_handler
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
-             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
+             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
              .uart.p_reg           =  NRF_UART0     
-             .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    //0
+             .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
 
  nrf_drv_uart_init(nrf_drv_uart_t  *p_instance, *p_config,  event_handler)
  
@@ -107,32 +107,107 @@ void uart_init(void)
     m_handlers[0] = event_handler;                   // uart_event_handler
     m_contexts[0] = p_config->p_context;          // null
  
-    if (inst_idx == 1)  //0   (跳过，忽略)
-        ASSERT(p_config->use_easy_dma);
- 
     nrf_drv_uart_use_easy_dma[0] = p_config->use_easy_dma;  // 1
  
-    nrf_drv_uart_config_t  config = *p_config; 
+    nrf_drv_uart_config_t    config = *p_config; 
     config.p_context = inst_idx;   // 0
 
     ret_code_t result = 0;
 
     //if (NRF_DRV_UART_USE_UARTE)
-       if( nrf_drv_uart_use_easy_dma[0] )                 //yes    (待打log验证)
+       if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已打log验证)
  
-        result = nrfx_uarte_init(&p_instance->uarte,
-                                 (nrfx_uarte_config_t const *)&config,
-                                 event_handler ? uarte_evt_handler : NULL);
+          nrfx_uarte_init(&p_instance->uarte,  &config,  uarte_evt_handler );
  
-    else if (NRF_DRV_UART_USE_UART)
+
+------------
+
+// 参数： &app_uart_inst.uarte,  &config,  uart_event_handler
+             .uarte.p_reg         =  NRF_UARTE0
+             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
+
+nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
-        result = nrfx_uart_init(&p_instance->uart,
-                                (nrfx_uart_config_t const *)&config,
-                                event_handler ? uart_evt_handler : NULL);
+    uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0
  
-  
+    static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };     //NRFX_UARTE_ENABLED_COUNT=1
+ 
+
+    //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )
+          if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )
+
+
+    {
+        err_code = NRFX_ERROR_BUSY;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+
+
+
+    apply_config(p_instance, p_config);
 
  
+
+    p_cb->handler   = event_handler;
+    p_cb->p_context = p_config->p_context;
+
+    if (p_cb->handler)
+    {
+        interrupts_enable(p_instance, p_config->interrupt_priority);
+    }
+
+    nrf_uarte_enable(p_instance->p_reg);
+    p_cb->rx_buffer_length           = 0;
+    p_cb->rx_secondary_buffer_length = 0;
+    p_cb->tx_buffer_length           = 0;
+    p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
+    NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                     __func__,
+                     NRFX_LOG_ERROR_STRING_GET(err_code));
+ 
+
+--------
+
+// 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
+
+nrfx_prs_acquire( * p_base_addr,  irq_handler) 
+
+    prs_box_t * p_box = prs_box_get(p_base_addr);
+
+    if (p_box != NULL)
+    {
+        bool busy = false;
+
+        NRFX_CRITICAL_SECTION_ENTER();
+        if (p_box->acquired)
+        {
+            busy = true;
+        }
+        else
+        {
+            p_box->handler  = irq_handler;
+            p_box->acquired = true;
+        }
+        NRFX_CRITICAL_SECTION_EXIT();
+
+        if (busy)
+        {
+            ret_code = NRFX_ERROR_BUSY;
+            LOG_FUNCTION_EXIT(WARNING, ret_code);
+            return ret_code;
+        }
+    }
+
+    ret_code = NRFX_SUCCESS;
+    LOG_FUNCTION_EXIT(INFO, ret_code);
+    return ret_code;
+ 
+
+
 -------
 
 
