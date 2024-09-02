@@ -93,14 +93,14 @@ void uart_init(void)
 
  ---------
 
-// 参数： &app_uart_inst,  &config,  uart_event_handler
+// 参数： &app_uart_inst,  &config,  uart_error_handle
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
              .uart.p_reg           =  NRF_UART0     
              .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
 
- nrf_drv_uart_init(nrf_drv_uart_t  *p_instance, *p_config,  event_handler)
+nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
  
     uint32_t  inst_idx = p_instance->inst_idx;                 // 0
 
@@ -115,14 +115,13 @@ void uart_init(void)
     ret_code_t result = 0;
 
     //if (NRF_DRV_UART_USE_UARTE)
-       if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已打log验证)
- 
+       if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已打log验证) 
           nrfx_uarte_init(&p_instance->uarte,  &config,  uarte_evt_handler );
  
 
 ------------
 
-// 参数： &app_uart_inst.uarte,  &config,  uart_event_handler
+// 参数： &app_uart_inst.uarte,  &config,  uart_error_handle
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
@@ -132,10 +131,8 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };     //NRFX_UARTE_ENABLED_COUNT=1
  
-
     //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )
-          if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )
-
+          if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )  
 
     {
         err_code = NRFX_ERROR_BUSY;
@@ -144,8 +141,6 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
                          NRFX_LOG_ERROR_STRING_GET(err_code));
         return err_code;
     }
-
-
 
 
     apply_config(p_instance, p_config);
@@ -176,35 +171,56 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 
 nrfx_prs_acquire( * p_base_addr,  irq_handler) 
 
-    prs_box_t * p_box = prs_box_get(p_base_addr);
+    //prs_box_t * p_box = prs_box_get(p_base_addr);
+         p_box =  m_prs_box_4； 
+             .handler = NULL 
+             .acquired = false 
 
     if (p_box != NULL)
-    {
+ 
         bool busy = false;
 
         NRFX_CRITICAL_SECTION_ENTER();
+
         if (p_box->acquired)
-        {
             busy = true;
-        }
+
         else
-        {
             p_box->handler  = irq_handler;
             p_box->acquired = true;
-        }
+
         NRFX_CRITICAL_SECTION_EXIT();
 
-        if (busy)
-        {
+        if (busy)    
             ret_code = NRFX_ERROR_BUSY;
             LOG_FUNCTION_EXIT(WARNING, ret_code);
             return ret_code;
-        }
-    }
-
+        
     ret_code = NRFX_SUCCESS;
     LOG_FUNCTION_EXIT(INFO, ret_code);
     return ret_code;
+
+
+ 
+------
+
+参数：  NRF_UARTE0
+static prs_box_t * prs_box_get(  * p_base_addr)
+ 
+    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
+    #define IS_PRS_BOX(n, NRF_UARTE0)  (  NRF_UARTE0  == NRFX_PRS_BOX_##n##_ADDR)
+
+    //if (IS_PRS_BOX(4, p_base_addr)) 
+    if ( NRF_UARTE0  == NRFX_PRS_BOX_4_ADDR )      //yes
+
+         //return &m_prs_box_4;  
+              return m_prs_box_4 ； 
+                    .handler = NULL 
+                    .acquired = false 
+
+    else 
+        return NULL;
+  
  
 
 
