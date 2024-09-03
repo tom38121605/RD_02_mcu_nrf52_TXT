@@ -129,22 +129,12 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0
  
-    static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };     //NRFX_UARTE_ENABLED_COUNT=1
+    static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };   //NRFX_UARTE_ENABLED_COUNT=1
  
-    //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )
-          if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )  
-
-    {
-        err_code = NRFX_ERROR_BUSY;
-        NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                         __func__,
-                         NRFX_LOG_ERROR_STRING_GET(err_code));
-        return err_code;
-    }
+    （参考1--定义prs_box_t 变量记录已初始化标志，跳过）
 
 
     apply_config(p_instance, p_config);
-
  
 
     p_cb->handler   = event_handler;
@@ -165,42 +155,6 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
                      NRFX_LOG_ERROR_STRING_GET(err_code));
  
 
---------
-
-// 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
-
-nrfx_prs_acquire( * p_base_addr,  irq_handler) 
-
-    //prs_box_t * p_box = prs_box_get(p_base_addr);
-         p_box =  m_prs_box_4； 
-             .handler = NULL 
-             .acquired = false 
-
-    if (p_box != NULL)
- 
-        bool busy = false;
-
-        NRFX_CRITICAL_SECTION_ENTER();
-
-        if (p_box->acquired)
-            busy = true;
-
-        else
-            p_box->handler  = irq_handler;
-            p_box->acquired = true;
-
-        NRFX_CRITICAL_SECTION_EXIT();
-
-        if (busy)    
-            ret_code = NRFX_ERROR_BUSY;
-            LOG_FUNCTION_EXIT(WARNING, ret_code);
-            return ret_code;
-        
-    ret_code = NRFX_SUCCESS;
-    LOG_FUNCTION_EXIT(INFO, ret_code);
-    return ret_code;
-
-
  
 ------
 
@@ -220,9 +174,7 @@ static prs_box_t * prs_box_get(  * p_base_addr)
 
     else 
         return NULL;
-  
- 
-
+   
 
 -------
 
@@ -258,8 +210,85 @@ static prs_box_t * prs_box_get(  * p_base_addr)
 
 
 
+===============================跳过的参考====keep=============================
 
 
+参考1：
+
+    //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )          //no,跳过
+    //    if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )  
+              prs_box_t * p_box；
+                  .handler = NULL 
+                 .acquired = false 
+              if (p_box->acquired)
+                   return 1；   //err
+              p_box->handler  =uart_error_handle;
+              p_box->acquired = true;
+                   return 0；  
+              if(return 1）   //err
+
+                  err_code = NRFX_ERROR_BUSY;
+                  。。。
+
+
+--------
+
+// 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
+nrfx_prs_acquire( * p_base_addr,  irq_handler) 
+
+    //prs_box_t * p_box = prs_box_get(p_base_addr);
+         p_box =  m_prs_box_4； 
+             .handler = NULL 
+             .acquired = false 
+
+    if (p_box != NULL)
+ 
+        bool busy = false;
+
+        NRFX_CRITICAL_SECTION_ENTER();
+
+        //if (p_box->acquired)
+        //    busy = true;
+        //else
+
+            p_box->handler  = irq_handler;
+            p_box->acquired = true;
+
+        NRFX_CRITICAL_SECTION_EXIT();
+
+        if (busy)    
+            ret_code = NRFX_ERROR_BUSY;
+            LOG_FUNCTION_EXIT(WARNING, ret_code);
+            return ret_code;
+        
+    ret_code = NRFX_SUCCESS;
+    LOG_FUNCTION_EXIT(INFO, ret_code);
+    return ret_code;
+
+---------
+
+#define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0     //nrfx_prs.h
+
+typedef struct {
+    nrfx_irq_handler_t     handler;
+    bool                       acquired;
+} prs_box_t;
+
+
+#define PRS_BOX_DEFINE(n)      //n=4
+                                                
+    //static prs_box_t  m_prs_box_##n =  { .handler = NULL, .acquired = false };  
+         static prs_box_t  m_prs_box_4 =  { .handler = NULL, .acquired = false };  
+
+    void nrfx_prs_box_4_irq_handler(void)                               
+    {                                                                       
+         NRFX_ASSERT(m_prs_box_4.handler);                                   
+         m_prs_box_4.handler();                                            
+    }
+
+---
+
+m_prs_box_4
 
 
 
