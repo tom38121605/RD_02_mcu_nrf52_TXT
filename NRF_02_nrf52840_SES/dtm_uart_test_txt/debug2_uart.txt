@@ -84,11 +84,11 @@ void uart_init(void)
     config.pselrxd = p_comm_params->rx_pin_no;      // P1.15
     config.pseltxd = p_comm_params->tx_pin_no;      // P1.10
 
-    nrf_drv_uart_init(&app_uart_inst, &config, uart_event_handler);
+    nrf_drv_uart_init(&app_uart_inst, &config, uart_event_handler); 
  
     m_rx_ovf = false;
 
-    nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1);
+    nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
  
 
  ---------
@@ -131,19 +131,17 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };   //NRFX_UARTE_ENABLED_COUNT=1
  
-    （参考1--定义prs_box_t 变量记录已初始化标志，跳过）
+     。。。（参考1--定义prs_box_t 变量记录已初始化标志，跳过）
 
 
-    apply_config(p_instance, p_config);
- 
+    apply_config(p_instance, p_config);     //配置串口引脚和波特率 
 
-    p_cb->handler   = event_handler;
-    p_cb->p_context = p_config->p_context;
+    p_cb->handler   = event_handler;              //uart_error_handle
+    p_cb->p_context = p_config->p_context;   //null
 
     if (p_cb->handler)
-    {
-        interrupts_enable(p_instance, p_config->interrupt_priority);
-    }
+        interrupts_enable(p_instance, p_config->interrupt_priority);  //开启中断和优先级
+ 
 
     nrf_uarte_enable(p_instance->p_reg);
     p_cb->rx_buffer_length           = 0;
@@ -155,26 +153,30 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
                      NRFX_LOG_ERROR_STRING_GET(err_code));
  
 
+-----------------------------------
+
+// 功能： 配置串口引脚和波特率
+// 参数： &app_uart_inst.uarte,  &config 
+             .uarte.p_reg         =  NRF_UARTE0
+             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
+            config.pselrxd =   P1.15
+           config.pseltxd =  P1.10
+           config.baudrate  = 119200
+ apply_config( * p_instance, * p_config) 
  
-------
-
-参数：  NRF_UARTE0
-static prs_box_t * prs_box_get(  * p_base_addr)
+        nrf_gpio_pin_set(p_config->pseltxd);             //tx  P1.10， output  1
+        nrf_gpio_cfg_output(p_config->pseltxd); 
  
-    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
-    #define IS_PRS_BOX(n, NRF_UARTE0)  (  NRF_UARTE0  == NRFX_PRS_BOX_##n##_ADDR)
+        nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                   //rx   P1.15 ， input  nopull
 
-    //if (IS_PRS_BOX(4, p_base_addr)) 
-    if ( NRF_UARTE0  == NRFX_PRS_BOX_4_ADDR )      //yes
+    nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                       //设置波特率  19200
 
-         //return &m_prs_box_4;  
-              return m_prs_box_4 ； 
-                    .handler = NULL 
-                    .acquired = false 
+    nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);         //设置，无奇偶校验，无硬件流控制
 
-    else 
-        return NULL;
-   
+    nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //设置uart的tx，rx引脚
+
+
+    
 
 -------
 
@@ -213,7 +215,7 @@ static prs_box_t * prs_box_get(  * p_base_addr)
 ===============================跳过的参考====keep=============================
 
 
-参考1：
+---------------------------------------------参考1---------------------------------------------------------------
 
     //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )          //no,跳过
     //    if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )  
@@ -229,9 +231,27 @@ static prs_box_t * prs_box_get(  * p_base_addr)
 
                   err_code = NRFX_ERROR_BUSY;
                   。。。
+ 
+------
 
+参数：  NRF_UARTE0
+static prs_box_t * prs_box_get(  * p_base_addr)
+ 
+    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
+    #define IS_PRS_BOX(n, NRF_UARTE0)  (  NRF_UARTE0  == NRFX_PRS_BOX_##n##_ADDR)
 
---------
+    //if (IS_PRS_BOX(4, p_base_addr)) 
+    if ( NRF_UARTE0  == NRFX_PRS_BOX_4_ADDR )      //yes
+
+         //return &m_prs_box_4;  
+              return m_prs_box_4 ； 
+                    .handler = NULL 
+                    .acquired = false 
+
+    else 
+        return NULL;
+
+-----------------
 
 // 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
 nrfx_prs_acquire( * p_base_addr,  irq_handler) 
@@ -290,6 +310,7 @@ typedef struct {
 
 m_prs_box_4
 
+---------------------------------------------参考1---------end-----------------------------------------------------
 
 
 
