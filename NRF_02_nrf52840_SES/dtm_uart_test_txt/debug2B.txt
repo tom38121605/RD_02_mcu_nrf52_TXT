@@ -1,4 +1,19 @@
 
+
+static app_fifo_t                  m_tx_fifo;     
+
+typedef struct
+{
+    uint8_t *          p_buf;          
+    uint16_t           buf_size_mask;    
+    volatile uint32_t  read_pos;        
+    volatile uint32_t  write_pos;       
+} app_fifo_t;
+
+#define FIFO_LENGTH() fifo_length(p_fifo) 
+
+=========================================
+
 #define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0     //nrfx_prs.h
 
 typedef struct {

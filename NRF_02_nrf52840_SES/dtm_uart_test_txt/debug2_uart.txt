@@ -4,8 +4,13 @@
 
 ===========================uart init===================================
 
-int main( )
- 
+flow：
+
+     uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  --  apply_config
+
+----------------------------------------------------
+
+int main( ) 
     
     uart_init(); 
 
@@ -140,17 +145,15 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
     p_cb->p_context = p_config->p_context;   //null
 
     if (p_cb->handler)
-        interrupts_enable(p_instance, p_config->interrupt_priority);  //开启中断和优先级
+        interrupts_enable(p_instance, p_config->interrupt_priority);  //清中断标志，开启中断和优先级，使能中断
  
+    nrf_uarte_enable(p_instance->p_reg);   //使能串口
 
-    nrf_uarte_enable(p_instance->p_reg);
     p_cb->rx_buffer_length           = 0;
     p_cb->rx_secondary_buffer_length = 0;
     p_cb->tx_buffer_length           = 0;
     p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
-    NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                     __func__,
-                     NRFX_LOG_ERROR_STRING_GET(err_code));
+ 
  
 
 -----------------------------------
@@ -175,7 +178,6 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 
     nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //设置uart的tx，rx引脚
 
-
     
 
 -------
@@ -195,10 +197,58 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 
 
 
-
-
 ===========================uart tx===================================
 
+
+flow：
+
+       app_uart_put  --  app_fifo_put  --  ？
+
+数据流： 0x80 --  m_tx_fifo  --  tx_buffer
+
+--------------------------
+
+main 
+
+       app_uart_put(0x80);
+
+
+------------------------------------
+
+参数： 0x80
+ app_uart_put(  byte)
+ 
+    uint32_t err_code;
+    err_code = app_fifo_put(&m_tx_fifo, byte);
+
+    if (err_code == NRF_SUCCESS)
+ 
+        if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
+ 
+            if (app_fifo_get(&m_tx_fifo, tx_buffer) == NRF_SUCCESS)
+           
+                err_code = nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+           
+       
+--------
+
+参数： m_tx_fifo ， 0x80
+        m_rx_fifo->p_buf         =  rx_buf[256];
+        m_rx_fifo->buf_size_mask = 255;
+        m_rx_fifo->read_pos      = 0;
+        m_rx_fifo->write_pos     = 0;
+
+app_fifo_put(  * p_fifo,   byte)
+ 
+    if (FIFO_LENGTH() <= p_fifo->buf_size_mask)  
+        fifo_put(p_fifo, byte);
+   
+  
+
+ 
+
+   
+ 
 
 
 
