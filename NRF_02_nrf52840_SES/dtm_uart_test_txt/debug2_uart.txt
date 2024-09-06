@@ -202,49 +202,91 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 
 flow：
 
-       app_uart_put  --  app_fifo_put  --  ？
+       app_uart_put  --  app_fifo_put --  fifo_put   --  ？
 
-数据流： 0x80 --  m_tx_fifo  --  tx_buffer
+数据流： 0x80 --  (m_tx_fifo ) --  tx_buf  --  tx_buffer
 
 --------------------------
 
 main 
-
        app_uart_put(0x80);
 
-
 ------------------------------------
+
+隐含参数：app_uart_inst
+       .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
+       .uarte.p_reg         =  NRF_UARTE0
+       .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
+       .uart.p_reg           =  NRF_UART0     
+      .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    //0
 
 参数： 0x80
  app_uart_put(  byte)
  
     uint32_t err_code;
-    err_code = app_fifo_put(&m_tx_fifo, byte);
 
-    if (err_code == NRF_SUCCESS)
+    //app_fifo_put(&m_tx_fifo, byte);
+    //   fifo_put(m_tx_fifo, byte);
+
+         //p_fifo->p_buf[p_fifo->write_pos] = byte;     // 0x80 --  (m_tx_fifo ) --  tx_buf
+             tx_buf[*->write_pos] = byte;      
+          *->write_pos++;
  
-        if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
+    //if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
+    //    if(nrfx_uarte_tx_in_progress(&p_instance->uarte);)
+             if( m_cb[0].tx_buffer_length != 0); 
  
-            if (app_fifo_get(&m_tx_fifo, tx_buffer) == NRF_SUCCESS)
-           
-                err_code = nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
-           
-       
+               app_fifo_get(&m_tx_fifo, tx_buffer);                   // (m_tx_fifo ) --  tx_buf  --  tx_buffer
+                   *p_byte = p_fifo->p_buf[ *->read_pos ];
+                    p_fifo->read_pos++;
+
+               nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+
+
 --------
 
-参数： m_tx_fifo ， 0x80
-        m_rx_fifo->p_buf         =  rx_buf[256];
-        m_rx_fifo->buf_size_mask = 255;
-        m_rx_fifo->read_pos      = 0;
-        m_rx_fifo->write_pos     = 0;
+参数：  m_tx_fifo ， 0x80
+        m_tx_fifo->p_buf         =  tx_buf[256];
+        m_tx_fifo->buf_size_mask = 255;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
 
+数据流： 0x80  --   (m_tx_fifo ) -- tx_buf  
 app_fifo_put(  * p_fifo,   byte)
  
-    if (FIFO_LENGTH() <= p_fifo->buf_size_mask)  
-        fifo_put(p_fifo, byte);
-   
-  
+    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)  
+   //    if ( fifo_length(p_fifo) <= 255)  
+            if( (p_fifo->write_pos - p_fifo->read_pos)  <= 255 )  //如果fifo长度小于255(就是卡车没装满)，则运行下面
 
+                //fifo_put(p_fifo, byte);
+                    tx_buf[*->write_pos] = byte;     //0x80
+                    *->write_pos++;
+-------
+
+参数：m_tx_fifo, tx_buffer
+        m_tx_fifo->p_buf         =  tx_buf[256];
+        m_tx_fifo->buf_size_mask = 255;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
+
+数据流： (m_tx_fifo ) --   tx_buf  -->  tx_buffer
+app_fifo_get( * p_fifo,  * p_byte)
+
+    //if (FIFO_LENGTH() != 0) 
+         if( (p_fifo->write_pos - p_fifo->read_pos)  >0 )     //如果fifo长度大于1(就是卡车里有数据)，则运行下面
+
+        //fifo_get(p_fifo, p_byte);
+             *p_byte = p_fifo->p_buf[ *->read_pos ];
+              p_fifo->read_pos++;
+
+        return NRF_SUCCESS;
+
+    return NRF_ERROR_NOT_FOUND;
+ 
+
+   
+--------
+  
  
 
    
