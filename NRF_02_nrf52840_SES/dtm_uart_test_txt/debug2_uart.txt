@@ -8,6 +8,13 @@ flow：
 
      uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  --  apply_config
 
+数据流：  (rx_buf + tx_buf)  --> buffers  -->  (m_rx_fifo  + m_tx_fifo )  
+数据流2： params  -->  config
+数据流3： uart_error_handle  -->  m_handlers[0]
+数据流4： 0   -->  m_contexts[0]
+数据流51： uart_error_handle + config + 常量 -->  m_cb[0]  
+数据流52： rx_buffer -->  m_cb
+数据流6： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
 ----------------------------------------------------
 
 int main( ) 
@@ -38,15 +45,15 @@ void uart_init(void)
                        APP_IRQ_PRIORITY_LOWEST,      // 7
                        err_code);
 
-
 -----------------
 
 参数：   params, 256， 256， uart_error_handle,  7，  err_code
+数据流：  rx_buf + tx_buf  --> buffers
 #define APP_UART_FIFO_INIT(P_COMM_PARAMS,   RX_BUF_SIZE,   TX_BUF_SIZE,   EVT_HANDLER, IRQ_PRIO,   ERR_CODE)  
     do                                                                                             
     {                                                                                              
-        app_uart_buffers_t buffers;                                                                
-        static uint8_t     rx_buf[256];                                                     
+        app_uart_buffers_t buffers;       //全局变量                                                                    
+        static uint8_t     rx_buf[256];      //全局变量                                                
         static uint8_t     tx_buf[256];                                                     
                                                                                                     
         buffers.rx_buf      = rx_buf;                                                               
@@ -56,11 +63,12 @@ void uart_init(void)
         ERR_CODE = app_uart_init(P_COMM_PARAMS, &buffers, EVT_HANDLER, 7);                  
     } while (0)
  
-
 -----------------
 
-参数：   params, buffers， uart_error_handle,  7 
- app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
+参数：   params,  buffers， uart_error_handle,  7 
+数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
+数据流2：params  -->  config
+app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
     uint32_t err_code;
 
@@ -93,8 +101,106 @@ void uart_init(void)
  
     m_rx_ovf = false;
 
-    nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+    //nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+         nrfx_uarte_rx(&app_uart_inst->uarte, rx_buffer,1); 
+
+
+-----------------
+
+// 参数： &app_uart_inst 
+             .inst_idx =0,          
+             .uarte.p_reg         =  NRF_UARTE0
+             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
+             .uart.p_reg           =  NRF_UART0     
+             .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
+
+参数： app_uart_inst->uarte,  rx_buffer,  1
+数据流： rx_buffer -->  m_cb
+数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
+nrfx_uarte_rx(  * p_instance, * p_data,  length)   
  
+    uarte_control_block_t * p_cb = &m_cb[0];
+
+    //if (!nrfx_is_in_ram(p_data))                                     //no, 跳过
+        if ( rx_buffer & 0xE0000000 )  != 0x20000000)    
+           return err_code; 
+
+    bool second_buffer = false;
+
+    if (p_cb->handler)           //  yes， uart_error_handle
+        nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //或关闭uartrx中断
+    
+    if ( p_cb->rx_buffer_length != 0 )         //no, 跳过
+     
+        if ( p_cb->rx_secondary_buffer_length != 0 )            
+            if (p_cb->handler)        //  yes， uart_error_handle             
+                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
+            return err_code;         
+        second_buffer = true;
+     
+
+    if (!second_buffer)     //yes 
+
+        p_cb->rx_buffer_length = length;
+        p_cb->p_rx_buffer      = p_data;
+        p_cb->rx_secondary_buffer_length = 0;
+ 
+    else   //no
+        p_cb->p_rx_secondary_buffer = p_data;
+        p_cb->rx_secondary_buffer_length = length;
+
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //或清除中断标志
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //或清除中断标志
+
+    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );
+        NRF_UARTE0->RXD.PTR    = rx_buffer;
+        NRF_UARTE0->RXD.MAXCNT =1;
+
+
+    if (!second_buffer)    //yes
+   
+        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
+           TASK_STARTRX = 1;    //开启uarte 接收
+
+    else     //no
+        nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
+            SHORTS |= (1<<5);   //使能shortcut ， startrx 和 endrx之间的shortcut      //待理解
+
+//-------------------------------待续----------------------------------------------------
+
+
+    if (m_cb[0].handler == NULL)   //no
+    {
+        bool endrx;
+        bool rxto;
+        bool error;
+        do {
+            endrx  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
+            rxto   = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
+            error  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ERROR);
+        } while ((!endrx) && (!rxto) && (!error));
+
+        m_cb[p_instance->drv_inst_idx].rx_buffer_length = 0;
+
+        if (error)
+        {
+            err_code = NRFX_ERROR_INTERNAL;
+        }
+
+        if (rxto)
+        {
+            err_code = NRFX_ERROR_FORBIDDEN;
+        }
+    }
+    else
+    {
+        nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
+    }
+    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+ 
+
+
 
  ---------
 
@@ -105,9 +211,11 @@ void uart_init(void)
              .uart.p_reg           =  NRF_UART0     
              .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
 
+数据流：uart_error_handle  -->  m_handlers[0]
+数据流：0   -->  m_contexts[0]
 nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
  
-    uint32_t  inst_idx = p_instance->inst_idx;                 // 0
+    uint32_t  inst_idx = p_instance->inst_idx;       // 0
 
     m_handlers[0] = event_handler;                   // uart_event_handler
     m_contexts[0] = p_config->p_context;          // null
@@ -130,6 +238,7 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
+数据流：uart_error_handle + config + 常量 -->  m_cb[0]      //给m_cb[0]赋值（大部分， 发送和接收缓冲尚未赋值）
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0
@@ -162,21 +271,22 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 // 参数： &app_uart_inst.uarte,  &config 
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
-            config.pselrxd =   P1.15
-           config.pseltxd =  P1.10
-           config.baudrate  = 119200
- apply_config( * p_instance, * p_config) 
+             config.pselrxd =   P1.15
+             config.pseltxd =  P1.10
+             config.baudrate  = 119200
+
+apply_config( * p_instance, * p_config) 
  
         nrf_gpio_pin_set(p_config->pseltxd);             //tx  P1.10， output  1
         nrf_gpio_cfg_output(p_config->pseltxd); 
  
         nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                   //rx   P1.15 ， input  nopull
 
-    nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                       //设置波特率  19200
+        nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                       //设置波特率  19200
 
-    nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);         //设置，无奇偶校验，无硬件流控制
+        nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);         //设置，无奇偶校验，无硬件流控制
 
-    nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //设置uart的tx，rx引脚
+        nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //设置uart的tx，rx引脚
 
     
 
@@ -213,15 +323,19 @@ main
 
 ------------------------------------
 
+隐含参数：m_tx_fifo
+        m_tx_fifo->p_buf         =   tx_buf[256];
+        m_tx_fifo->buf_size_mask = 256-1;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
+
 隐含参数：app_uart_inst
        .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
        .uarte.p_reg         =  NRF_UARTE0
        .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
-       .uart.p_reg           =  NRF_UART0     
-      .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    //0
 
 参数： 0x80
- app_uart_put(  byte)
+app_uart_put(  byte )
  
     uint32_t err_code;
 
@@ -234,14 +348,92 @@ main
  
     //if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
     //    if(nrfx_uarte_tx_in_progress(&p_instance->uarte);)
-             if( m_cb[0].tx_buffer_length != 0); 
+             if( m_cb[0].tx_buffer_length != 0);                            //？
  
                app_fifo_get(&m_tx_fifo, tx_buffer);                   // (m_tx_fifo ) --  tx_buf  --  tx_buffer
                    *p_byte = p_fifo->p_buf[ *->read_pos ];
                     p_fifo->read_pos++;
 
-               nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+               //nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+               //   nrfx_uarte_tx(app_uart_inst->uarte,  tx_buffer,  1);
+                        nrfx_uarte_tx_with_hold(app_uart_inst->uarte,  tx_buffer,  1, false);
 
+--------------------------
+
+隐含参数：app_uart_inst
+       .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
+       .uarte.p_reg         =  NRF_UARTE0
+       .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
+
+参数：  app_uart_inst->uarte,  tx_buffer,  1,  false
+nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
+{
+    uarte_control_block_t * p_cb = &m_cb[0];
+
+    // EasyDMA requires that transfer buffers are placed in DataRAM,
+    // signal error if the are not.
+    if (!nrfx_is_in_ram(p_data))
+    {
+        err_code = NRFX_ERROR_INVALID_ADDR;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+    if (nrfx_uarte_tx_in_progress(p_instance))
+    {
+        err_code = NRFX_ERROR_BUSY;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+    p_cb->tx_buffer_length = length;
+    p_cb->p_tx_buffer      = p_data;
+
+    NRFX_LOG_INFO("Transfer tx_len: %d.", p_cb->tx_buffer_length);
+    NRFX_LOG_DEBUG("Tx data:");
+    NRFX_LOG_HEXDUMP_DEBUG(p_cb->p_tx_buffer,
+                           p_cb->tx_buffer_length * sizeof(p_cb->p_tx_buffer[0]));
+
+    err_code = NRFX_SUCCESS;
+
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
+    nrf_uarte_tx_buffer_set(p_instance->p_reg, p_cb->p_tx_buffer, p_cb->tx_buffer_length);
+    if(!hold_xfer) nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
+
+    if (p_cb->handler == NULL)
+    {
+        bool endtx;
+        bool txstopped;
+        do
+        {
+            endtx     = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
+            txstopped = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
+        }
+        while ((!endtx) && (!txstopped));
+
+        if (txstopped)
+        {
+            err_code = NRFX_ERROR_FORBIDDEN;
+        }
+        else
+        {
+            // Transmitter has to be stopped by triggering the STOPTX task to achieve
+            // the lowest possible level of the UARTE power consumption.
+            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STOPTX);
+
+            while (!nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED))
+            {}
+        }
+        p_cb->tx_buffer_length = 0;
+    }
+
+    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+}
 
 --------
 
@@ -299,6 +491,49 @@ app_fifo_get( * p_fifo,  * p_byte)
 
 
 
+参数：   params,  buffers， uart_error_handle,  7 
+数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
+数据流2：params  -->  config
+app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
+ 
+    uint32_t err_code;
+
+    m_event_handler = event_handler;
+ 
+    //app_fifo_init(&m_rx_fifo, p_buffers->rx_buf, p_buffers->rx_buf_size); 
+        m_rx_fifo->p_buf         =  p_buffers->rx_buf;
+        m_rx_fifo->buf_size_mask = p_buffers->rx_buf_size - 1;
+        m_rx_fifo->read_pos      = 0;
+        m_rx_fifo->write_pos     = 0;
+
+    //app_fifo_init(&m_tx_fifo, p_buffers->tx_buf, p_buffers->tx_buf_size);
+        m_tx_fifo->p_buf         =  p_buffers->tx_buf;
+        m_tx_fifo->buf_size_mask = p_buffers->tx_buf_size - 1;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
+ 
+    nrf_drv_uart_config_t   config = NRF_DRV_UART_DEFAULT_CONFIG;
+
+    config.baudrate =p_comm_params->baud_rate;
+    config.hwfc = (p_comm_params->flow_control == 0) ?  NRF_UART_HWFC_DISABLED : NRF_UART_HWFC_ENABLED;   // 无硬件流控制
+    config.interrupt_priority = irq_priority;   // 7
+    config.parity = p_comm_params->use_parity ? NRF_UART_PARITY_INCLUDED : NRF_UART_PARITY_EXCLUDED;          // 无奇偶
+    config.pselcts = p_comm_params->cts_pin_no;
+    config.pselrts = p_comm_params->rts_pin_no;
+    config.pselrxd = p_comm_params->rx_pin_no;      // P1.15
+    config.pseltxd = p_comm_params->tx_pin_no;      // P1.10
+
+    nrf_drv_uart_init(&app_uart_inst, &config, uart_event_handler); 
+ 
+    m_rx_ovf = false;
+
+    nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+ 
+
+
+
+
+
 
 
 
@@ -314,11 +549,12 @@ app_fifo_get( * p_fifo,  * p_byte)
               prs_box_t * p_box；
                   .handler = NULL 
                  .acquired = false 
-              if (p_box->acquired)
-                   return 1；   //err
+              if (p_box->acquired)   //no，跳过
+                   return =1；   //err
               p_box->handler  =uart_error_handle;
               p_box->acquired = true;
-                   return 0；  
+              return =0；    //ok
+
               if(return 1）   //err
 
                   err_code = NRFX_ERROR_BUSY;

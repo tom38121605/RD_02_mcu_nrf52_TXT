@@ -1,4 +1,16 @@
+ 
 
+static uint8_t rx_buffer[1];
+
+
+---
+
+#define UARTE_COUNT 2
+#define INSTANCE_COUNT   UARTE_COUNT
+static nrf_uart_event_handler_t m_handlers[INSTANCE_COUNT];
+static void *                   m_contexts[INSTANCE_COUNT];
+
+==========
 
 static app_fifo_t                  m_tx_fifo;     
 
@@ -17,6 +29,7 @@ static __INLINE uint32_t fifo_length(app_fifo_t * p_fifo)
     uint32_t tmp = p_fifo->read_pos;
     return p_fifo->write_pos - tmp;
 }
+
 
 =========================================
 
