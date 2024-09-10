@@ -169,35 +169,13 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
 //-------------------------------´ýÐø----------------------------------------------------
 
 
-    if (m_cb[0].handler == NULL)   //no
-    {
-        bool endrx;
-        bool rxto;
-        bool error;
-        do {
-            endrx  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
-            rxto   = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
-            error  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ERROR);
-        } while ((!endrx) && (!rxto) && (!error));
+    if (m_cb[0].handler == NULL)   //no       
+            ¡£¡£¡£ 
+  
+    else 
 
-        m_cb[p_instance->drv_inst_idx].rx_buffer_length = 0;
-
-        if (error)
-        {
-            err_code = NRFX_ERROR_INTERNAL;
-        }
-
-        if (rxto)
-        {
-            err_code = NRFX_ERROR_FORBIDDEN;
-        }
-    }
-    else
-    {
-        nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
-    }
-    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
-    return err_code;
+        //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
+              INTENSET = ERROR | ENDRX£»
  
 
 
