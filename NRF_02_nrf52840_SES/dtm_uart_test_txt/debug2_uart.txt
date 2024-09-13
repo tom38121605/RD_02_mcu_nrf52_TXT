@@ -1,6 +1,6 @@
 
 待察1：   p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的
-
+待察2：   mcb的作用，mcb和m_rx_fifo , m_tx_fifo的关系
 
 
 ===========================uart init===================================
@@ -13,9 +13,13 @@ flow：
 数据流2： params  -->  config
 数据流3： uart_error_handle  -->  m_handlers[0]
 数据流4： 0   -->  m_contexts[0]
-数据流51： uart_error_handle + config + 常量 -->  m_cb[0]  
-数据流52： rx_buffer -->  m_cb
-数据流6： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
+
+数据流51： uart_error_handle  + 常量 -->  m_cb[0]  
+数据流52： config  -- 寄存器
+数据流53： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
+
+数据流61： rx_buffer -->  m_cb
+数据流62： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
 
 评论： buffers 就是多此一举
 
@@ -51,7 +55,7 @@ void uart_init(void)
 
 -----------------
 
-评论： buffers 真是多此一举
+评论： buffers 是多此一举
 参数：   params, 256， 256， uart_error_handle,  7，  err_code
 数据流：  rx_buf + tx_buf  --> buffers
 #define APP_UART_FIFO_INIT(P_COMM_PARAMS,   RX_BUF_SIZE,   TX_BUF_SIZE,   EVT_HANDLER, IRQ_PRIO,   ERR_CODE)  
@@ -137,7 +141,7 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
     ret_code_t result = 0;
 
     //if (NRF_DRV_UART_USE_UARTE)
-       if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已打log验证) 
+       if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已log验证) 
           nrfx_uarte_init(&p_instance->uarte,  &config,  uarte_evt_handler );
  
 
@@ -147,7 +151,9 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
-数据流：uart_error_handle + config + 常量 -->  m_cb[0]      //给m_cb[0]赋值（大部分， 发送和接收缓冲尚未赋值）
+数据流：uart_error_handle + 常量 -->  m_cb[0]      //给m_cb[0]赋值（大部分， 发送和接收缓冲尚未赋值）
+数据流2： config  -- 寄存器
+数据流3： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0
@@ -156,8 +162,8 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
      。。。（参考1--定义prs_box_t 变量记录已初始化标志，跳过）
 
-
-    apply_config(p_instance, p_config);     //配置串口引脚和波特率 
+    //配置串口引脚和波特率 
+    apply_config(p_instance, p_config);     
 
     p_cb->handler   = event_handler;              //uart_error_handle
     p_cb->p_context = p_config->p_context;   //null
@@ -184,6 +190,7 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
              config.pseltxd =  P1.10
              config.baudrate  = 119200
 
+数据流： config  -- 寄存器
 apply_config( * p_instance, * p_config) 
  
         nrf_gpio_pin_set(p_config->pseltxd);             //tx  P1.10， output  1
