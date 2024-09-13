@@ -16,6 +16,9 @@ flow：
 数据流51： uart_error_handle + config + 常量 -->  m_cb[0]  
 数据流52： rx_buffer -->  m_cb
 数据流6： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
+
+评论： buffers 就是多此一举
+
 ----------------------------------------------------
 
 int main( ) 
@@ -48,6 +51,7 @@ void uart_init(void)
 
 -----------------
 
+评论： buffers 真是多此一举
 参数：   params, 256， 256， uart_error_handle,  7，  err_code
 数据流：  rx_buf + tx_buf  --> buffers
 #define APP_UART_FIFO_INIT(P_COMM_PARAMS,   RX_BUF_SIZE,   TX_BUF_SIZE,   EVT_HANDLER, IRQ_PRIO,   ERR_CODE)  
@@ -201,8 +205,6 @@ apply_config( * p_instance, * p_config)
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
-             .uart.p_reg           =  NRF_UART0     
-             .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
 
 参数： app_uart_inst->uarte,  rx_buffer,  1
 数据流： rx_buffer -->  m_cb
@@ -274,8 +276,9 @@ flow：
        app_uart_put  --  app_fifo_put --  fifo_put   --  ？
 
 
-数据流： 0x80 --  (m_tx_fifo ) --  tx_buf  --  tx_buffer
-
+数据流： 0x80 --  (m_tx_fifo ) --   tx_buf + read_pos   --  tx_buffer
+数据流2： tx_buffer + len -- mcb 
+数据流3： tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT     //tx dma连接
 --------------------------
 
 main 
@@ -295,7 +298,7 @@ main
        .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
 
 参数： 0x80
-数据流： 0x80 --  (m_tx_fifo ) --  tx_buf   --  tx_buffer
+数据流： 0x80 --  (m_tx_fifo ) --  tx_buf + read_pos  --  tx_buffer
 app_uart_put(  byte )
  
     uint32_t err_code;
@@ -309,92 +312,60 @@ app_uart_put(  byte )
  
     //if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
     //    if(!nrfx_uarte_tx_in_progress(&p_instance->uarte);)
-             if(!( m_cb[0].tx_buffer_length != 0) )                            //yes
+             if(!( m_cb[0].tx_buffer_length != 0) )                            //yes (第一次发送第一个字节)
  
                //app_fifo_get(&m_tx_fifo, tx_buffer);                        // (m_tx_fifo ) --  tx_buf  --  tx_buffer
                     tx_buffer = p_fifo->p_buf[ *->read_pos ];
                     m_tx_fifo >read_pos++;
 
+               //把要发送的数据存入到tx_buffer，连接到uart的tx dma， 开启uart的tx发送
                //nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
                //   nrfx_uarte_tx(app_uart_inst->uarte,  tx_buffer,  1);
                         nrfx_uarte_tx_with_hold(app_uart_inst->uarte,  tx_buffer,  1, false);
 
 --------------------------
 
+功能： 把要发送的数据存入到tx_buffer，连接到uart的tx dma， 开启uart的tx发送
 隐含参数：app_uart_inst
        .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
        .uarte.p_reg         =  NRF_UARTE0
        .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
 
 参数：  app_uart_inst->uarte,  tx_buffer,  1,  false
+数据流： tx_buffer + len -- mcb 
+数据流2： tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT    //相当于dma的地址连接
 nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
-{
+ 
     uarte_control_block_t * p_cb = &m_cb[0];
 
-    // EasyDMA requires that transfer buffers are placed in DataRAM,
-    // signal error if the are not.
-    if (!nrfx_is_in_ram(p_data))
-    {
-        err_code = NRFX_ERROR_INVALID_ADDR;
-        NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                         __func__,
-                         NRFX_LOG_ERROR_STRING_GET(err_code));
+    //if (!nrfx_is_in_ram(p_data))       //easy，跳过   （见其他参考）
         return err_code;
-    }
 
-    if (nrfx_uarte_tx_in_progress(p_instance))
-    {
-        err_code = NRFX_ERROR_BUSY;
-        NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                         __func__,
-                         NRFX_LOG_ERROR_STRING_GET(err_code));
-        return err_code;
-    }
-    p_cb->tx_buffer_length = length;
-    p_cb->p_tx_buffer      = p_data;
+    //if (nrfx_uarte_tx_in_progress(p_instance))      //如果还有数据未发送完  （正在发送）
+         if(!( m_cb[0].tx_buffer_length != 0) )                  
+             return err_code;
+   
+    p_cb->tx_buffer_length = 1;          //len  --  mcb[0]
+    p_cb->p_tx_buffer      = tx_buffer;        // tx_buffer -- mcb[0]
 
-    NRFX_LOG_INFO("Transfer tx_len: %d.", p_cb->tx_buffer_length);
-    NRFX_LOG_DEBUG("Tx data:");
-    NRFX_LOG_HEXDUMP_DEBUG(p_cb->p_tx_buffer,
-                           p_cb->tx_buffer_length * sizeof(p_cb->p_tx_buffer[0]));
-
-    err_code = NRFX_SUCCESS;
-
+    //清下面的两个中断标志 ENDTX 和 TXSTOPPED
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
-    nrf_uarte_tx_buffer_set(p_instance->p_reg, p_cb->p_tx_buffer, p_cb->tx_buffer_length);
-    if(!hold_xfer) nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
 
-    if (p_cb->handler == NULL)
-    {
-        bool endtx;
-        bool txstopped;
-        do
-        {
-            endtx     = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
-            txstopped = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
-        }
-        while ((!endtx) && (!txstopped));
+    //nrf_uarte_tx_buffer_set( NRF_UARTE0, tx_buffer, 1 );    //把tx_buffer连接到uartetx的dma
+        p_reg->TXD.PTR    =  p_buffer;
+        p_reg->TXD.MAXCNT = length;
 
-        if (txstopped)
-        {
-            err_code = NRFX_ERROR_FORBIDDEN;
-        }
-        else
-        {
-            // Transmitter has to be stopped by triggering the STOPTX task to achieve
-            // the lowest possible level of the UARTE power consumption.
-            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STOPTX);
+    if(!hold_xfer)              //yes
 
-            while (!nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED))
-            {}
-        }
-        p_cb->tx_buffer_length = 0;
-    }
+        nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
+             p_reg->TASKS_STARTTX =1;        //开启uart tx发送
 
-    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
-    return err_code;
-}
+
+    if (p_cb->handler == NULL)   //no  ，忽略  （下面或是查询方式）
+         。。。
+
+
 
 --------
 
@@ -693,6 +664,12 @@ m_prs_box_4
            return err_code; 
 
 -------
+
+    //if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
+    //    if(!nrfx_uarte_tx_in_progress(&p_instance->uarte);)
+             if(!( m_cb[0].tx_buffer_length != 0) )                            //yes (第一次发送第一个字节)
+
+---------
 
 
  app_fifo_init(  * p_fifo,   * p_buf,  buf_size) 
