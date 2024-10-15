@@ -1,13 +1,27 @@
 
-待察1：   p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的
-待察2：   mcb的作用，mcb和m_rx_fifo , m_tx_fifo的关系
+
+待察1：  rx_buffer 和 rx_buf 的区别
+             rx_buffer  -- 固定连接接收DMA，( RXD.PTR 和 RXD.MAXCNT )
+             rx_buf   -- 用户的数据，用于存储rx_buffer接收到的数据
+
+待察2：  mcb的作用
+答：   主要是在发送和接收时用，
+         。 一是连接 rx_buffer 和 tx_buffer 给DMA用 （包括DMA的长度）
+         。二是连接m_rx_fifo，接收用户的数据
+
+待察3：  mcb和m_rx_fifo , m_tx_fifo的关系
+答：       用户数据  --> m_tx_fifo  -->   mcb  -->  DMA 
+
+待察4：  m_contexts[0]的作用
+待察5：  mcb的p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的
+
 
 
 ===========================uart init===================================
 
 flow：
 
-     uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  --  apply_config
+     uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  --  apply_config  --  nrfx_uarte_rx
 
 数据流：  (rx_buf + tx_buf)  --> buffers  -->  (m_rx_fifo  + m_tx_fifo )  
 数据流2： params  -->  config
@@ -31,7 +45,7 @@ int main( )
 
 -------------------------------------------------------
 
-
+数据流； 常量 --  params
 void uart_init(void)
  
     uint32_t err_code;
@@ -80,7 +94,6 @@ void uart_init(void)
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
     uint32_t err_code;
-
     m_event_handler = event_handler;
  
     //app_fifo_init(&m_rx_fifo, p_buffers->rx_buf, p_buffers->rx_buf_size); 
@@ -151,7 +164,7 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
-数据流：uart_error_handle + 常量 -->  m_cb[0]      //给m_cb[0]赋值（大部分， 发送和接收缓冲尚未赋值）
+数据流：uart_error_handle + 常量(lenth + state) -->  m_cb[0]      //给m_cb[0]赋值（给大部分成员赋值， 发送和接收缓冲尚未赋值）
 数据流2： config  -- 寄存器
 数据流3： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
@@ -179,7 +192,6 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
     p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
  
  
-
 -----------------------------------
 
 // 功能： 配置串口引脚和波特率
@@ -214,7 +226,7 @@ apply_config( * p_instance, * p_config)
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
 参数： app_uart_inst->uarte,  rx_buffer,  1
-数据流： rx_buffer -->  m_cb
+数据流： rx_buffer + len(=1) -->  m_cb
 数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
 nrfx_uarte_rx(  * p_instance, * p_data,  length)   
  
@@ -235,12 +247,12 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
 
     if (!second_buffer)     //yes 
 
-        p_cb->rx_buffer_length = length;
-        p_cb->p_rx_buffer      = p_data;
+        p_cb->rx_buffer_length = length;             //1
+        p_cb->p_rx_buffer      = p_data;              //rx_buffer 
         p_cb->rx_secondary_buffer_length = 0;
  
     else   //no
-        p_cb->p_rx_secondary_buffer = p_data;
+        p_cb->p_rx_secondary_buffer = p_data;     
         p_cb->rx_secondary_buffer_length = length;
 
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //或清除中断标志
@@ -249,7 +261,6 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
     //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );    //把rx_buffer连接到uarterx的dma
         NRF_UARTE0->RXD.PTR    = rx_buffer;
         NRF_UARTE0->RXD.MAXCNT =1;
-
 
     if (!second_buffer)    //yes
    
@@ -271,41 +282,38 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
  
 
 
-
-
-
-
 ===========================uart tx===================================
 
 
 flow：
 
-       app_uart_put  --  app_fifo_put --  fifo_put   --  ？
+       app_uart_put  --  app_fifo_put --  fifo_put   --  nrf_drv_uart_tx   --  nrfx_uarte_tx_with_hold  --  nrf_uarte_tx_buffer_set  
+       --   nrf_uarte_task_trigger
 
-
-数据流： 0x80 --  (m_tx_fifo ) --   tx_buf + read_pos   --  tx_buffer
+数据流： 0x80 --  (m_tx_fifo ) -- [ tx_buf + write_pos ]  --  [ tx_buf + read_pos ]  --  tx_buffer
 数据流2： tx_buffer + len -- mcb 
 数据流3： tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT     //tx dma连接
---------------------------
+
+-------------------------------------
 
 main 
        app_uart_put(0x80);
 
 ------------------------------------
 
-隐含参数：m_tx_fifo
+全局变量：m_tx_fifo
         m_tx_fifo->p_buf         =   tx_buf[256];
         m_tx_fifo->buf_size_mask = 256-1;
         m_tx_fifo->read_pos      = 0;
         m_tx_fifo->write_pos     = 0;
 
-隐含参数：app_uart_inst
+全局变量：app_uart_inst
        .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
        .uarte.p_reg         =  NRF_UARTE0
        .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
 
 参数： 0x80
-数据流： 0x80 --  (m_tx_fifo ) --  tx_buf + read_pos  --  tx_buffer
+数据流： 0x80 --  (m_tx_fifo ) -- [ tx_buf + write_pos ]  --  [ tx_buf + read_pos ]  --  tx_buffer
 app_uart_put(  byte )
  
     uint32_t err_code;
@@ -313,7 +321,7 @@ app_uart_put(  byte )
     //app_fifo_put(&m_tx_fifo, byte);
     //   fifo_put(m_tx_fifo, byte);
 
-         //p_fifo->p_buf[p_fifo->write_pos] = byte;     // 0x80 --  (m_tx_fifo ) --  tx_buf
+         //p_fifo->p_buf[*->write_pos] = byte;     // 0x80 --  (m_tx_fifo ) --  tx_buf
              tx_buf[*->write_pos] = byte;      
           *->write_pos++;
  
@@ -330,10 +338,12 @@ app_uart_put(  byte )
                //   nrfx_uarte_tx(app_uart_inst->uarte,  tx_buffer,  1);
                         nrfx_uarte_tx_with_hold(app_uart_inst->uarte,  tx_buffer,  1, false);
 
+
 --------------------------
 
+
 功能： 把要发送的数据存入到tx_buffer，连接到uart的tx dma， 开启uart的tx发送
-隐含参数：app_uart_inst
+全局变量：app_uart_inst
        .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
        .uarte.p_reg         =  NRF_UARTE0
        .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
@@ -371,7 +381,6 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
 
     if (p_cb->handler == NULL)   //no  ，忽略  （下面或是查询方式）
          。。。
-
 
 
 --------
@@ -415,16 +424,21 @@ app_fifo_get( * p_fifo,  * p_byte)
     return NRF_ERROR_NOT_FOUND;
  
  
-
-   
+  
  
-
-
-
 
 ===========================uart rx===================================
 
+flow：
+       
+app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init
 
+
+
+数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
+数据流2：params  -->  config
+
+---------------------------------------------------------------------------------------------------------------
 
 参数：   params,  buffers， uart_error_handle,  7 
 数据流： buffers  -->  m_rx_fifo  + m_tx_fifo

@@ -1,0 +1,16 @@
+
+0. 在ses的v8.14中编译官网dtm例程，出现下面的错误提示
+      Linking 'direct_test_mode_pca10112.elf'
+        .text section is larger than specified size
+        .rodata section is larger than specified size
+        Build failed, exit status 0x1
+答： 要换成sesV5.42版本来开发
+
+
+
+
+
+
+
+
+
