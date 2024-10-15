@@ -4,13 +4,16 @@
              rx_buffer  -- 固定连接接收DMA，( RXD.PTR 和 RXD.MAXCNT )
              rx_buf   -- 用户的数据，用于存储rx_buffer接收到的数据
 
-待察2：  mcb的作用
+待察2：  mcb的作用 （或用于切换第一包数据和第二包数据）
 答：   主要是在发送和接收时用，
          。 一是连接 rx_buffer 和 tx_buffer 给DMA用 （包括DMA的长度）
          。二是连接m_rx_fifo，接收用户的数据
 
-待察3：  mcb和m_rx_fifo , m_tx_fifo的关系
-答：       用户数据  --> m_tx_fifo  -->   mcb  -->  DMA 
+
+答：       用户数据byte -- tx_buf  --> m_tx_fifo  -->  tx_buffer --  mcb  -->  DMA 
+
+                  p_fifo->p_buf[*->write_pos] = byte;  
+                  tx_buffer = p_fifo->p_buf[ *->read_pos ];
 
 待察4：  m_contexts[0]的作用
 待察5：  mcb的p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的
@@ -329,11 +332,12 @@ app_uart_put(  byte )
     //    if(!nrfx_uarte_tx_in_progress(&p_instance->uarte);)
              if(!( m_cb[0].tx_buffer_length != 0) )                            //yes (第一次发送第一个字节)
  
+               //把要发送的数据存入到tx_buffer 
                //app_fifo_get(&m_tx_fifo, tx_buffer);                        // (m_tx_fifo ) --  tx_buf  --  tx_buffer
                     tx_buffer = p_fifo->p_buf[ *->read_pos ];
                     m_tx_fifo >read_pos++;
 
-               //把要发送的数据存入到tx_buffer，连接到uart的tx dma， 开启uart的tx发送
+               //连接到uart的tx dma， 开启uart的tx发送
                //nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
                //   nrfx_uarte_tx(app_uart_inst->uarte,  tx_buffer,  1);
                         nrfx_uarte_tx_with_hold(app_uart_inst->uarte,  tx_buffer,  1, false);
@@ -342,7 +346,7 @@ app_uart_put(  byte )
 --------------------------
 
 
-功能： 把要发送的数据存入到tx_buffer，连接到uart的tx dma， 开启uart的tx发送
+功能：连接到uart的tx dma， 开启uart的tx发送
 全局变量：app_uart_inst
        .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
        .uarte.p_reg         =  NRF_UARTE0
@@ -435,14 +439,16 @@ app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init
 
 
 
-数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
-数据流2：params  -->  config
+数据流：  ( rx_buf )  --  buffers  -->  m_rx_fifo  + m_tx_fifo
+数据流2：   rx_buffer + len(=1) -->  m_cb
+数据流3： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
+
 
 ---------------------------------------------------------------------------------------------------------------
 
 参数：   params,  buffers， uart_error_handle,  7 
-数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
-数据流2：params  -->  config
+数据流： ( rx_buf )  --  buffers  -->  m_rx_fifo 
+
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
     uint32_t err_code;
@@ -455,31 +461,78 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
         m_rx_fifo->read_pos      = 0;
         m_rx_fifo->write_pos     = 0;
 
-    //app_fifo_init(&m_tx_fifo, p_buffers->tx_buf, p_buffers->tx_buf_size);
-        m_tx_fifo->p_buf         =  p_buffers->tx_buf;
-        m_tx_fifo->buf_size_mask = p_buffers->tx_buf_size - 1;
-        m_tx_fifo->read_pos      = 0;
-        m_tx_fifo->write_pos     = 0;
- 
-    nrf_drv_uart_config_t   config = NRF_DRV_UART_DEFAULT_CONFIG;
 
-    config.baudrate =p_comm_params->baud_rate;
-    config.hwfc = (p_comm_params->flow_control == 0) ?  NRF_UART_HWFC_DISABLED : NRF_UART_HWFC_ENABLED;   // 无硬件流控制
-    config.interrupt_priority = irq_priority;   // 7
-    config.parity = p_comm_params->use_parity ? NRF_UART_PARITY_INCLUDED : NRF_UART_PARITY_EXCLUDED;          // 无奇偶
-    config.pselcts = p_comm_params->cts_pin_no;
-    config.pselrts = p_comm_params->rts_pin_no;
-    config.pselrxd = p_comm_params->rx_pin_no;      // P1.15
-    config.pseltxd = p_comm_params->tx_pin_no;      // P1.10
+    //。。。。。。   （忽略）
 
-    nrf_drv_uart_init(&app_uart_inst, &config, uart_event_handler); 
  
     m_rx_ovf = false;
 
     nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+
+
+---------------------------------------------------------------------
  
+//功能： 把rx_buffer连接到uarterx的dma， 开启uarte rx
+// 参数： &app_uart_inst 
+             .inst_idx =0,          
+             .uarte.p_reg         =  NRF_UARTE0
+             .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
+
+参数： app_uart_inst->uarte,  rx_buffer,  1
+数据流： rx_buffer + len(=1) -->  m_cb
+数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
+nrfx_uarte_rx(  * p_instance, * p_data,  length)   
+ 
+    uarte_control_block_t * p_cb = &m_cb[0];
+
+    bool second_buffer = false;
+
+    if (p_cb->handler)           //  yes， uart_error_handle
+        //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //做相关配置前，先关闭这2个中断
+               INTENCLR = 1<<9 | 1<<4;
+    
+    if ( p_cb->rx_buffer_length != 0 )         //no, 跳过     
+        if ( p_cb->rx_secondary_buffer_length != 0 )            
+            if (p_cb->handler)        //  yes， uart_error_handle             
+                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
+            return err_code;         
+        second_buffer = true;     
+
+    if (!second_buffer)     //yes 
+
+        p_cb->rx_buffer_length = length;             //1
+        p_cb->p_rx_buffer      = p_data;              //rx_buffer 
+        p_cb->rx_secondary_buffer_length = 0;
+ 
+    else   //no
+        p_cb->p_rx_secondary_buffer = p_data;     
+        p_cb->rx_secondary_buffer_length = length;
+
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //或清除中断标志
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //或清除中断标志
+
+    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );    //把rx_buffer连接到uarterx的dma
+        NRF_UARTE0->RXD.PTR    = rx_buffer;
+        NRF_UARTE0->RXD.MAXCNT =1;
+
+    if (!second_buffer)    //yes
+   
+        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
+           TASK_STARTRX = 1;    //开启uarte 接收
+
+    else     //no
+        nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
+            SHORTS |= (1<<5);   //使能shortcut ， startrx 和 endrx之间的shortcut      //待理解
 
 
+    if (m_cb[0].handler == NULL)   //no       
+            。。。 
+  
+    else        //yes
+
+        //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
+              INTENSET = ERROR | ENDRX；   //使能这2个中断
+ 
 
 -------------------------
 
