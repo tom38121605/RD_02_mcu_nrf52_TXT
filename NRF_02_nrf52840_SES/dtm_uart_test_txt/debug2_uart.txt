@@ -10,10 +10,12 @@
          。二是连接m_rx_fifo，接收用户的数据
 
 
-答：       用户数据byte -- tx_buf  --> m_tx_fifo  -->  tx_buffer --  mcb  -->  DMA 
-
+待察3： mcb 和m_tx_fifo，m_rx_fifo的关系
+答： 数据关系如下：      
+       tx： 用户数据byte -- tx_buf  --> m_tx_fifo  -->  tx_buffer --  mcb  -->  DMA 
                   p_fifo->p_buf[*->write_pos] = byte;  
                   tx_buffer = p_fifo->p_buf[ *->read_pos ];
+
 
 待察4：  m_contexts[0]的作用
 待察5：  mcb的p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的
@@ -330,7 +332,7 @@ app_uart_put(  byte )
  
     //if (!nrf_drv_uart_tx_in_progress(&app_uart_inst))
     //    if(!nrfx_uarte_tx_in_progress(&p_instance->uarte);)
-             if(!( m_cb[0].tx_buffer_length != 0) )                            //yes (第一次发送第一个字节)
+             if(!( m_cb[0].tx_buffer_length != 0) )                            //yes (第一次发送第一个字节，len=0)
  
                //把要发送的数据存入到tx_buffer 
                //app_fifo_get(&m_tx_fifo, tx_buffer);                        // (m_tx_fifo ) --  tx_buf  --  tx_buffer
@@ -373,8 +375,8 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
 
-    //nrf_uarte_tx_buffer_set( NRF_UARTE0, tx_buffer, 1 );    //把tx_buffer连接到uartetx的dma
-        p_reg->TXD.PTR    =  p_buffer;
+    //nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, 1 );    //把tx_buffer连接到uartetx的dma
+        p_reg->TXD.PTR    =  tx_buffer;
         p_reg->TXD.MAXCNT = length;
 
     if(!hold_xfer)              //yes
@@ -387,64 +389,101 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
          。。。
 
 
---------
-
-参数：  m_tx_fifo ， 0x80
-        m_tx_fifo->p_buf         =  tx_buf[256];
-        m_tx_fifo->buf_size_mask = 255;
-        m_tx_fifo->read_pos      = 0;
-        m_tx_fifo->write_pos     = 0;
-
-数据流： 0x80  --   (m_tx_fifo ) -- tx_buf  
-app_fifo_put(  * p_fifo,   byte)
- 
-    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)  
-   //    if ( fifo_length(p_fifo) <= 255)  
-            if( (p_fifo->write_pos - p_fifo->read_pos)  <= 255 )  //如果fifo长度小于255(就是卡车没装满)，则运行下面
-
-                //fifo_put(p_fifo, byte);
-                    tx_buf[*->write_pos] = byte;     //0x80
-                    *->write_pos++;
--------
-
-参数：m_tx_fifo, tx_buffer
-        m_tx_fifo->p_buf         =  tx_buf[256];
-        m_tx_fifo->buf_size_mask = 255;
-        m_tx_fifo->read_pos      = 0;
-        m_tx_fifo->write_pos     = 0;
-
-数据流： (m_tx_fifo ) --   tx_buf  -->  tx_buffer
-app_fifo_get( * p_fifo,  * p_byte)
-
-    //if (FIFO_LENGTH() != 0) 
-         if( (p_fifo->write_pos - p_fifo->read_pos)  >0 )     //如果fifo长度大于1(就是卡车里有数据)，则运行下面
-
-        //fifo_get(p_fifo, p_byte);
-             *p_byte = p_fifo->p_buf[ *->read_pos ];
-              p_fifo->read_pos++;
-
-        return NRF_SUCCESS;
-
-    return NRF_ERROR_NOT_FOUND;
- 
  
   
+参数： NRF_UARTE0,  &m_cb[0] 
+
+uarte_irq_handler( *p_uarte,  *p_cb)
+ 
+    //---检查uarte中断的错误标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))     //UARTE0->EVENT_ERROR.0=1 , uarte接收错误
+        （略）
+  
+    //---检查uarte中断的接收完成标志---
+    else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))   
+        （略）    
+
+     //---检查uarte中断的接收超时标志---
+   if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
+        （略）
+
+    //---检查uarte中断的发送完成标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
+    
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);   //清标志
+
+        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);   // UARTE0->TASK_STOPTX.1=1， 停止tx
+
+        if (p_cb->tx_buffer_length != 0)     
+   
+            //tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));   
+                tx_done_event(p_cb,  UARTE0->TXD.AMOUNT );          
+    
+
+    //---检查uarte中断的发送停止标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))
+          （先忽略）
+
+ 
+------------------------
+
+参数： p_cb,  UARTE0->TXD.AMOUNT
+tx_done_event( * p_cb,   bytes)
+
+    //下面的event可忽略，因 NRFX_UARTE_EVT_TX_DONE这种类型没有做任何处理
+    event.type             = NRFX_UARTE_EVT_TX_DONE;
+    event.data.rxtx.bytes  = bytes;
+    event.data.rxtx.p_data = p_cb->p_tx_buffer;
+
+    p_cb->tx_buffer_length = 0;   //刚发送之前是1，现在置0
+
+    p_cb->handler(&event, p_cb->p_context);    //uart_error_handle   （可忽略）
+
+----
+
+参数： event
+uart_error_handle(  * p_event )
+ 
+    if (p_event->evt_type == APP_UART_COMMUNICATION_ERROR)     
+        APP_ERROR_HANDLER(p_event->data.error_communication);
+   
+    else if (p_event->evt_type == APP_UART_FIFO_ERROR)   
+        APP_ERROR_HANDLER(p_event->data.error_code);
+ 
  
 
 ===========================uart rx===================================
 
 flow：
        
-app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init
-
-
+app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  -- nrf_drv_uart_rx
 
 数据流：  ( rx_buf )  --  buffers  -->  m_rx_fifo  + m_tx_fifo
 数据流2：   rx_buffer + len(=1) -->  m_cb
 数据流3： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
 
+? --  nrfx_uarte_0_irq_handler  --  uarte_irq_handler
+
+
 
 ---------------------------------------------------------------------------------------------------------------
+
+
+main
+
+   //app_uart_init();
+      nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+
+
+---
+
+nrfx_uarte_0_irq_handler( )
+     uarte_irq_handler(NRF_UARTE0, &m_cb[0]);
+
+
+
+-------------------------------------------------
+
 
 参数：   params,  buffers， uart_error_handle,  7 
 数据流： ( rx_buf )  --  buffers  -->  m_rx_fifo 
@@ -488,7 +527,7 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
     bool second_buffer = false;
 
     if (p_cb->handler)           //  yes， uart_error_handle
-        //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //做相关配置前，先关闭这2个中断
+       //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);   //先关闭这2个中断
                INTENCLR = 1<<9 | 1<<4;
     
     if ( p_cb->rx_buffer_length != 0 )         //no, 跳过     
@@ -534,53 +573,53 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
               INTENSET = ERROR | ENDRX；   //使能这2个中断
  
 
--------------------------
+--------------------------------------------------------------------------
 
-static void uarte_irq_handler(NRF_UARTE_Type *        p_uarte,
-                              uarte_control_block_t * p_cb)
-{
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))
-    {
-        nrfx_uarte_event_t event;
+参数： NRF_UARTE0,  &m_cb[0] 
 
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
+uarte_irq_handler( *p_uarte,  *p_cb)
+ 
+    //---检查uarte中断的错误标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))     //UARTE0->EVENT_ERROR.0=1 , uarte接收错误
 
+        //清零错误标志
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);     //UARTE0->EVENT_ERROR.0=0，清零错误标志
+
+        //下面uart_error_handle中用，待理解  （先忽略跳过）
         event.type                   = NRFX_UARTE_EVT_ERROR;
         event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
         event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
         event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
 
-        // Abort transfer.
+        //长度清零，错误处理
         p_cb->rx_buffer_length = 0;
         p_cb->rx_secondary_buffer_length = 0;
+        p_cb->handler(&event, p_cb->p_context);    //uart_error_handle
 
-        p_cb->handler(&event, p_cb->p_context);
-    }
+  
+    //---检查uarte中断的接收完成标志---
     else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);
-        size_t amount = nrf_uarte_rx_amount_get(p_uarte);
-        // If the transfer was stopped before completion, amount of transfered bytes
-        // will not be equal to the buffer length. Interrupted transfer is ignored.
-        if (amount == p_cb->rx_buffer_length)
-        {
+   
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);      //UARTE0->EVENT_ENDRX.0=0，清零错误标志
+        amount = nrf_uarte_rx_amount_get(p_uarte);                           //UARTE0->RXD.AMOUNT
+
+        if (amount == p_cb->rx_buffer_length)   //如果接收的数量，跟dma设置的数量相同，则下面 （如不相同，则忽略）
+        
             if (p_cb->rx_secondary_buffer_length != 0)
-            {
+            
                 uint8_t * p_data = p_cb->p_rx_buffer;
                 nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);
                 p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
                 p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
                 p_cb->rx_secondary_buffer_length = 0;
                 rx_done_event(p_cb, amount, p_data);
-            }
-            else
-            {
+            
+            else            
                 p_cb->rx_buffer_length = 0;
                 rx_done_event(p_cb, amount, p_cb->p_rx_buffer);
-            }
-        }
-    }
-
+     
+    
+     //---检查uarte中断的接收超时标志---
     if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
     {
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
@@ -595,29 +634,9 @@ static void uarte_irq_handler(NRF_UARTE_Type *        p_uarte,
         }
     }
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
 
-        // Transmitter has to be stopped by triggering STOPTX task to achieve
-        // the lowest possible level of the UARTE power consumption.
-        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
 
-        if (p_cb->tx_buffer_length != 0)
-        {
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
-        }
-    }
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
-        if (p_cb->tx_buffer_length != 0)
-        {
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
-        }
-    }
-}
 
 
 
@@ -762,6 +781,46 @@ m_prs_box_4
 
 
 
+--------
+
+参数：  m_tx_fifo ， 0x80
+        m_tx_fifo->p_buf         =  tx_buf[256];
+        m_tx_fifo->buf_size_mask = 255;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
+
+数据流： 0x80  --   (m_tx_fifo ) -- tx_buf  
+app_fifo_put(  * p_fifo,   byte)
+ 
+    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)  
+   //    if ( fifo_length(p_fifo) <= 255)  
+            if( (p_fifo->write_pos - p_fifo->read_pos)  <= 255 )  //如果fifo长度小于255(就是卡车没装满)，则运行下面
+
+                //fifo_put(p_fifo, byte);
+                    tx_buf[*->write_pos] = byte;     //0x80
+                    *->write_pos++;
+-------
+
+参数：m_tx_fifo, tx_buffer
+        m_tx_fifo->p_buf         =  tx_buf[256];
+        m_tx_fifo->buf_size_mask = 255;
+        m_tx_fifo->read_pos      = 0;
+        m_tx_fifo->write_pos     = 0;
+
+数据流： (m_tx_fifo ) --   tx_buf  -->  tx_buffer
+app_fifo_get( * p_fifo,  * p_byte)
+
+    //if (FIFO_LENGTH() != 0) 
+         if( (p_fifo->write_pos - p_fifo->read_pos)  >0 )     //如果fifo长度大于1(就是卡车里有数据)，则运行下面
+
+        //fifo_get(p_fifo, p_byte);
+             *p_byte = p_fifo->p_buf[ *->read_pos ];
+              p_fifo->read_pos++;
+
+        return NRF_SUCCESS;
+
+    return NRF_ERROR_NOT_FOUND;
+ 
 
 
 
