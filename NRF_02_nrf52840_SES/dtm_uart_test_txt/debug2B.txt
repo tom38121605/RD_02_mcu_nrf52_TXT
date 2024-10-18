@@ -1,4 +1,14 @@
 
+#define FIFO_LENGTH()   fifo_length(p_fifo)  
+
+static __INLINE uint32_t fifo_length(app_fifo_t * p_fifo)
+{
+    uint32_t tmp = p_fifo->read_pos;
+    return p_fifo->write_pos - tmp;
+}
+
+---------------------------------------------
+
 typedef struct
 {
     void                                   * p_context;
@@ -20,10 +30,14 @@ static uarte_control_block_t   m_cb[1];     // NRFX_UART_ENABLED_COUNT
 
 typedef void (* nrfx_irq_handler_t)(void);
 
+
 ==================================== 
 
 static uint8_t tx_buffer[1];
 static uint8_t rx_buffer[1];
+static bool m_rx_ovf;
+
+
 
 
 ---
