@@ -1,6 +1,5 @@
 
 
-待完成：   fifo 之一 ，  之二， 之三
 待完成：    rx_buffer 之一 ，  之二， 之三
  
 
@@ -13,6 +12,9 @@ app_uart_inst
 m_handlers[0]，m_contexts[0]
 m_cb
 tx_buffer
+
+m_event_handler
+rx_buffer
 
 
 
@@ -83,6 +85,33 @@ app_uart_put(  byte )
                     m_tx_fifo >read_pos++;
 
 
+===========fifo之三 ==== m_rx_fifo 赋值 ==== m_rx_fifo输出=========================
+
+参数： &m_rx_fifo,  p_cb->p_rx_buffer[0]    //rx_buffer[0]  
+app_fifo_put( * p_fifo, byte)
+
+    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)
+       if ( p_fifo->write_pos - p_fifo->read_pos <= 255)
+   
+        //fifo_put(p_fifo, byte);
+            p_fifo->p_buf[p_fifo->write_pos =  p_cb->p_rx_buffer  //rx_buffer
+            p_fifo->write_pos++;
+
+-----
+
+
+参数： m_rx_fifo,  rx_byte
+数据流：  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
+app_fifo_get(  *p_fifo,  *p_byte )
+
+    //if (FIFO_LENGTH() != 0)
+        if( p_fifo->write_pos - p_fifo->read_pos >0 )
+    
+        //fifo_get(p_fifo, p_byte);
+        //   fifo_peek(p_fifo, 0, p_byte);
+               *p_byte = p_fifo->p_buf[(*->read_pos + 0) & 255];   // rx_byte = m_rx_fifo->p_buf[read_pos]
+
+           p_fifo->read_pos++;
 
 
 
@@ -124,6 +153,7 @@ static nrf_drv_uart_t app_uart_inst = NRF_DRV_UART_INSTANCE(APP_UART_DRIVER_INST
 static nrf_uart_event_handler_t     m_handlers[INSTANCE_COUNT];     //INSTANCE_COUNT=2
 static void *                               m_contexts[INSTANCE_COUNT];
 
+// 参数： &app_uart_inst,  &config,  uart_event_handler
 nrf_drv_uart_init(  *p_instance, *p_config,  event_handler）
 
     m_handlers[0] = event_handler;                   // uart_event_handler
@@ -133,12 +163,12 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler）
 
 =============== m_cb[0]  之一 ====init=========================
 
-// 参数： &app_uart_inst.uarte,  &config,  uart_error_handle
+// 参数： &app_uart_inst.uarte,  &config,  uart_event_handler
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0   
 
-    p_cb->handler   = event_handler;              //uart_error_handle
+    p_cb->handler   = event_handler;              //uart_event_handler
     p_cb->p_context = p_config->p_context;    //0 
 
     p_cb->rx_buffer_length           = 0;
@@ -190,7 +220,7 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)
    //     p_cb->rx_secondary_buffer_length = length;
 
 
- ===========fifo之四 ==== m_cb[0] tx 长度清零 =============================
+ ===========m_cb[0] ==== m_cb[0] tx 长度清零 =============================
 
 参数： NRF_UARTE0,  &m_cb[0] 
 
@@ -296,7 +326,44 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
         p_reg->TXD.PTR    =  tx_buffer;
         p_reg->TXD.MAXCNT = length;
 
+
+
+===================  m_event_handler =========================
  
+参数：   params,  buffers， uart_error_handle,  7 
+app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)     
+  
+    m_event_handler = event_handler;     //uart_error_handle
+
+
+
+===========rx_buffer ==== rx_buffer 赋值 ==== rx_buffer输出=========================
+
+参数： &m_rx_fifo,  p_cb->p_rx_buffer[0]    //rx_buffer[0]  
+app_fifo_put( * p_fifo, byte)
+
+    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)
+       if ( p_fifo->write_pos - p_fifo->read_pos <= 255)
+   
+        //fifo_put(p_fifo, byte);
+            p_fifo->p_buf[p_fifo->write_pos =  p_cb->p_rx_buffer  //rx_buffer
+            p_fifo->write_pos++;
+
+-----
+
+
+参数： m_rx_fifo,  rx_byte
+数据流：  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
+app_fifo_get(  *p_fifo,  *p_byte )
+
+    //if (FIFO_LENGTH() != 0)
+        if( p_fifo->write_pos - p_fifo->read_pos >0 )
+    
+        //fifo_get(p_fifo, p_byte);
+        //   fifo_peek(p_fifo, 0, p_byte);
+               *p_byte = p_fifo->p_buf[(*->read_pos + 0) & 255];   // rx_byte = m_rx_fifo->p_buf[read_pos]
+
+           p_fifo->read_pos++;
 
 
 

@@ -19,15 +19,22 @@
                  p_cb->tx_buffer_length = 1;                 
                  p_cb->p_tx_buffer      = tx_buffer;     
 
-                 p_reg->TXD.PTR    =   p_cb->p_tx_buffer ;
+                 p_reg->TXD.PTR    =   p_cb->p_tx_buffer ;            // tx_buffer
                  p_reg->TXD.MAXCNT = p_cb->tx_buffer_length ;
 
        rx： 用户数据  DMA  -- mcb  -- rx_buffer  -- m_rx_fifo --  rx_buf  -- rx_byte    (待验证)
+              p_reg->RXD.PTR    = rx_buffer;
+              p_reg->RXD.MAXCNT =1;
 
+             p_cb->rx_buffer_length = length;             //1
+             p_cb->p_rx_buffer      = p_data;              //rx_buffer 
+             p_cb->rx_secondary_buffer_length = 0;
 
+            p_fifo->p_buf[p_fifo->write_pos = p_cb->p_rx_buffer  //rx_buffer 
+            p_fifo->write_pos++;
 
-byte -- tx_buf  --> m_tx_fifo  -->  tx_buffer --  mcb  -->  DMA 
-
+            rx_byte = m_rx_fifo->p_buf[read_pos]
+           p_fifo->read_pos++;
 
 待察4：  m_contexts[0]的作用
 
@@ -93,9 +100,9 @@ void uart_init(void)
 #define APP_UART_FIFO_INIT(P_COMM_PARAMS,   RX_BUF_SIZE,   TX_BUF_SIZE,   EVT_HANDLER, IRQ_PRIO,   ERR_CODE)  
     do                                                                                             
     {                                                                                              
-        app_uart_buffers_t buffers;       //全局变量                                                                    
-        static uint8_t     rx_buf[256];      //全局变量                                                
-        static uint8_t     tx_buf[256];                                                     
+        app_uart_buffers_t buffers;       //全局变量    （或是uart_init中的局部static变量 ）                                                                  
+        static uint8_t     rx_buf[256];      //全局变量   （或是uart_init中的局部static变量 ）                                                     
+        static uint8_t     tx_buf[256];      //全局变量    （或是uart_init中的局部static变量 ）                                                         
                                                                                                     
         buffers.rx_buf      = rx_buf;                                                               
         buffers.rx_buf_size = sizeof (rx_buf);                                                      
@@ -109,10 +116,12 @@ void uart_init(void)
 参数：   params,  buffers， uart_error_handle,  7 
 数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
 数据流2：params  -->  config
+数据流3：m_event_handler = uart_error_handle
+ 
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
     uint32_t err_code;
-    m_event_handler = event_handler;
+    m_event_handler = event_handler;   //uart_error_handle
  
     //app_fifo_init(&m_rx_fifo, p_buffers->rx_buf, p_buffers->rx_buf_size); 
         m_rx_fifo->p_buf         =  p_buffers->rx_buf;
@@ -148,14 +157,14 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
 
  --------------------
 
-// 参数： &app_uart_inst,  &config,  uart_error_handle
+// 参数： &app_uart_inst,  &config,  uart_event_handler
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
              .uart.p_reg           =  NRF_UART0     
              .uart.drv_inst_idx    =  NRFX_UART0_INST_IDX    // 0
 
-数据流：uart_error_handle  -->  m_handlers[0]
+数据流：uart_event_handler  -->  m_handlers[0]
 数据流：0   -->  m_contexts[0]
 nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
  
@@ -178,11 +187,11 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
 
 ------------
 
-// 参数： &app_uart_inst.uarte,  &config,  uart_error_handle
+// 参数： &app_uart_inst.uarte,  &config,  uart_event_handler
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
-数据流：uart_error_handle + 常量(lenth + state) -->  m_cb[0]      //给m_cb[0]赋值（给大部分成员赋值， 发送和接收缓冲尚未赋值）
+数据流：uart_event_handler + 常量(lenth + state) -->  m_cb[0]      //给m_cb[0]赋值（给大部分成员赋值， 发送和接收缓冲尚未赋值）
 数据流2： config  -- 寄存器
 数据流3： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
@@ -196,7 +205,7 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
     //配置串口引脚和波特率 
     apply_config(p_instance, p_config);     
 
-    p_cb->handler   = event_handler;              //uart_error_handle
+    p_cb->handler   = event_handler;              //uart_event_handler
     p_cb->p_context = p_config->p_context;   //null
 
     if (p_cb->handler)
@@ -246,7 +255,7 @@ apply_config( * p_instance, * p_config)
 参数： app_uart_inst->uarte,  rx_buffer,  1
 数据流： rx_buffer + len(=1) -->  m_cb
 数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
-nrfx_uarte_rx(  * p_instance, * p_data,  length)   
+nrfx_uarte_rx(  * p_instance, * p_data,  length)      //注意，这个函数并不只是初始化才调用，在接收数据时会反复调用
  
     uarte_control_block_t * p_cb = &m_cb[0];
 
@@ -441,32 +450,53 @@ uarte_irq_handler( *p_uarte,  *p_cb)
 
  
 ------------------------
-功能： 仅清零 m_cb[0].tx_buffer_length
+
+功能： 清零 m_cb[0].tx_buffer_length  ，  +  ？ 
 
 参数： p_cb,  UARTE0->TXD.AMOUNT
 tx_done_event( * p_cb,   bytes)
 
-    //下面的event可忽略，因 NRFX_UARTE_EVT_TX_DONE这种类型没有做任何处理
     event.type             = NRFX_UARTE_EVT_TX_DONE;
     event.data.rxtx.bytes  = bytes;
     event.data.rxtx.p_data = p_cb->p_tx_buffer;
 
     p_cb->tx_buffer_length = 0;   //刚发送之前是1，现在置0
 
-    p_cb->handler(&event, p_cb->p_context);    //uart_error_handle   （可忽略）
+    //p_cb->handler(&event, p_cb->p_context);     
+        uart_event_handler(&event, p_cb->p_context);     
 
-----
 
-参数： event
-uart_error_handle(  * p_event )
- 
-    if (p_event->evt_type == APP_UART_COMMUNICATION_ERROR)     
-        APP_ERROR_HANDLER(p_event->data.error_communication);
-   
-    else if (p_event->evt_type == APP_UART_FIFO_ERROR)   
-        APP_ERROR_HANDLER(p_event->data.error_code);
- 
- 
+-------------------
+
+全局变量：
+    event.type             = NRFX_UARTE_EVT_TX_DONE;
+    event.data.rxtx.bytes  = bytes;      //len=1
+    event.data.rxtx.p_data = p_data;   //p_cb->p_tx_buffer （tx_buffer）
+
+参数： event， p_cb->p_context
+uart_event_handler( * p_event,  * p_context)  //--待继续理解
+
+    switch (p_event->type)
+  
+        case NRF_DRV_UART_EVT_TX_DONE:
+
+            // Get next byte from FIFO.
+            if (app_fifo_get(&m_tx_fifo, tx_buffer) == NRF_SUCCESS)
+            
+                 nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+            
+            else
+            
+                // Last byte from FIFO transmitted, notify the application.
+                app_uart_event.evt_type = APP_UART_TX_EMPTY;
+                m_event_handler(&app_uart_event);
+        
+            break;
+
+
+
+
+
 
 ===========================uart rx===================================
 
@@ -478,7 +508,9 @@ app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init
 数据流2：   rx_buffer + len(=1) -->  m_cb
 数据流3： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
 
-（?，先忽略 ）--  nrfx_uarte_0_irq_handler  --  uarte_irq_handler
+数据流：  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
+
+（?，先忽略 ）--  nrfx_uarte_0_irq_handler  --  uarte_irq_handler  --  uart_event_handler 
 
 
 
@@ -486,38 +518,58 @@ app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init
 
 main
 
-   //app_uart_init();
-      nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
+    //app_uart_init();
+        nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
 
----
+    for (;;)
 
-nrfx_uarte_0_irq_handler( )
-     uarte_irq_handler(NRF_UARTE0, &m_cb[0]);
+        uint8_t  rx_byte; 
+        if (app_uart_get(&rx_byte) != NRF_SUCCESS)    //如果没有取到，则返回 for( ; ; )，重新运行
+            continue;
+
+
+----------------
+
+参数： rx_byte
+app_uart_get( * p_byte)
+
+    bool rx_ovf = m_rx_ovf;
+
+    app_fifo_get(&m_rx_fifo, p_byte);
+
+    if (rx_ovf)
+    {
+        m_rx_ovf = false;
+        uint32_t uart_err_code = nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);
+
+        // RX resume should never fail.
+        APP_ERROR_CHECK(uart_err_code);
+    }
+
+-------
+
+参数： m_rx_fifo,  rx_byte
+数据流：  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
+app_fifo_get(  *p_fifo,  *p_byte )
+
+    //if (FIFO_LENGTH() != 0)
+        if( p_fifo->write_pos - p_fifo->read_pos >0 )
+    
+        //fifo_get(p_fifo, p_byte);
+        //   fifo_peek(p_fifo, 0, p_byte);
+               *p_byte = p_fifo->p_buf[(*->read_pos + 0) & 255];   // rx_byte = m_rx_fifo->p_buf[read_pos]
+
+           p_fifo->read_pos++;
+
 
 -------------------------------------------------
 
 参数：   params,  buffers， uart_error_handle,  7 
 数据流： ( rx_buf )  --  buffers  -->  m_rx_fifo 
-
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
+
+   （忽略）
  
-    uint32_t err_code;
-
-    m_event_handler = event_handler;
- 
-    //app_fifo_init(&m_rx_fifo, p_buffers->rx_buf, p_buffers->rx_buf_size); 
-        m_rx_fifo->p_buf         =  p_buffers->rx_buf;
-        m_rx_fifo->buf_size_mask = p_buffers->rx_buf_size - 1;
-        m_rx_fifo->read_pos      = 0;
-        m_rx_fifo->write_pos     = 0;
-
-    //。。。。。。   （忽略）
-
- 
-    m_rx_ovf = false;
-
-    nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
-
 
 ---------------------------------------------------------------------
  
@@ -530,7 +582,7 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
 参数： app_uart_inst->uarte,  rx_buffer,  1
 数据流： rx_buffer + len(=1) -->  m_cb
 数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
-nrfx_uarte_rx(  * p_instance, * p_data,  length)   
+nrfx_uarte_rx(  * p_instance, * p_data,  length)          //注意，这个函数并不只是初始化才调用，在接收数据时会反复调用
  
     uarte_control_block_t * p_cb = &m_cb[0];
 
@@ -629,7 +681,8 @@ uarte_irq_handler( *p_uarte,  *p_cb)
             else            
                 p_cb->rx_buffer_length = 0;     //清零
 
-                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);    //可忽略，因 NRFX_UARTE_EVT_RX_DONE未做任何处理
+                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   
+                    
      
     
      //---检查uarte中断的接收超时标志---
@@ -642,72 +695,96 @@ uarte_irq_handler( *p_uarte,  *p_cb)
             p_cb->rx_buffer_length = 0;
             p_cb->rx_secondary_buffer_length = 0;
 
-            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);  //可忽略，因 NRFX_UARTE_EVT_RX_DONE未做任何处理
+            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);   
  
 
 --------
 
-参数： p_cb,   RXD.AMOUNT,   p_cb->p_rx_buffer
+参数： p_cb,   RXD.AMOUNT,   p_cb->p_rx_buffer （rx_buffer ）
 rx_done_event( *p_cb,   bytes, * p_data)
 
-    //下面的event可忽略，因 NRFX_UARTE_EVT_RX_DONE这种类型没有做任何处理
     event.type             = NRFX_UART_EVT_RX_DONE;
-    event.data.rxtx.bytes  = bytes;
-    event.data.rxtx.p_data = p_data;
+    event.data.rxtx.bytes  = bytes;  //len=1
+    event.data.rxtx.p_data = p_data;   //p_cb->p_rx_buffer（rx_buffer ）
 
-    p_cb->handler(&event, p_cb->p_context);
+    //p_cb->handler(&event, p_cb->p_context);
+         uart_event_handler(&event, p_cb->p_context);
  
 
------------
+---------------
 
-main
+全局变量：
+    event.type             = NRFX_UART_EVT_RX_DONE;
+    event.data.rxtx.bytes  = bytes;     //len=1
+    event.data.rxtx.p_data = p_data;    //p_cb->p_rx_buffer（rx_buffer ）
 
-   uint8_t     rx_byte; 
+参数： event， p_cb->p_context
+uart_event_handler( * p_event,  * p_context) 
 
-    for (;;)
+    switch (p_event->type)
+  
+        case NRF_DRV_UART_EVT_RX_DONE:    
 
-        if (app_uart_get(&rx_byte) != NRF_SUCCESS) 
-            continue;
- 
+            if(p_event->data.rxtx.bytes == 0)                        //如果是RXTO， 超时     
+               nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);     //重新开启接收
+               break;            
 
----------
 
-参数： rx_byte
-app_uart_get( * p_byte)
+            // Write received byte to FIFO.
+            err_code = app_fifo_put(&m_rx_fifo, p_event->data.rxtx.p_data[0]);
 
-    bool rx_ovf = m_rx_ovf;
+            if (err_code != NRF_SUCCESS)
+            
+                app_uart_event.evt_type          = APP_UART_FIFO_ERROR;
+                app_uart_event.data.error_code   = err_code;
 
-    app_fifo_get(&m_rx_fifo, p_byte);
+                //m_event_handler(&app_uart_event);
+                      uart_error_handle(&app_uart_event);
 
-    if (rx_ovf)
-    {
-        m_rx_ovf = false;
-        uint32_t uart_err_code = nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);
+            
+            // Notify that there are data available.
+            else if (FIFO_LENGTH(m_rx_fifo) != 0)
+            
+                app_uart_event.evt_type = APP_UART_DATA_READY;  //这个事件在错误处理函数中，或没有用到
+                //m_event_handler(&app_uart_event);
+                       uart_error_handle(&app_uart_event);           
 
-        // RX resume should never fail.
-        APP_ERROR_CHECK(uart_err_code);
-    }
+            // Start new RX if size in buffer.
+            if (FIFO_LENGTH(m_rx_fifo) <= m_rx_fifo.buf_size_mask)            
+                nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);
+            
+            else
+            
+                // Overflow in RX FIFO.
+                m_rx_ovf = true;            
 
--------
+            break;
 
-参数： m_rx_fifo,  rx_byte
-数据流： DMA -- ? --  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
-app_fifo_get(  *p_fifo,  *p_byte )
 
-    //if (FIFO_LENGTH() != 0)
-        if( p_fifo->write_pos - p_fifo->read_pos >0 )
+--------
+
+参数： &m_rx_fifo,  p_cb->p_rx_buffer[0]    //rx_buffer[0]  
+app_fifo_put( * p_fifo, byte)
+
+    //if (FIFO_LENGTH() <= p_fifo->buf_size_mask)
+       if ( p_fifo->write_pos - p_fifo->read_pos <= 255)
+   
+        //fifo_put(p_fifo, byte);
+            p_fifo->p_buf[p_fifo->write_pos &255= byte;   // p_cb->p_rx_buffer
+            p_fifo->write_pos++;
+
+
+----------
+
+
+uart_error_handle(* p_event)
+
+    if (p_event->evt_type == APP_UART_COMMUNICATION_ERROR)    
+        APP_ERROR_HANDLER(p_event->data.error_communication);
     
-        //fifo_get(p_fifo, p_byte);
-        //   fifo_peek(p_fifo, 0, p_byte);
-               *p_byte = p_fifo->p_buf[(*->read_pos + 0) & 255];   // rx_byte = m_rx_fifo->p_buf[read_pos]
-
-           p_fifo->read_pos++;
-
-
-
+    else if (p_event->evt_type == APP_UART_FIFO_ERROR)    
+        APP_ERROR_HANDLER(p_event->data.error_code);
  
-
-
 
 
 
