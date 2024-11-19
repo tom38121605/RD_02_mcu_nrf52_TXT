@@ -1,0 +1,104 @@
+#define LED_COLOR_FATAL_ERROR         RGB_ORANGE
+#define LED_MODE_FATAL_ERROR          LED_DRIVER_FLASH
+
+#define LED_COLOR_DC_ACTIVED          RGB_CYAN
+#define LED_MODE_DC_ACTIVED           LED_DRIVER_ON_STEADY
+
+#define LED_COLOR_USB_CLOSED          RGB_WHITE
+#define LED_MODE_USB_CLOSED           LED_DRIVER_FADE
+
+#define LED_COLOR_USB_OPEN            RGB_BLUE(RGB_MAX_VALUE)
+#define LED_MODE_USB_OPEN             LED_DRIVER_FADE
+
+#define LED_COLOR_EN_SYNCH_WIRED    RGB_GREEN(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_WIRED     LED_DRIVER_ON_STEADY
+
+#define LED_COLOR_EN_SYNCH_WIRELESS RGB_GREEN(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_WIRELESS  LED_DRIVER_FADE
+
+#define LED_COLOR_EN_SYNCH_LOST     RGB_BLUE(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_LOST      LED_DRIVER_FLASH
+
+#define LED_COLOR_CHARGING          RGB_MAGENTA
+#define LED_MODE_CHARGING           LED_DRIVER_ON_STEADY
+
+#define LED_COLOR_DFU               RGB_YELLOW
+#define LED_MODE_DFU                LED_DRIVER_ON_STEADY
+
+
+======================================================================
+
+
+  typedef struct
+  {
+      led_driver_operation operation;
+      u32 on_c;
+      u32 off_c;
+
+      led_driver_params params;
+  } led_driver_operation_params;
+
+-------------------  
+
+  typedef enum
+  {
+      LED_DRIVER_OFF,
+      LED_DRIVER_FADE,
+      LED_DRIVER_FLASH,
+      LED_DRIVER_MULTI_FLASH,
+      LED_DRIVER_MORSE_CODE,
+      LED_DRIVER_ON_STEADY,
+  } led_driver_operation;
+
+  typedef union
+  {
+      led_driver_fade_params fade;
+      led_driver_flash_params flash;
+      led_driver_multi_flash_params multi_flash;
+      led_driver_morse_params morse;
+      led_driver_on_params on;
+  } led_driver_params;
+
+
+========================================================
+
+  class led_driver
+  {
+  public:
+      static void pwm_handler(nrfx_pwm_evt_type_t event_type);
+
+      void init(nrfx_pwm_t pwm_instance_arg, u8 red_pin, u8 green_pin, u8 blue_pin, u8 white_pin, bool active_low);
+      void uninit();
+      void event_queue_process();
+
+      void set_basic(led_driver_operation op, u32 color);
+      void set_fade(u16 rise_time_ms, u16 fall_time_ms, u32 on_c, u32 off_c = 0);
+      void set_flash(u16 on_time_ms, u16 off_time_ms, u32 on_c, u32 off_c = 0);
+      void set_multi_flash(u8 num_flashes, u16 on_time_ms, u16 off_time1_ms, u16 off_time2_ms, u32 on_c, u32 off_c = 0);
+      void set_morse_code(u8 num_bits, u8 code, u32 on_c, u32 off_c = 0);
+      void set_on(u32 on_c);
+      void set_off();
+
+  private:
+      //Hardware instances
+      nrfx_pwm_t pwm_instance;
+
+      //Current operation
+      led_driver_operation_params current_operation_params;
+      led_driver_operation_params requested_operation_params;
+      bool new_operation_requested;
+
+      //Misc
+      nrf_pwm_values_individual_t pwm_values[LED_DRIVER_MAX_SEQ_LENGTH];
+      nrf_pwm_sequence_t pwm_sequence;
+      bool active_low;
+  };
+
+
+
+
+
+
+
+
+

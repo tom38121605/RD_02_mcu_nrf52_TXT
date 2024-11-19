@@ -1,0 +1,407 @@
+
+
+============================led init===========================
+
+
+
+
+----------------------------------
+
+main
+
+    main_led.init(OMMO_LED_PWM, OMMO_LED_RED, OMMO_LED_GREEN, OMMO_LED_BLUE, NRFX_PWM_PIN_NOT_USED, OMMO_LED_ACTIVE_LOW);
+    led_state = 0xFF;
+
+
+
+
+-----
+
+void led_driver::init(nrfx_pwm_t pwm_instance_arg, u8 red_pin, u8 green_pin, u8 blue_pin, u8 white_pin, bool active_low_arg)
+{
+nrfx_pwm_config_t pwm_config;
+
+    pwm_instance = pwm_instance_arg;
+    active_low = active_low_arg;
+
+    if(active_low)
+    {
+        red_pin |= NRFX_PWM_PIN_INVERTED;
+        green_pin |= NRFX_PWM_PIN_INVERTED;
+        blue_pin |= NRFX_PWM_PIN_INVERTED;
+        white_pin |= NRFX_PWM_PIN_INVERTED;
+    }
+
+    pwm_config.output_pins[0] = red_pin;
+    pwm_config.output_pins[1] = green_pin;
+    pwm_config.output_pins[2] = blue_pin;
+    pwm_config.output_pins[3] = white_pin;
+    pwm_config.irq_priority = APP_IRQ_PRIORITY_LOWEST;
+    pwm_config.base_clock = OMMO_LED_FREQ;
+    pwm_config.count_mode = NRF_PWM_MODE_UP;
+    pwm_config.top_value = (1<<OMMO_LED_NUM_COLOR_BITS)-1; //-1 ensures 100% duty cycle
+    pwm_config.load_mode    = NRF_PWM_LOAD_INDIVIDUAL;
+    pwm_config.step_mode    = NRF_PWM_STEP_AUTO;
+
+    APP_ERROR_CHECK(nrfx_pwm_init(&pwm_instance, &pwm_config, pwm_handler));
+
+    //Set to off mode
+    memset(&(current_operation_params.params), 0, sizeof(led_driver_params));
+    current_operation_params.operation = LED_DRIVER_OFF;
+    new_operation_requested = false;
+
+    //set_on(RGB_RED(RGB_MAX_VALUE));
+    //event_queue_process();
+    //set_on(RGB_GREEN(RGB_MAX_VALUE));
+    //event_queue_process();
+    //set_on(RGB_BLUE(RGB_MAX_VALUE));
+    //event_queue_process();
+    //set_on(RGB_YELLOW);
+    //event_queue_process();
+    //set_on(RGB_PURPLE);
+    //event_queue_process();
+    //set_on(RGB_WHITE);
+    //event_queue_process();
+    //set_on(RGB_ORANGE);
+    //event_queue_process();
+    //set_on(RGB_PINK);
+    //event_queue_process();
+    //set_on(RGB_CYAN);
+    //event_queue_process();
+    //while(1);
+}
+
+
+
+
+
+
+============================led out control ===========================
+
+
+main
+
+
+    gpio_init();
+
+    //comms_esb_init(comms_esb_direct_connect_disconnect, comms_esb_event);
+    //  comms_esb_event( type)
+    //    set_leds();
+             main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);
+
+
+    main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);
+    //main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_RED(255));
+    //main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));
+    //main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_BLUE(255));
+
+
+    while(1)   
+
+        main_led.event_queue_process();
+
+
+
+
+-------------------
+
+
+set_leds()
+
+   main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);  //STEADY, CYAN
+
+   main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);   //FADE , WHITE
+
+   main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)
+
+   main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //FADE,GREEN(255)
+
+
+   ......  (忽略跳过)
+
+
+    if(comms_esb_is_direct_connect_active())
+    
+        if(led_state != 0x01)
+        
+            led_state = 0x01; 
+            main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);    //STEADY, CYAN
+        
+    
+    else if(!usb_serial_state_port_open)
+
+            main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);    //FADE , WHITE
+       
+    
+    else if(data_mode_enabled == false)
+
+            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);      //FADE, BLUE(255)
+       
+    
+    else
+
+            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);    //FADE,GREEN(255)
+        
+    
+
+ 
+
+
+--------
+
+::set_basic(  op,   color)
+ 
+    switch(op)
+    
+        case LED_DRIVER_OFF:
+        default:
+            set_off();
+        break;
+
+        case LED_DRIVER_FADE:
+            set_fade(1000, 500, color, 0x00);
+        break;
+
+        case LED_DRIVER_FLASH:
+            set_flash(250, 250, color, 0x00);
+        break;
+
+        case LED_DRIVER_ON_STEADY:
+            set_on(color);
+        break;
+ 
+
+
+-----------------------
+
+
+::event_queue_process()
+{
+uint32_t on_counts, off_counts, off_counts2, index;
+uint32_t on_c_r, on_c_g, on_c_b, on_c_w;
+uint32_t off_c_r, off_c_g, off_c_b, off_c_w;
+
+    if(new_operation_requested)
+    {
+        new_operation_requested = false;
+
+        if(memcmp(&current_operation_params, &requested_operation_params, sizeof(led_driver_params)))
+        {
+            //Split up color vars
+            on_c_r = (requested_operation_params.on_c&0xFF000000u) >> 24 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            on_c_g = (requested_operation_params.on_c&0x00FF0000u) >> 16 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            on_c_b = (requested_operation_params.on_c&0x0000FF00u) >> 8 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            on_c_w = (requested_operation_params.on_c&0x000000FFu) >> (8-OMMO_LED_NUM_COLOR_BITS);
+            off_c_r = (requested_operation_params.off_c&0xFF000000u) >> 24 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            off_c_g = (requested_operation_params.off_c&0x00FF0000u) >> 16 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            off_c_b = (requested_operation_params.off_c&0x0000FF00u) >> 8 >> (8-OMMO_LED_NUM_COLOR_BITS);
+            off_c_w = (requested_operation_params.off_c&0x000000FFu) >> (8-OMMO_LED_NUM_COLOR_BITS);
+
+            //Stop so we can safely update the memory
+            nrfx_pwm_stop(&pwm_instance, false);
+
+            switch(requested_operation_params.operation)
+            {
+                case LED_DRIVER_FADE:
+                    on_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.fade.rise_time_ms);
+                    off_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.fade.fall_time_ms);
+                    APP_ERROR_CHECK_BOOL((on_counts + off_counts) < LED_DRIVER_MAX_SEQ_LENGTH);
+
+                    pwm_sequence.repeats = 100;
+                    pwm_sequence.length = (on_counts + off_counts)*4;
+                    pwm_sequence.end_delay = 0;
+                    pwm_sequence.values.p_individual = pwm_values;
+
+                    for(uint32_t i = 0; i<on_counts; i++)
+                    {
+                        pwm_values[i].channel_0 = on_c_r*i/on_counts + off_c_r*(on_counts-i)/off_counts;
+                        pwm_values[i].channel_1 = on_c_g*i/on_counts + off_c_g*(on_counts-i)/off_counts;
+                        pwm_values[i].channel_2 = on_c_b*i/on_counts + off_c_b*(on_counts-i)/off_counts;
+                        pwm_values[i].channel_3 = on_c_w*i/on_counts + off_c_w*(on_counts-i)/off_counts;
+                    }
+                    for(uint32_t i = 0; i<off_counts; i++)
+                    {
+                        pwm_values[i + on_counts].channel_0 = off_c_r*i/off_counts + on_c_r*(off_counts-i)/off_counts;
+                        pwm_values[i + on_counts].channel_1 = off_c_g*i/off_counts + on_c_g*(off_counts-i)/off_counts;
+                        pwm_values[i + on_counts].channel_2 = off_c_b*i/off_counts + on_c_b*(off_counts-i)/off_counts;
+                        pwm_values[i + on_counts].channel_3 = off_c_w*i/off_counts + on_c_w*(off_counts-i)/off_counts;
+                    }
+                    break;
+
+                case LED_DRIVER_FLASH:
+                    on_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.flash.on_time_ms);
+                    off_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.flash.off_time_ms);
+                    APP_ERROR_CHECK_BOOL((on_counts + off_counts) < LED_DRIVER_MAX_SEQ_LENGTH);
+
+                    pwm_sequence.repeats = 100;
+                    pwm_sequence.length = (on_counts + off_counts)*4;
+                    pwm_sequence.end_delay = 0;
+                    pwm_sequence.values.p_individual = pwm_values;
+
+                    for(uint32_t i = 0; i<on_counts; i++)
+                    {
+                        pwm_values[i].channel_0 = on_c_r;
+                        pwm_values[i].channel_1 = on_c_g;
+                        pwm_values[i].channel_2 = on_c_b;
+                        pwm_values[i].channel_3 = on_c_w;
+                    }
+                    for(uint32_t i = 0; i<off_counts; i++)
+                    {
+                        pwm_values[i + on_counts].channel_0 = off_c_r;
+                        pwm_values[i + on_counts].channel_1 = off_c_g;
+                        pwm_values[i + on_counts].channel_2 = off_c_b;
+                        pwm_values[i + on_counts].channel_3 = off_c_w;
+                    }
+                    break;
+
+                case LED_DRIVER_MULTI_FLASH:
+                    on_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.multi_flash.on_time_ms);
+                    off_counts = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.multi_flash.off_time1_ms);
+                    off_counts2 = LED_DRIVER_MS_TO_COUNTS((uint32_t)requested_operation_params.params.multi_flash.off_time2_ms);
+                    APP_ERROR_CHECK_BOOL((on_counts*requested_operation_params.params.multi_flash.num_flashes +
+                                        off_counts*(requested_operation_params.params.multi_flash.num_flashes-1) +
+                                        off_counts2) < LED_DRIVER_MAX_SEQ_LENGTH);
+                    
+                    index = 0;
+                    for(uint8_t i=0; i<requested_operation_params.params.multi_flash.num_flashes; i++)
+                    {
+                        for(uint16_t i = 0; i<on_counts; i++)
+                        {
+                            pwm_values[index].channel_0 = on_c_r;
+                            pwm_values[index].channel_1 = on_c_g;
+                            pwm_values[index].channel_2 = on_c_b;
+                            pwm_values[index].channel_3 = on_c_w;
+                            index++;
+                        }
+                        if(i < (requested_operation_params.params.multi_flash.num_flashes-1))
+                        {
+                            for(uint16_t i = 0; i<off_counts; i++)
+                            {
+                                pwm_values[index].channel_0 = off_c_r;
+                                pwm_values[index].channel_1 = off_c_g;
+                                pwm_values[index].channel_2 = off_c_b;
+                                pwm_values[index].channel_3 = off_c_w;
+                                index++;
+                            }
+                        }
+                    }
+                    for(uint16_t i = 0; i<off_counts2; i++)
+                    {
+                        pwm_values[index].channel_0 = off_c_r;
+                        pwm_values[index].channel_1 = off_c_g;
+                        pwm_values[index].channel_2 = off_c_b;
+                        pwm_values[index].channel_3 = off_c_w;
+                        index++;
+                    }
+                    
+                    pwm_sequence.repeats = 100;
+                    pwm_sequence.length = (index*4);
+                    pwm_sequence.end_delay = 0;
+                    pwm_sequence.values.p_individual = pwm_values;
+                    break;
+
+                case LED_DRIVER_MORSE_CODE:
+                    index = 0;
+                    for(uint8_t i=0; i<requested_operation_params.params.morse.num_bits; i++)
+                    {
+                        bool dash = requested_operation_params.params.morse.code & (0x01<<(requested_operation_params.params.morse.num_bits-1-i));
+
+                        if(dash)
+                        {
+                            for(uint16_t i = 0; i<LED_DRIVER_MORSE_DASH_TIME && index < LED_DRIVER_MAX_SEQ_LENGTH; i++)
+                            {
+                                pwm_values[index].channel_0 = on_c_r;
+                                pwm_values[index].channel_1 = on_c_g;
+                                pwm_values[index].channel_2 = on_c_b;
+                                pwm_values[index].channel_3 = on_c_w;
+                                index++;
+                            }
+                        }
+                        else        
+                        {
+                            for(uint16_t i = 0; i<LED_DRIVER_MORSE_DOT_TIME && index < LED_DRIVER_MAX_SEQ_LENGTH; i++)
+                            {
+                                pwm_values[index].channel_0 = on_c_r;
+                                pwm_values[index].channel_1 = on_c_g;
+                                pwm_values[index].channel_2 = on_c_b;
+                                pwm_values[index].channel_3 = on_c_w;
+                                index++;
+                            }
+                        }
+      
+                        //Gap
+                        for(uint16_t i = 0; i<LED_DRIVER_MORSE_GAP_TIME && index < LED_DRIVER_MAX_SEQ_LENGTH; i++)
+                        {
+                            pwm_values[index].channel_0 = off_c_r;
+                            pwm_values[index].channel_1 = off_c_g;
+                            pwm_values[index].channel_2 = off_c_b;
+                            pwm_values[index].channel_3 = off_c_w;
+                            index++;
+                        }
+                    }
+
+                    //Pause
+                    for(uint16_t i = 0; i<LED_DRIVER_MORSE_PAUSE_TIME && index < LED_DRIVER_MAX_SEQ_LENGTH; i++)
+                    {
+                        pwm_values[index].channel_0 = off_c_r;
+                        pwm_values[index].channel_1 = off_c_g;
+                        pwm_values[index].channel_2 = off_c_b;
+                        pwm_values[index].channel_3 = off_c_w;
+                        index++;
+                    }
+
+                    pwm_sequence.repeats = 100;
+                    pwm_sequence.length = index*4;
+                    pwm_sequence.end_delay = 0;
+                    pwm_sequence.values.p_individual = pwm_values;
+                    break;
+
+                case LED_DRIVER_ON_STEADY:                
+                    pwm_sequence.repeats = 100;
+                    pwm_sequence.length = 1*4;
+                    pwm_sequence.end_delay = 0;
+                    pwm_sequence.values.p_individual = pwm_values;
+
+                    pwm_values[0].channel_0 = on_c_r;
+                    pwm_values[0].channel_1 = on_c_g;
+                    pwm_values[0].channel_2 = on_c_b;
+                    pwm_values[0].channel_3 = on_c_w;
+                    break;
+
+                case LED_DRIVER_OFF:
+                    pwm_sequence.length = 0;
+                    break;
+            }
+            
+            if(pwm_sequence.length > 0) //Not OFF
+            {
+                //Inverted
+                if(!active_low)
+                {
+                    for(uint32_t i = 0; i<(pwm_sequence.length>>2); i++)
+                    {
+                        pwm_values[i].channel_0 |= 0X8000;
+                        pwm_values[i].channel_1 |= 0X8000;
+                        pwm_values[i].channel_2 |= 0X8000;
+                        pwm_values[i].channel_3 |= 0X8000;
+                    }
+                }
+
+                //Wait until stopped, otherwise start can be ignored
+                while(!nrfx_pwm_is_stopped(&pwm_instance));
+
+                nrfx_pwm_simple_playback(&pwm_instance, &pwm_sequence, 1, NRFX_PWM_FLAG_LOOP);
+            }
+
+            //Overwrite current operation
+            current_operation_params = requested_operation_params;
+        }
+    }
+}
+
+
+
+
+
+
+

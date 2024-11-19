@@ -1,0 +1,448 @@
+
+注意1： 用sscom串口助手调试，需勾选 DTR
+
+
+usb_serial_write((uint8_t*)"12345abcde",10);
+
+
+============================uart init===========================
+
+flow: 
+
+
+----------------------------------
+
+main
+
+     
+    gpio_init();
+ 
+    usb_serial_init(usb_serial_packet_received, usb_serial_connect_disconnect);
+
+
+
+
+------------------
+
+
+参数： usb_serial_packet_received, usb_serial_connect_disconnect
+usb_serial_init(  br_callback,   ev_callback)
+
+ 
+    packet_received_callback = usb_serial_packet_received;
+    event_callback           = usb_serial_connect_disconnect;
+
+    //Init buffers 
+    usb_serial_rx_cobs_buffer_top = 0x00;
+    usb_serial_rx_packet_ready = false;
+
+    usb_serial_tx_buffer_top = 0x00;
+    usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+    usb_serial_state_tx_in_progress = false;
+    usb_serial_write_force = false;
+
+
+    usb_serial_state_port_open = false;   //PC DTR
+    usb_serial_state_port_dtr = false;
+
+    //Misc
+    usb_busy_data_loss_count = 0x00;
+
+
+    //Fill in serial number
+    ommo_usbd_serial_num_generate();
+
+    //Start USB
+    USBD_Init();
+    USBD_EnableIAD();
+    USBD_SetDeviceInfo(&_DeviceInfo);
+
+    _usb_cdc_inst = AddCDC(0, _usb_cdc_rx_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE);
+    USBD_CDC_SetOnControlLineState(_usb_cdc_inst, USB_CDC_OnControlLineStateChange);
+
+    USBD_Start();
+
+
+
+
+
+======================= uart == DTR detect ===========================
+
+flow: 
+
+   main  --  usb_serial_init   --   USB_CDC_OnControlLineStateChange  --  usb_serial_state_port_dtr (=DTR)  
+   --  usb_serial_event_queue_process  --  usb_serial_state_port_open
+
+
+
+数据流：  DTR  -->  usb_serial_state_port_dtr  -->  usb_serial_state_port_open
+
+----------------------------------
+
+main
+
+
+    usb_serial_init(usb_serial_packet_received, usb_serial_connect_disconnect);
+
+
+
+---------------------------------------
+
+
+参数： usb_serial_packet_received, usb_serial_connect_disconnect
+usb_serial_init( br_callback, ev_callback)
+
+    ......（忽略）
+
+    _usb_cdc_inst = AddCDC(0, _usb_cdc_rx_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE);
+
+    //USBD_CDC_SetOnControlLineState(_usb_cdc_inst, USB_CDC_OnControlLineStateChange);
+       _aInst[_usb_cdc_inst].pfOnSetControlLineState = USB_CDC_OnControlLineStateChange;
+ 
+    ......（忽略）
+
+
+
+---------
+
+USB_CDC_OnControlLineStateChange(USB_CDC_CONTROL_LINE_STATE * pLineState)
+
+    usb_serial_state_port_dtr = pLineState->DTR;   //取得DTR的打开状态
+
+
+----------
+
+
+usb_serial_event_queue_process()
+
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);  //确认无已触发待处理的中断
+
+    
+    if(usb_serial_state_port_dtr && !usb_serial_state_port_open) //DTR打开，亮蓝灯
+    
+        usb_serial_state_port_dtr = true;
+        usb_serial_state_port_open = true;   //DTRV open
+
+
+        if(usb_serial_timeout_gen != NULL)
+            APP_ERROR_CHECK(usb_serial_timeout_gen->set_timeout(usb_serial_buffer_flush_timeout_channel, MS_TO_RTC_TIMEOUT_GEN(500)));
+
+        // Setup first transfer buffer
+        _io_context_read.NumBytesToTransfer = USB_SERIAL_RX_BUFFER_SIZE;  // 3 * 1024
+        _io_context_read.pData = usb_serial_rx_raw_buffer;
+        _io_context_read.pfOnComplete = USBD_ReadCompleteCb;
+
+        USBD_CDC_ReadAsync(_usb_cdc_inst, &_io_context_read, true);
+    
+        if(event_callback != NULL)
+        
+            (*event_callback)(USB_SERIAL_EVENT_PORT_OPEN);   //见事件函数 usb_serial_connect_disconnect
+
+
+    
+    else if(!usb_serial_state_port_dtr && usb_serial_state_port_open)  //DTR关闭
+    
+        usb_serial_state_port_dtr = false;
+        usb_serial_state_port_open = false;
+
+        USBD_CDC_CancelWrite(_usb_cdc_inst);
+        USBD_CDC_CancelRead(_usb_cdc_inst);
+
+        usb_serial_state_tx_in_progress = false;
+        usb_serial_clear_tx_buffer();
+        usb_serial_clear_cobs_rx_buffer();
+
+        if(usb_serial_timeout_gen != NULL)
+            APP_ERROR_CHECK(usb_serial_timeout_gen->disable_timeout(usb_serial_buffer_flush_timeout_channel));
+
+        if(event_callback != NULL)
+        {
+            (*event_callback)(USB_SERIAL_EVENT_PORT_CLOSE);
+        }
+
+
+------------
+
+
+usb_serial_connect_disconnect(usb_serial_event event)
+
+    set_leds();
+
+    switch(event)
+     
+        case USB_SERIAL_EVENT_PORT_CLOSE:
+            //Disable data mode on disconnect
+            if(data_mode_enabled)
+                data_mode_enable(false);
+
+            if(!leave_motor_on)
+                stop_motor();
+
+            if(esb_enabled)
+             
+                comms_esb_disable();
+                esb_enabled = false;
+             
+            break;
+
+        case USB_SERIAL_EVENT_PORT_SUSPEND:
+            //Disable data mode on disconnect
+            if(data_mode_enabled)
+                data_mode_enable(false);
+
+            if(!leave_motor_on)
+                stop_motor();
+            break;
+
+        case USB_SERIAL_EVENT_PORT_OPEN:
+            break;
+    
+    
+    //Clear good id bifield on all usb connection/disconnections
+    comms_esb_set_good_id_bitfield(0x00);
+ 
+
+       
+
+
+
+================================= uart ==== tx =============================
+
+flow：
+
+   main --  usb_serial_write  --  DTR open --  usb_serial_event_queue_process  --  USBD_WriteAsync  --  USBD_WriteOverlapped  --  USBD_PROFILE_CALL_U32x4
+
+
+数据流："abcde"  -->  usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData   -->  EPIn（USB端点） 
+数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size   -->  _io_context_write.NumBytesToTransfer
+ 
+
+--------------------------------------------------------------
+
+main     
+
+    while(1)   
+
+        nrf_delay_ms(10);
+
+        usb_serial_write((uint8_t*)"abcde",5);
+        
+        usb_serial_event_queue_process();
+
+
+-------------------
+
+参数： "abcde"  ,  5
+数据流： "abcde"  -->  usb_serial_tx_buffer_active -->  usb_serial_tx_buffer_primary
+usb_serial_write( *buffer,   length)
+
+    if(!usb_serial_state_port_open)   //DTR关，显示红灯，并退出
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_RED(255));  
+        main_led.event_queue_process();                           
+        return NRFX_SUCCESS;
+     
+    else                               //DTR开，显示绿灯
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));   
+        main_led.event_queue_process();                            
+    
+
+    //把"abcde" 存入到发送缓冲区 usb_serial_tx_buffer_active
+    if( (usb_serial_tx_buffer_top + length) < USB_SERIAL_TX_BUFFER_SIZE )
+    
+        usb_serial_tx_buffer_top += length;
+
+        memcpy(usb_serial_tx_buffer_active + usb_serial_tx_buffer_top - length, buffer, length);
+
+
+
+------------
+
+
+数据流：usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData
+数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size   -->  _io_context_write.NumBytesToTransfer
+usb_serial_event_queue_process()
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);  //确认无已触发待处理的中断
+    
+
+    if(usb_serial_state_port_dtr && !usb_serial_state_port_open) //DTR打开，亮蓝灯
+    
+        ......(略)        
+
+
+    //Check for data to transmit
+    if(usb_serial_state_port_open)
+ 
+
+        //Check if we have enough data to TX, or we need to force a packet out NOW
+        if( (usb_serial_tx_buffer_top > OMMO_USB_SERIAL_MIN_PACKET_SIZE || (usb_serial_write_force && usb_serial_tx_buffer_top > 0)) &&
+            !usb_serial_state_tx_in_progress)
+        
+            //Don't need to send anything again for at least 500ms            
+            if(usb_serial_timeout_gen != NULL)
+                APP_ERROR_CHECK(usb_serial_timeout_gen->reset_timeout(usb_serial_buffer_flush_timeout_channel));
+
+            uint8_t *filled_buffer = usb_serial_tx_buffer_active;
+            uint16_t filled_buffer_size = usb_serial_tx_buffer_top;
+
+            //Switch buffers while DMA writes to USB port
+            usb_serial_tx_buffer_top = 0x00;
+            if(usb_serial_tx_buffer_active == usb_serial_tx_buffer_primary)
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_secondary;
+            else
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+
+            //Buffer ready, start the write
+            usb_serial_state_tx_in_progress = true;
+
+
+            _io_context_write.NumBytesToTransfer = filled_buffer_size;
+            _io_context_write.pData = filled_buffer;
+            _io_context_write.pfOnComplete = USBD_WriteCompleteCb;
+
+            //USBD_CDC_WriteAsync(_usb_cdc_inst, &_io_context_write, usb_serial_write_force);
+                 USBD_WriteAsync(_aInst[hInst].EPIn, _io_context_write, usb_serial_write_force );
+
+
+            //If we were sending a forced packet, we are finished 
+            usb_serial_write_force = false;
+ 
+
+----------
+
+参数： _aInst[_usb_cdc_inst].EPIn, _io_context_write, usb_serial_write_force 
+USBD_WriteAsync(  EPIndex,   * pContext,   Send0PacketIfRequired)  
+
+  ASYNC_HOOK * pHook;
+
+  pContext->NumBytesTransferred = 0;
+
+  USB_OS_IncDI();                                                //进入屏蔽干扰  （待验证）
+
+  if (USB_aEPStat[EPIndex].Dir.TxInfo.NumDataParts != 0) 
+    r = USB_STATUS_EP_BUSY;                                        //-4
+   
+  else 
+    pHook = _InstallAsyncHook(EPIndex);
+
+    r = USBD_WriteOverlapped(EPIndex, pContext->pData, pContext->NumBytesToTransfer, Send0PacketIfRequired);
+
+    if (r >= 0)  
+      pHook->NumBytesToTransfer = pContext->NumBytesToTransfer;
+      pHook->pIOContext = pContext;
+     
+  
+  USB_OS_DecRI();                                               //退出屏蔽干扰（待验证）
+
+
+  if (r < 0)  
+    pContext->Status = r;
+    pContext->pfOnComplete(pContext);
+   
+ 
+---------  
+
+功能: 写数据到usb端点
+参数：  EPIn, _io_context_write.pData, *.NumBytesToTransfer, Send0PacketIfRequired
+数据流：_io_context_write.pData  -->  EPIn（USB端点） 
+USBD_WriteOverlapped(  EPIndex,  * pData,  NumBytes,   Send0PacketIfRequired)  
+  EP_STAT * pEPStat;
+
+  USB_DATA_PART *pPart;
+
+  USBD_PROFILE_CALL_U32x4(USBD_EVTID_WRITEOVERLAPPED, EPIndex, pData, NumBytes, Send0PacketIfRequired);  //发送数据到USB端点
+
+  if ((USB_Global.State & (USB_STAT_CONFIGURED | USB_STAT_SUSPENDED)) != USB_STAT_CONFIGURED)      //lint !e9032 N:100
+    return USB_STATUS_ERROR;
+   
+
+  pEPStat = &USB_aEPStat[EPIndex];
+  if (pEPStat->IsHalted != 0)  
+    return USB_STATUS_EP_HALTED;
+   
+  USB_OS_IncDI();
+  
+  // Check if a transfer is in progress. In this case,
+  // we either extend the running transfer or queue another transfer.
+  // If the queue is full, we return USB_STATUS_EP_BUSY.
+   
+  pPart = &pEPStat->Dir.TxInfo.DataParts[0];
+
+  if (pEPStat->Dir.TxInfo.NumDataParts != 0u) 
+
+    pPart += (pEPStat->Dir.TxInfo.NumDataParts - 1u);
+    if ((pEPStat->Dir.TxInfo.WriteMode & USB_WRITE_MODE_EXTEND) != 0u && pPart->pData + pPart->NumBytesRem == *pData)  
+       
+      // Extend current transfer
+       
+      pPart->NumBytesRem += NumBytes;
+      pEPStat->Dir.TxInfo.Send0PacketIfRequired =  Send0PacketIfRequired;
+      r = 0;
+      goto Done;
+    
+  
+    // Check for a free slot.
+
+    if (pEPStat->Dir.TxInfo.NumDataParts == USB_NUM_TX_DATA_PARTS)  
+      r = USB_STATUS_EP_BUSY;
+      goto Done;
+    
+
+    // Move to next free slot
+  
+    pPart++;
+  
+
+
+  // Put new request into queue.
+
+  pPart->pData       = *pData;
+  pPart->NumBytesRem = NumBytes;
+  pEPStat->Dir.TxInfo.NumDataParts++;
+  pEPStat->Dir.TxInfo.Send0PacketIfRequired =Send0PacketIfRequired;
+  pEPStat->TransactionCnt = ++USB_Global.TransactionCnt;
+
+
+  // If no transfer in progress, start one
+
+  if (pEPStat->Dir.TxInfo.TxNumBytesPending == 0)   
+    USB_Global.pDriver->pfStartTx(EPIndex);
+   
+  r = 0;
+
+Done:
+  USB_OS_DecRI();
+  USBD_PROFILE_END_CALL_U32(USBD_EVTID_WRITEOVERLAPPED, r);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+============================ uart ==== rx ========================
+
+
