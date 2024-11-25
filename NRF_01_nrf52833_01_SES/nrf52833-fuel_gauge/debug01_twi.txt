@@ -1,0 +1,184 @@
+
+
+================================= twi  init =================================
+
+
+
+
+flow:
+
+   twi_basic  twi_basic_instance -- class twi_basic  --  twi_basic::twi_basic
+
+   main  -->  bq27427_twi_init  -->  twi_basic::acquire_i2c
+    
+
+
+
+------------------------------------------------------------------------------
+
+
+twi_basic twi_basic_instance(OMMO_SENSOR_TWIM, &rtc_timeout);
+
+class twi_basic
+
+    public:
+        twi_basic(nrfx_twim_t twi_instance, rtc_timeout_gen *rtc_timeout_g);
+
+    private:
+        nrfx_twim_t          twi_peripheral;
+        twi_basic_config_t   our_config;
+        rtc_timeout_gen      *rtc_timeout;
+
+-----
+
+参数：OMMO_SENSOR_TWIM,  &rtc_timeout
+twi_basic::twi_basic( twi_instance,  *rtc_timeout_g)
+
+    twi_peripheral = twi_instance;   //OMMO_SENSOR_TWIM    //here
+    rtc_timeout = rtc_timeout_g;     //rtc_timeout
+  
+    rtc_timeout->get_timeout_channel(&rtc_timeout_channel, static_timeout_handler, this);
+
+
+
+-----------------------------------------------------------------
+
+main( )
+
+ 
+    bq27427_twi_init(&twi_basic_instance,OMMO_FUEL_SCL,OMMO_FUEL_SDA);
+
+
+---------------------------
+
+twi_basic   *twi_bq27427_instance;
+
+
+
+参数：   twi_basic_instance,  P0.15,  P1.0
+数据流： twi_basic_instance  -->  twi_bq27427_instance
+bq27427_twi_init(  *i2c_driver,  twi_scl_pin,  twi_sda_pin)
+
+    twi_bq27427_instance = i2c_driver;
+
+    twi_basic_config.scl_pin = twi_scl_pin;     // P0.15
+    twi_basic_config.sda_pin = twi_sda_pin;     // P1.0
+
+    twi_basic_config.twi_basic_event_listener = bq27427_twi_basic_event_handler;
+    twi_basic_config.twi_basic_event_listener_context = NULL;
+    twi_basic_config.frequency = NRF_TWIM_FREQ_100K;
+
+    twi_bq27427_instance->acquire_i2c(&twi_basic_config);
+ 
+
+
+-------
+
+功能：初始化I2C
+参数：twi_basic_config
+twi_basic::acquire_i2c( *twi_basic_config)
+   
+    our_config = *twi_basic_config;
+
+    nrfx_twim_config_t  config =
+    {
+       .scl                = our_config.scl_pin,    // P0.15
+       .sda                = our_config.sda_pin,    // P1.0
+       .frequency          = our_config.frequency,
+       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
+       .hold_bus_uninit    = false
+    };
+
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
+
+    nrf_gpio_cfg( P0.15, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, 
+                  (our_config.scl_push_pull ? NRF_GPIO_PIN_H0H1 : NRF_GPIO_PIN_H0D1), NRF_GPIO_PIN_NOSENSE);
+    nrf_gpio_cfg( P1.0, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
+
+    nrfx_twim_enable(&twi_peripheral);
+
+    update_timeout_scale(our_config.frequency);
+
+    i2c_acquired = true;
+
+
+
+================================= twi read and write data =================================
+
+
+main
+
+   while
+
+      //------------ 读写单个u16数据 --------------
+
+      uint16_t ideviceid=0;
+      bq27427_twi_writereg16( 0X55, 0x00, 0x0001);     //reg01-00=0001，reg00=01，reg01=00
+      bq27427_twi_readreg16( 0X55, 0x00, &ideviceid);
+
+
+      //------------ 读写多个u8数据 --------------
+
+      uint8_t  iblock[32]={0};
+
+      //Read block
+      bq27427_twi_readbytes( 0X55, 0x40, iblock,32);
+
+      //Write block
+      bq27427_twi_writebytes( 0X55, 0x40, iblock,32);
+
+   
+---
+
+//写入单个u16数据
+bq27427_twi_writereg16(uint16_t idevaddr, uint8_t ireg, uint16_t data)
+ 
+   uint8_t sbuf[2];
+   sbuf[0] = ( uint8_t )( data & 0x00FF );
+   sbuf[1] = ( uint8_t )( ( data >> 8 ) & 0x00FF);
+
+   if(twi_bq27427_instance->write_data(idevaddr, ireg, sbuf, 2, 0x00, true) != NRF_SUCCESS)
+        return false;
+
+    nrf_delay_us(BQ27427_TWI_DELAY); 
+
+ 
+------------
+
+//读取单个u16数据
+uint32_t bq27427_twi_readreg16(uint16_t idevaddr, uint8_t ireg, uint16_t* data)
+
+    uint8_t sbuf[2];
+
+    if(twi_bq27427_instance->read_data(idevaddr, ireg, sbuf, 2, 0x00, true) != NRF_SUCCESS)
+        return false;
+
+    *data = (uint16_t)(sbuf[1]<<8) | sbuf[0];
+
+    nrf_delay_us(BQ27427_TWI_DELAY);
+    return true;
+
+
+---
+
+//读取多个u8数据
+bq27427_twi_readbytes( idevaddr, ireg, *sbuf, ilen)
+
+    if(twi_bq27427_instance->read_data(idevaddr, ireg, sbuf, ilen, 0x00, true) != NRF_SUCCESS)
+        return false;
+
+    nrf_delay_us(BQ27427_TWI_DELAY);
+ 
+
+---
+
+//写入多个u8数据
+bq27427_twi_writebytes( idevaddr, ireg,  *sbuf,  ilen)
+
+    if(twi_bq27427_instance->write_data(idevaddr, ireg, sbuf, ilen, 0x00, true) != NRF_SUCCESS)
+        return false;
+
+    nrf_delay_us(BQ27427_TWI_DELAY);
+
+
+

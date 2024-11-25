@@ -1,0 +1,246 @@
+
+
+
+D:\workspace-work\ommo_nrf-gauge
+
+   //删除下面文件和目录
+   .git
+   key_vault
+   latest_firmware 
+   .gitignore
+   ReadMe.md
+   ReleaseNote.md
+
+
+D:\workspace-work\ommo_nrf-gauge\flash_files
+   
+   //保留下面文件和目录  （删除其它所有文件和目录）
+   bootload.bat
+   build.ini
+   build.py
+   generate_protobuf_lib.bat
+   program.bat
+     
+   
+D:\workspace-work\ommo_nrf-gauge\emUSBD_PRO_nRF52xxx_V3.64.0_USBD-00543_2ACA5E74_240311   
+   
+   //删除下面文件和目录
+   Doc
+   USBVAPI_documentation_html
+   Windows
+   License_USBD-00543.txt
+   USBVAPI_documentation_html.zip
+
+D:\workspace-work\ommo_nrf-gauge\nanopb-0.4.6-windows-x86
+
+   //删除下面文件和目录  （所有目录都删除）
+   .github
+   conan-wrapper
+   docs
+   examples
+   extra
+   generator
+   generator-bin
+   spm_headers
+   spm-test
+   Test
+   tests
+   tools
+   .gitignore
+   LICENSE.txt
+   README.md
+   
+D:\workspace-work\ommo_nrf-08-10036f\10036f-50-frm-32-af-remark-nrf52-sdk-nouse-ok-k\nRF5_SDK_17.1.0_ddde560   
+   
+   //删除下面文件和目录  
+   documentation
+   external
+   external_tools
+   license.txt
+   nRF_MDK_8_40_3_IAR_BSDLicense.msi
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components   
+   
+   //删除下面文件和目录     
+   802_15_4
+   ant
+   ble
+   boards
+   drivers_ext
+   nfc
+   serialization
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\proprietary_rf   
+   
+   //删除下面文件和目录    
+   gzll
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\toolchain\cmsis 
+   
+   //删除下面文件和目录    
+   dsp
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\config 
+   
+   //删除下面文件和目录     
+   nrf52810
+   nrf52811
+   nrf52820
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx   
+   
+   //删除下面文件和目录      
+   doc
+   helpers
+   templates
+   CHANGELOG.md
+   LICENSE
+   README.md
+   
+   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk   
+   
+   //删除下面文件和目录    
+    arm_startup_nrf51.s
+    arm_startup_nrf52805.s
+    arm_startup_nrf52810.s
+    arm_startup_nrf52811.s
+    arm_startup_nrf52820.s
+    arm_startup_nrf5340_application.s
+    arm_startup_nrf5340_network.s
+    arm_startup_nrf9160.s
+    gcc_startup_nrf51.S
+    gcc_startup_nrf52805.S
+    gcc_startup_nrf52810.S
+    gcc_startup_nrf52811.S
+    gcc_startup_nrf5340_application.S
+    gcc_startup_nrf5340_network.S
+    gcc_startup_nrf9160.S
+    iar_startup_nrf51.s
+    iar_startup_nrf52805.s
+    iar_startup_nrf52810.s
+    iar_startup_nrf52811.s
+    iar_startup_nrf5340_application.s
+    iar_startup_nrf5340_network.s
+    iar_startup_nrf9160.s
+    nrf51.h
+    nrf51.svd
+    nrf51422_peripherals.h
+    nrf51422_xxaa.ld
+    nrf51422_xxab.ld
+    nrf51422_xxac.ld
+    nrf51801_peripherals.h
+    nrf51801_xxab.ld
+    nrf51802_peripherals.h
+    nrf51802_xxaa.ld
+    nrf51822_peripherals.h
+    nrf51822_xxaa.ld
+    nrf51822_xxab.ld
+    nrf51822_xxac.ld
+    nrf51824_peripherals.h
+    nrf51824_xxaa.ld
+    nrf51_bitfields.h
+    nrf51_common.ld
+    nrf51_deprecated.h
+    nrf51_peripherals.h
+    nrf51_to_nrf52810.h
+    nrf51_xxaa.ld
+    nrf51_xxab.ld
+    nrf51_xxac.ld
+    nrf52805.h
+    nrf52805.svd
+    nrf52805_bitfields.h
+    nrf52805_peripherals.h
+    nrf52805_xxaa.ld
+    nrf52810.h
+    nrf52810.svd
+    nrf52810_bitfields.h
+    nrf52810_name_change.h
+    nrf52810_peripherals.h
+    nrf52810_to_nrf52811.h
+    nrf52810_xxaa.ld
+    nrf52811.h
+    nrf52811.svd
+    nrf52811_bitfields.h
+    nrf52811_peripherals.h
+    nrf52811_xxaa.ld
+    nrf52820.h
+    nrf52820.svd
+    nrf52820_bitfields.h
+    nrf52820_peripherals.h
+    nrf52820_xxaa.ld
+    nrf52832_peripherals.h
+    nrf52832_xxaa.ld
+    nrf52832_xxab.ld
+    nrf5340_application.h
+    nrf5340_application.svd
+    nrf5340_application_bitfields.h
+    nrf5340_application_name_change.h
+    nrf5340_application_peripherals.h
+    nrf5340_network.h
+    nrf5340_network.svd
+    nrf5340_network_bitfields.h
+    nrf5340_network_name_change.h
+    nrf5340_network_peripherals.h
+    nrf5340_xxaa_application.ld
+    nrf5340_xxaa_network.ld
+    nrf9160.h
+    nrf9160.svd
+    nrf9160_bitfields.h
+    nrf9160_name_change.h
+    nrf9160_peripherals.h
+    nrf9160_xxaa.ld
+    ses_startup_nrf51.s
+    ses_startup_nrf52805.s
+    ses_startup_nrf52810.s
+    ses_startup_nrf52811.s
+    ses_startup_nrf52820.s
+    ses_startup_nrf5340_application.s
+    ses_startup_nrf5340_network.s
+    ses_startup_nrf9160.s
+    system_nrf51.c
+    system_nrf51.h
+    system_nrf52805.c
+    system_nrf52805.h
+    system_nrf52810.c
+    system_nrf52810.h
+    system_nrf52811.c
+    system_nrf52811.h
+    system_nrf52820.c
+    system_nrf52820.h
+    system_nrf5340_application.c
+    system_nrf5340_application.h
+    system_nrf5340_network.c
+    system_nrf5340_network.h
+    system_nrf53_approtect.h
+    system_nrf9160.c
+    system_nrf9160.h
+
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
+   
