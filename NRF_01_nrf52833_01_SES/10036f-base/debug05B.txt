@@ -1,6 +1,13 @@
 nrf_delay_ms(100);
 
 
+#define USB_SERIAL_TX_BUFFER_SIZE 8192
+#define USB_SERIAL_RX_BUFFER_SIZE (3*1024)
+
+uint8_t usb_serial_rx_packet_buffer[USB_SERIAL_RX_BUFFER_SIZE];
+uint16_t usb_serial_rx_packet_length;
+
+
 uint16_t usb_serial_tx_buffer_top;
 uint8_t usb_serial_tx_buffer_primary[USB_SERIAL_TX_BUFFER_SIZE];
 uint8_t usb_serial_tx_buffer_secondary[USB_SERIAL_TX_BUFFER_SIZE];

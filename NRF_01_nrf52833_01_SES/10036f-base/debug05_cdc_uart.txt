@@ -20,14 +20,10 @@ main
     usb_serial_init(usb_serial_packet_received, usb_serial_connect_disconnect);
 
 
-
-
 ------------------
 
-
 参数： usb_serial_packet_received, usb_serial_connect_disconnect
-usb_serial_init(  br_callback,   ev_callback)
-
+usb_serial_init(  br_callback, ev_callback)
  
     packet_received_callback = usb_serial_packet_received;
     event_callback           = usb_serial_connect_disconnect;
@@ -65,14 +61,12 @@ usb_serial_init(  br_callback,   ev_callback)
 
 
 
-
 ======================= uart == DTR detect ===========================
 
 flow: 
 
    main  --  usb_serial_init   --   USB_CDC_OnControlLineStateChange  --  usb_serial_state_port_dtr (=DTR)  
    --  usb_serial_event_queue_process  --  usb_serial_state_port_open
-
 
 
 数据流：  DTR  -->  usb_serial_state_port_dtr  -->  usb_serial_state_port_open
@@ -122,7 +116,7 @@ usb_serial_event_queue_process()
     if(usb_serial_state_port_dtr && !usb_serial_state_port_open) //DTR打开，亮蓝灯
     
         usb_serial_state_port_dtr = true;
-        usb_serial_state_port_open = true;   //DTRV open
+        usb_serial_state_port_open = true;   //DTR open
 
 
         if(usb_serial_timeout_gen != NULL)
@@ -137,7 +131,8 @@ usb_serial_event_queue_process()
     
         if(event_callback != NULL)
         
-            (*event_callback)(USB_SERIAL_EVENT_PORT_OPEN);   //见事件函数 usb_serial_connect_disconnect
+           //(*event_callback)(USB_SERIAL_EVENT_PORT_OPEN);    
+              usb_serial_connect_disconnect(USB_SERIAL_EVENT_PORT_OPEN);   
 
 
     
@@ -157,9 +152,11 @@ usb_serial_event_queue_process()
             APP_ERROR_CHECK(usb_serial_timeout_gen->disable_timeout(usb_serial_buffer_flush_timeout_channel));
 
         if(event_callback != NULL)
-        {
-            (*event_callback)(USB_SERIAL_EVENT_PORT_CLOSE);
-        }
+        
+            //(*event_callback)(USB_SERIAL_EVENT_PORT_CLOSE);
+                (USB_SERIAL_EVENT_PORT_OPEN)(USB_SERIAL_EVENT_PORT_CLOSE);
+
+        
 
 
 ------------
@@ -420,29 +417,327 @@ Done:
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 ============================ uart ==== rx ========================
+
+
+flow: 
+
+   main  --  usb_serial_init  --  usb_serial_event_queue_process  --  USBD_CDC_ReadAsync  --  USBD_ReadCompleteCb  --  cobs_decode_crc
+
+   main  --  usb_serial_event_queue_process  --  
+
+
+数据流：usb  -->  usb_serial_rx_raw_buffer  --> usb_serial_rx_cobs_buffe   -->  usb_serial_rx_packet_buffer
+
+
+----------------------------------
+
+main
+
+
+    usb_serial_init(usb_serial_packet_received, usb_serial_connect_disconnect);
+
+
+    while(1)
+
+
+      usb_serial_event_queue_process();
+
+
+
+--------------
+
+参数： usb_serial_packet_received, usb_serial_connect_disconnect
+usb_serial_init(  br_callback, ev_callback)
+ 
+    packet_received_callback = usb_serial_packet_received;       //here
+    event_callback           = usb_serial_connect_disconnect;
+
+    ...... (忽略)
+
+
+    _usb_cdc_inst = AddCDC(0, _usb_cdc_rx_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE);        //here
+    USBD_CDC_SetOnControlLineState(_usb_cdc_inst, USB_CDC_OnControlLineStateChange);
+
+    USBD_Start();
+
+
+
+
+-----------------------
+
+功能：检测usb打开，读取usb数据
+数据流：usb  -->  usb_serial_rx_raw_buffer 
+usb_serial_event_queue_process()
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);   //确定无中断冲突
+    
+    if(usb_serial_state_port_dtr && !usb_serial_state_port_open)   //DTR打开，亮蓝灯
+    
+        usb_serial_state_port_dtr = true;
+        usb_serial_state_port_open = true;   //DTRV open
+
+
+        if(usb_serial_timeout_gen != NULL)
+            APP_ERROR_CHECK(usb_serial_timeout_gen->set_timeout(usb_serial_buffer_flush_timeout_channel, MS_TO_RTC_TIMEOUT_GEN(500)));
+
+        // Setup first transfer buffer
+        _io_context_read.NumBytesToTransfer = USB_SERIAL_RX_BUFFER_SIZE;  // 3 * 1024
+        _io_context_read.pData = usb_serial_rx_raw_buffer;
+
+        _io_context_read.pfOnComplete = USBD_ReadCompleteCb;
+
+        //USBD_CDC_ReadAsync(_usb_cdc_inst, &_io_context_read, true);        //here， 读取usb数据
+           //USBD_ReadAsync(_aInst[hInst].EPOut, _io_context_read, ShortRead);
+              //USB__Read(EPIndex, pContext->pData, pHook->NumBytesToTransfer, 0, Mode);    //数据流：usb --> pContext->pData
+              //   USBD_BUFFER_Read(&pEPStat->Dir.RxInfo.Buffer, pData, NumBytesReq);        //数据流： Buffer --> pData  
+                       USB_MEMCPY(pData, pBuffer->pData + pBuffer->RdPos, NumBytesAtOnce);    //数据流： pBuffer --> pData  
+              //pContext->pfOnComplete(_io_context_read);
+                  USBD_ReadCompleteCb(_io_context_read);
+    
+
+        if(event_callback != NULL)
+        
+            //(*event_callback)(USB_SERIAL_EVENT_PORT_OPEN);    
+                  usb_serial_connect_disconnect(USB_SERIAL_EVENT_PORT_OPEN);  
+
+
+
+-------------------
+
+
+功能： 取得usb_serial_rx_packet_buffer接收包
+数据流：sb_serial_rx_raw_buffer --> usb_serial_rx_cobs_buffer  -->  usb_serial_rx_packet_buffer
+参数： _io_context_read
+USBD_ReadCompleteCb( *pIOContext)
+
+    for(uint16_t i = 0; i < pIOContext->NumBytesTransferred && usb_serial_rx_cobs_buffer_top<USB_SERIAL_RX_BUFFER_SIZE; i++)
+    
+        usb_serial_rx_cobs_buffer[usb_serial_rx_cobs_buffer_top++] = usb_serial_rx_raw_buffer[i]; //数据流：sb_serial_rx_raw_buffer -> usb_serial_rx_cobs_buffer 
+        if(usb_serial_rx_raw_buffer[i] == 0x00) //End of packet
+        
+            uint8_t crc;
+            size_t packet_size, not_used;
+
+            //Is packet buffer busy
+            if(!usb_serial_rx_packet_ready)
+            
+                //Decode our rx cobs buffer
+                cobs_decode_crc(usb_serial_rx_cobs_buffer, usb_serial_rx_cobs_buffer_top - 1,  //数据流：usb_serial_rx_cobs_buffer -> usb_serial_rx_packet_buffer
+                                 usb_serial_rx_packet_buffer,USB_SERIAL_RX_BUFFER_SIZE, &crc, &not_used, &packet_size); 
+
+                if(packet_size > 0x00)  //Is this a real packet
+                
+                    if(crc == 0x00)
+                    
+                        usb_serial_rx_packet_length = packet_size;
+                        usb_serial_rx_packet_ready = true;
+                    
+                    else
+                    
+                        usb_serial_send_ack(OMMO_ACK_INVALID_DATA);                    
+                
+            
+            else            
+                ;//RX buffer is busy, packet discarded
+            
+
+            //Clear our rx cobs buffer
+            usb_serial_clear_cobs_rx_buffer();
+        
+    
+
+    //读取下一包数据
+    if(usb_serial_state_port_open) USBD_CDC_ReadAsync(_usb_cdc_inst, &_io_context_read, 1);
+
+
+
+------------
+
+数据流：usb_serial_rx_cobs_buffer -> usb_serial_rx_packet_buffer
+参数：usb_serial_rx_cobs_buffer, *_cobs_buffer_top - 1, usb_serial_rx_packet_buffer,3*1024, &crc, &not_used, &packet_size
+cobs_decode_crc( *ptr, input_length, *dst, dest_buffer_length, *crc, *input_length_used, *dest_length)  //后3个也是输出参数
+
+	const uint8_t *start = dst, *end = ptr + input_length;
+	uint8_t code = 0xFF, copy = 0;
+
+        *dest_length = 0;
+        *input_length_used = 0;
+        *crc = 0;
+
+	for (; ptr < end; copy--)   //待理解
+
+        
+            if (*dest_length == dest_buffer_length) // overrun            
+                return false;            
+
+            (*input_length_used)++; //Keep track of bytes pulled from input
+
+            if (copy != 0)
+            
+                uint8_t c = *ptr++;
+                
+                *dst++ = c;
+                (*dest_length)++;
+
+                *crc += c;
+            
+            else
+            
+                if (code != 0xFF)
+                
+                    *dst++ = 0;
+                    (*dest_length)++;                
+
+                copy = code = *ptr++;   //待理解
+
+                if (code == 0)
+                
+                    (*dest_length)--; /* Exclue the 0 terminator from length output */
+                    break; /* Source length too long */
+                
+
+        /* Exclue the crc from length output */
+        if(*dest_length == 0x00)
+            return false;
+        (*dest_length)--;
+
+
+
+--------------
+
+功能：对接收包usb_serial_rx_packet_buffer处理
+usb_serial_event_queue_process()
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);   //确定无中断冲突
+
+    //cdc uart接收数据处理
+    if(usb_serial_rx_packet_ready)
+    
+        usb_serial_rx_packet_ready = false;
+
+        //Check for block_dev requests
+        if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_READ)  //18
+        
+            if(usb_serial_rx_packet_length != 5)            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                uint32_t blk_id;
+                memcpy(&blk_id, &usb_serial_rx_packet_buffer[1], 4);
+
+                if(ommo_block_dev_qspi_buffer_read(blk_id, usb_serial_block_dev_buffer + 4, block_dev_ev_handler, NULL) != NRF_SUCCESS) //buf must word aligned                
+                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
+
+        
+        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_WRITE)  //19
+        
+            if(usb_serial_rx_packet_length != (1 + 4 + NRF_BLOCK_DEV_BLOCK_SIZE))            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                uint32_t blk_id;
+                memcpy(&blk_id, &usb_serial_rx_packet_buffer[1], 4);
+                memcpy(usb_serial_block_dev_buffer, &usb_serial_rx_packet_buffer[5], NRF_BLOCK_DEV_BLOCK_SIZE);
+
+                if(ommo_block_dev_qspi_buffer_write(blk_id, usb_serial_block_dev_buffer, block_dev_ev_handler, NULL) != NRF_SUCCESS) ////buffer must be word aligned
+                
+                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
+
+        
+        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_REQ_GEOMETRY)  //20
+        
+            if(usb_serial_rx_packet_length != 1)            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                const nrf_block_dev_geometry_t *geometry = ommo_block_dev_qspi_buffer_geometry();
+
+                usb_serial_block_dev_buffer[0] = OMMO_COMMAND_BLOCK_DEV_REQ_GEOMETRY;
+                memcpy(&usb_serial_block_dev_buffer[1], &geometry->blk_count, 4);
+                memcpy(&usb_serial_block_dev_buffer[5], &geometry->blk_size, 4);
+
+                usb_serial_send_command_packet_blocking(usb_serial_block_dev_buffer, 9, false);
+            
+        
+        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_SYNCH)  //21
+        
+            if(usb_serial_rx_packet_length != 1)            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                if(ommo_block_dev_qspi_buffer_synch(block_dev_ev_handler, NULL) != NRF_SUCCESS)                
+                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
+
+        
+        else
+
+          if(packet_received_callback != NULL)
+        
+              //(*packet_received_callback)(usb_serial_rx_packet_buffer, usb_serial_rx_packet_length);
+                  usb_serial_packet_received(usb_serial_rx_packet_buffer, usb_serial_rx_packet_length);
+        
+
+
+
+-----------------------
+
+功能：？
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length
+usb_serial_packet_received( data[], length)
+
+    switch(data[0])
+    
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+            if(data_mode != DATA_MODE_DISABLED)
+            
+                usb_serial_send_ack(OMMO_ACK_INVALID_MODE);
+            
+            else if(length != 2)
+            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                //Try to start state machine
+                uint32_t rvalue = adc_cartes_start_state_machine();
+
+                if(rvalue == NRF_SUCCESS)
+                
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                
+                
+                //Return success/failure
+                usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
+                set_leds();
+            
+            return;
+    
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, packet_response_buffer, PACKET_RESPONSE_BUFFER_SIZE);
+   
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(packet_response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    usb_serial_send_command_packet(packet_response_buffer, response_length);
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
