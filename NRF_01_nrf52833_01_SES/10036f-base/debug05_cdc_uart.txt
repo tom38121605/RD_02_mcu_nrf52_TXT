@@ -61,12 +61,17 @@ usb_serial_init(  br_callback, ev_callback)
 
 
 
+
+
 ======================= uart == DTR detect ===========================
 
 flow: 
 
-   main  --  usb_serial_init   --   USB_CDC_OnControlLineStateChange  --  usb_serial_state_port_dtr (=DTR)  
-   --  usb_serial_event_queue_process  --  usb_serial_state_port_open
+   main  -- usb_serial_init -- USB_CDC_OnControlLineStateChange  -- AddCDC -- USBD_CDC_Add  
+
+   (?) -- USB__HandleSetup -- _OnClassRequest -- USB_CDC_OnControlLineStateChange -- usb_serial_state_port_dtr (=DTR)  
+
+   usb_serial_event_queue_process  --  usb_serial_state_port_open = (TRUE) --  usb_serial_connect_disconnect
 
 
 数据流：  DTR  -->  usb_serial_state_port_dtr  -->  usb_serial_state_port_open
@@ -86,6 +91,9 @@ main
 参数： usb_serial_packet_received, usb_serial_connect_disconnect
 usb_serial_init( br_callback, ev_callback)
 
+    packet_received_callback = usb_serial_packet_received;
+    event_callback           = usb_serial_connect_disconnect;
+
     ......（忽略）
 
     _usb_cdc_inst = AddCDC(0, _usb_cdc_rx_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE);
@@ -99,13 +107,107 @@ usb_serial_init( br_callback, ev_callback)
 
 ---------
 
-USB_CDC_OnControlLineStateChange(USB_CDC_CONTROL_LINE_STATE * pLineState)
+USB_CDC_OnControlLineStateChange( * pLineState)
 
     usb_serial_state_port_dtr = pLineState->DTR;   //取得DTR的打开状态
 
 
 ----------
 
+AddCDC(uint8_t ID, uint8_t *buffer, uint16_t buffer_len)
+
+  EPBulkIn.Flags          = 0;                             // Flags not used.
+  EPBulkIn.InDir          = USB_DIR_IN;                    // IN direction (Device to Host)
+  EPBulkIn.Interval       = 0;                             // Interval not used for Bulk endpoints.
+  EPBulkIn.MaxPacketSize  = USB_SERIAL_TX_BUFFER_SIZE;     // Maximum packet size
+  EPBulkIn.TransferType   = USB_TRANSFER_TYPE_BULK;        // Endpoint type - Bulk.
+  InitData.EPIn  = USBD_AddEPEx(&EPBulkIn, NULL, 0);
+
+  EPBulkOut.Flags         = 0;                             // Flags not used.
+  EPBulkOut.InDir         = USB_DIR_OUT;                   // OUT direction (Host to Device)
+  EPBulkOut.Interval      = 0;                             // Interval not used for Bulk endpoints.
+  EPBulkOut.MaxPacketSize = buffer_len;                    // Maximum packet size
+  EPBulkOut.TransferType  = USB_TRANSFER_TYPE_BULK;        // Endpoint type - Bulk.
+
+  InitData.EPOut = USBD_AddEPEx(&EPBulkOut, buffer, buffer_len); // OUT direction (Host to Device)
+
+  EPIntIn.Flags           = 0;                             // Flags not used.
+  EPIntIn.InDir           = USB_DIR_IN;                    // IN direction (Device to Host)
+  EPIntIn.Interval        = 64;                            // Interval of 8 ms (64 * 125us)
+  EPIntIn.MaxPacketSize   = 16;                            // Maximum packet size for Interrupt.
+  EPIntIn.TransferType    = USB_TRANSFER_TYPE_INT;         // Endpoint type - Interrupt.
+  InitData.EPInt = USBD_AddEPEx(&EPIntIn, NULL, 0);
+
+  hInst = USBD_CDC_Add(&InitData);   //here
+  return hInst
+
+
+----------------------
+
+USBD_CDC_Add( * pInitData)
+
+  ......
+
+  pInterface->pfOnClassRequest = _OnClassRequest;
+
+
+
+----------------------------------------------------------
+
+
+USB__HandleSetup(* pSetupPacket) 
+
+  ......
+
+  switch(pSetupPacket->bmRequestType & 0x60u) {  // Mask off unnecessary bits
+  case 0x20:
+
+    ......
+
+    if (pInterface != NULL)  
+      if (pInterface->pfOnClassRequest != NULL)  
+          //pInterface->pfOnClassRequest(pSetupPacket);
+             _OnClassRequest(pSetupPacket); 
+          
+ 
+----------
+
+
+_OnClassRequest(const USB_SETUP_PACKET * pSetupPacket)  
+
+
+  InterfaceNum = pSetupPacket->wIndexLow | (pSetupPacket->wIndexHigh << 8);
+  Inst         = _InterfaceNum2Inst(InterfaceNum);
+
+  pInst        = &_aInst[Inst];
+
+  switch (pSetupPacket->bRequest) 
+  
+  case SET_USB_CDC_LINE_CODING:
+    ...
+  case GET_USB_CDC_LINE_CODING:
+    ...
+  case SET_CONTROL_LINE_STATE:
+
+    USB_LOG((USB_MTYPE_CDC,  "CDC: SET_CONTROL_LINE_STATE %X", pSetupPacket->wValueLow));
+
+    if (pInst->pfOnSetControlLineState != NULL) 
+      USB_CDC_CONTROL_LINE_STATE CLState;
+
+      CLState.DTR = pSetupPacket->wValueLow & 1u;
+      CLState.RTS = (pSetupPacket->wValueLow >> 1) & 1u;
+
+      //pInst->pfOnSetControlLineState(&CLState);
+         USB_CDC_OnControlLineStateChange(&CLState);
+
+    
+    USBD_WriteEP0FromISR(NULL, 0, 1);
+    break;
+  case SEND_BREAK:
+    ...
+.
+
+----------
 
 usb_serial_event_queue_process()
 
@@ -134,7 +236,6 @@ usb_serial_event_queue_process()
            //(*event_callback)(USB_SERIAL_EVENT_PORT_OPEN);    
               usb_serial_connect_disconnect(USB_SERIAL_EVENT_PORT_OPEN);   
 
-
     
     else if(!usb_serial_state_port_dtr && usb_serial_state_port_open)  //DTR关闭
     
@@ -154,11 +255,9 @@ usb_serial_event_queue_process()
         if(event_callback != NULL)
         
             //(*event_callback)(USB_SERIAL_EVENT_PORT_CLOSE);
-                (USB_SERIAL_EVENT_PORT_OPEN)(USB_SERIAL_EVENT_PORT_CLOSE);
+                usb_serial_connect_disconnect(USB_SERIAL_EVENT_PORT_CLOSE);
 
         
-
-
 ------------
 
 
@@ -204,11 +303,15 @@ usb_serial_connect_disconnect(usb_serial_event event)
 
 
 
+       
+
+
+
 ================================= uart ==== tx =============================
 
 flow：
 
-   main --  usb_serial_write  --  DTR open --  usb_serial_event_queue_process  --  USBD_WriteAsync  --  USBD_WriteOverlapped  --  USBD_PROFILE_CALL_U32x4
+   main -- 电脑打开DTR -- usb_serial_write -- (DTR open =true) -- usb_serial_event_queue_process -- USBD_WriteAsync -- USBD_WriteOverlapped -- USBD_PROFILE_CALL_U32x4
 
 
 数据流："abcde"  -->  usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData   -->  EPIn（USB端点） 
@@ -299,7 +402,7 @@ usb_serial_event_queue_process()
             _io_context_write.pfOnComplete = USBD_WriteCompleteCb;
 
             //USBD_CDC_WriteAsync(_usb_cdc_inst, &_io_context_write, usb_serial_write_force);
-                 USBD_WriteAsync(_aInst[hInst].EPIn, _io_context_write, usb_serial_write_force );
+                 USBD_WriteAsync(_aInst[hInst].EPIn, _io_context_write, usb_serial_write_force );  //here
 
 
             //If we were sending a forced packet, we are finished 
