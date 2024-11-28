@@ -1,5 +1,7 @@
-返回指令：05 FF 01 03 FD 00 
-
+//usb_serial_send_ack(OMMO_ACK_SUCCESS);          //03 ff 01 01 01 00
+//usb_serial_send_ack(OMMO_ACK_INVALID_MODE);     //05 ff 01 01 ff 00
+//usb_serial_send_ack(OMMO_ACK_INVALID_DATA);     //05 ff 01 02 fe 00
+//usb_serial_send_ack(OMMO_ACK_UNKNOWN_COMMAND);  //05 ff 01 03 fd 00 
 
 ------------------------------------
 

@@ -7,6 +7,13 @@ nrf_delay_ms(100);
    。是因为uart发送数据时，是累积到约128(OMMO_USB_SERIAL_MIN_PACKET_SIZE)个字节一起发送。  
    。二是等usb_serial_write_force=true再发送，可在定时器里面设置true，也可手动设置true
 
+
+//usb_serial_send_ack(OMMO_ACK_SUCCESS);          //03 ff 01 01 01 00
+//usb_serial_send_ack(OMMO_ACK_INVALID_MODE);     //05 ff 01 01 ff 00
+//usb_serial_send_ack(OMMO_ACK_INVALID_DATA);     //05 ff 01 02 fe 00
+//usb_serial_send_ack(OMMO_ACK_UNKNOWN_COMMAND);  //05 ff 01 03 fd 00 
+
+
 ===================================uart init==================================
 
 flow: 
@@ -753,8 +760,8 @@ usb_serial_event_queue_process()
 
 -----------------------
 
-功能：把接收到的uart数据进行处理
-参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length 
+功能：对接收包usb_serial_rx_packet_buffer处理  
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length  
 usb_serial_packet_received( data[], length)
 
     switch(data[0])
@@ -960,6 +967,13 @@ process_packet_received(data[], packet_size, response_buffer[],  response_buffer
 
 
 
+
+
+
+=========================================参考 =======================================================
+
+
+
 ------
 
 adc_cartes_start_state_machine()
@@ -1079,92 +1093,6 @@ adc_cartes_state_change()
 
 
 
-
-
-=========================================参考 =======================================================
-
-
-
-功能：对接收包usb_serial_rx_packet_buffer处理
-usb_serial_event_queue_process()
-
-    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);   //确定无中断冲突
-
-    //cdc uart接收数据处理
-    if(usb_serial_rx_packet_ready)
-    
-        usb_serial_rx_packet_ready = false;
-
-        //Check for block_dev requests
-        if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_READ)  //18
-        
-            if(usb_serial_rx_packet_length != 5)            
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            
-            else
-            
-                uint32_t blk_id;
-                memcpy(&blk_id, &usb_serial_rx_packet_buffer[1], 4);
-
-                if(ommo_block_dev_qspi_buffer_read(blk_id, usb_serial_block_dev_buffer + 4, block_dev_ev_handler, NULL) != NRF_SUCCESS) //buf must word aligned                
-                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
-
-        
-        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_WRITE)  //19
-        
-            if(usb_serial_rx_packet_length != (1 + 4 + NRF_BLOCK_DEV_BLOCK_SIZE))            
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            
-            else
-            
-                uint32_t blk_id;
-                memcpy(&blk_id, &usb_serial_rx_packet_buffer[1], 4);
-                memcpy(usb_serial_block_dev_buffer, &usb_serial_rx_packet_buffer[5], NRF_BLOCK_DEV_BLOCK_SIZE);
-
-                if(ommo_block_dev_qspi_buffer_write(blk_id, usb_serial_block_dev_buffer, block_dev_ev_handler, NULL) != NRF_SUCCESS) ////buffer must be word aligned
-                
-                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
-
-        
-        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_REQ_GEOMETRY)  //20
-        
-            if(usb_serial_rx_packet_length != 1)            
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            
-            else
-            
-                const nrf_block_dev_geometry_t *geometry = ommo_block_dev_qspi_buffer_geometry();
-
-                usb_serial_block_dev_buffer[0] = OMMO_COMMAND_BLOCK_DEV_REQ_GEOMETRY;
-                memcpy(&usb_serial_block_dev_buffer[1], &geometry->blk_count, 4);
-                memcpy(&usb_serial_block_dev_buffer[5], &geometry->blk_size, 4);
-
-                usb_serial_send_command_packet_blocking(usb_serial_block_dev_buffer, 9, false);
-            
-        
-        else if(usb_serial_rx_packet_buffer[0] == OMMO_COMMAND_BLOCK_DEV_SYNCH)  //21
-        
-            if(usb_serial_rx_packet_length != 1)            
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            
-            else
-            
-                if(ommo_block_dev_qspi_buffer_synch(block_dev_ev_handler, NULL) != NRF_SUCCESS)                
-                    usb_serial_send_ack(OMMO_ACK_INTERNAL_ERROR);
-
-        
-        else
-
-           main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
-           main_led.event_queue_process();                      //--test
-           nrf_delay_ms(300);
-           usb_serial_write_now(usb_serial_rx_packet_buffer,usb_serial_rx_packet_length,0);  //--test
-
-           if(packet_received_callback != NULL)
-        
-                //(*packet_received_callback)(usb_serial_rx_packet_buffer, usb_serial_rx_packet_length);
-                   usb_serial_packet_received(usb_serial_rx_packet_buffer, usb_serial_rx_packet_length);
-        
 
 
 
