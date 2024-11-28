@@ -1,5 +1,45 @@
-nrf_delay_ms(100);
+返回指令：05 FF 01 03 FD 00 
 
+
+------------------------------------
+
+
+
+
+typedef enum _OmmoCommand 
+    OMMO_COMMAND_NONE = 0, 
+    OMMO_COMMAND_ACK = 1, 
+    OMMO_COMMAND_PING = 2, 
+    OMMO_COMMAND_DATA_DISABLE = 3, 
+    OMMO_COMMAND_GET_UUID = 4, 
+    OMMO_COMMAND_FW_VERSION = 5, 
+    .....
+
+    OMMO_COMMAND_BLOCK_DEV_READ = 18, 
+    OMMO_COMMAND_BLOCK_DEV_WRITE = 19, 
+    OMMO_COMMAND_BLOCK_DEV_REQ_GEOMETRY = 20, 
+    OMMO_COMMAND_BLOCK_DEV_SYNCH = 21, 
+
+    OMMO_COMMAND_USB_DATA_ENABLE = 32, 
+
+
+
+typedef enum _OmmoAck 
+{ 
+    OMMO_ACK_SUCCESS = 0, 
+    OMMO_ACK_INVALID_MODE = 1, 
+    OMMO_ACK_INVALID_DATA = 2, 
+    OMMO_ACK_UNKNOWN_COMMAND = 3, 
+    OMMO_ACK_NOT_FOUND = 4, 
+    OMMO_ACK_BUSY = 5, 
+    OMMO_ACK_INTERNAL_ERROR = 6, 
+    OMMO_ACK_INVALID_SENSOR = 7, 
+    OMMO_ACK_NO_MEM = 8, 
+    OMMO_ACK_TIMEOUT = 9 
+} OmmoAck;
+
+
+----------------------------------------------------
 
 #define USB_SERIAL_TX_BUFFER_SIZE 8192
 #define USB_SERIAL_RX_BUFFER_SIZE (3*1024)
