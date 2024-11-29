@@ -1,0 +1,126 @@
+
+#define OMMO_MAG_SCL_PIN                  NRF_GPIO_PIN_MAP(0,11)
+#define OMMO_MAG_SDA_PIN                  NRF_GPIO_PIN_MAP(0,13)
+
+
+twi_basic  twi_basic_instance(OMMO_MAG_MOT_TWIM, &rtc_timeout);
+
+#define OMMO_MAG_MOT_TWIM                 NRFX_TWIM_INSTANCE(0)
+
+//#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+
+
+
+
+========================================参考=============================================
+
+
+
+twi_writebytes(  0xF0,    write_buffer,  16)
+{
+    i2c_driver->write_data  ( 0x57,           0xF0,                 write_buffer,   16,               0x00,      true )
+}
+
+twi_basic::write_data     ( slave_addr,  register_addr,  *data_addr,    num_bytes,   flags,  blocking)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+====================================================参考================================================
+
+       nrf_delay_ms(10);
+        nrf_delay_us(10);
+        __WFE();
+
+    //*data = (((uint16_t)sbuf[1])<<8) | sbuf[0];
+
+
+NRFX_TWIM_XFER_DESC_TXRX
+
+
+#define NRFX_TWIM_XFER_DESC_TXRX(addr, p_tx, tx_len, p_rx, rx_len) \
+{                                                                  \
+    .type             = NRFX_TWIM_XFER_TXRX,                       \
+    .address          = (addr),                                    \
+    .primary_length   = (tx_len),                                  \
+    .secondary_length = (rx_len),                                  \
+    .p_primary_buf    = (p_tx),                                    \
+    .p_secondary_buf  = (p_rx),                                    \
+}
+
+
+
+--------------  prj\blank\config\ommo_config.h  -----------------
+
+
+//I2C
+#define OMMO_MAG_MOT_TWIM                 NRFX_TWIM_INSTANCE(0)
+
+//rtc timeout gen
+#define OMMO_RTC_TIMEOUT_GEN_RTC          NRFX_RTC_INSTANCE(2)
+
+
+#define OMMO_MOT_SCL_PIN                  NRF_GPIO_PIN_MAP(0,11)
+#define OMMO_MOT_SDA_PIN                  NRF_GPIO_PIN_MAP(0,13)
+
+
+
+
+-----------------  components\ommo\ommo_app_error.h   -----------------
+
+#define OMMO_APP_ERROR_CHECK(ERR_CODE, ...)        
+                                    
+  do {                                                                                 
+    const uint32_t LOCAL_ERR_CODE = (ERR_CODE);                                       
+    if (LOCAL_ERR_CODE != NRF_SUCCESS) {                                               
+      ommo_app_error_handler((ERR_CODE), __LINE__, (uint8_t *)__FILE__, __VA_ARGS__);  
+    }                                                                                  
+  } while (0)
+
+
+-----------------------------  twi_basic.hpp  ----------------------- 
+
+typedef struct
+{
+    twi_basic_event_func_type twi_basic_event_listener;
+    void * twi_basic_event_listener_context;
+    nrf_twim_frequency_t frequency;
+    uint32_t sda_pin, scl_pin;
+    bool scl_push_pull;
+} twi_basic_config_t;
+
+
+
+
+
+

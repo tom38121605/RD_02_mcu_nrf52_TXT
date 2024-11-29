@@ -1,0 +1,57 @@
+#define DATA_HEADER_LENGTH  11
+#define TLE493D_DATA_OUTPUT_LENGTH  8
+
+#define VIRTUAL_TX_BUFFER_SIZE 256
+uint8_t virtualcomm_tx_buffer[VIRTUAL_TX_BUFFER_SIZE]; //256
+
+
+#define COBS_ENCODING_MAXIMUM_POSSIBLE_LENGTH(x)  ((x) + 1 + ((x)>>8))
+
+
+
+
+#define StartBlock()	(code_ptr = dst++, code = 1)
+#define FinishBlock()	(*code_ptr = code)
+
+
+
+class TLE493D_single_sampler
+
+  public:
+
+      uint32_t init( ...... , bool high_sensitivity = false);
+
+      void acquire_i2c(twi_basic *instance);
+      void release_i2c();
+
+
+  private:
+
+      twi_basic *twi_basic_instance;
+      twi_basic_config_t twi_basic_config = {0};
+
+      //Misc
+      uint8_t mag_data[TLE493D_DATA_OUTPUT_LENGTH];     //8
+      uint8_t mag_data_raw[TLE493D_DATA_READ_LENGTH];   //6
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

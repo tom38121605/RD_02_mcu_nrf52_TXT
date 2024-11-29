@@ -1,0 +1,413 @@
+TLE493D: 三维磁性传感器
+
+================================= TLE493D  init =================================
+
+
+flow: (最后运行的是 theta_sample_ready  )
+
+   main -- TLE493D_single_sampler::init -- (sample_set_ready_callback = theta_sample_ready)  
+   --  (twi_basic_config.twi_basic_event_listener = static_twi_basic_event_handler) -- (twi_basic_config.twi_basic_event_listener_context = this)
+
+   main -- TLE493D_single_sampler::init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire --  (p_cb->handler = static_event_handler) 
+   -- (p_box->handler(硬件地址) = nrfx_twim_0_irq_handler) 
+
+   nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler
+   -- (our_config.twi_basic_event_listener) -- static_twi_basic_event_handler -- (this)p_context->twi_basic_event_handler 
+   --  TLE493D_single_sampler::twi_basic_event_handler -- (sample_set_ready_callback) -- theta_sample_ready
+
+   
+
+//数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+
+//数据流： sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
+//数据流： hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
+//数据流： our_config.twi_basic_event_listener = twi_basic_event_handler;    //twi_basic_event_handler
+
+------------------------------------------------------------------------------
+
+main( )
+
+   theta_sampler.init( &twi_basic_instance, theta_sample_ready, timestamp_get_sample_event_address(), 
+                    OMMO_MAG_SCL_PIN, OMMO_MAG_SDA_PIN, perm_proto->ics[1].config_enable_high_sensitivity);
+
+
+---------
+
+timestamp_get_sample_event_address()
+
+    ASSERT(sample_event_compare_channel != 0xFF);
+
+    return nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel]);  //待理解
+
+
+-------------------------------------------
+
+全局变量：
+//#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+参数：twi_basic_instance, theta_sample_ready, **, P0.11, P0.13, **
+TLE493D_single_sampler::init( *instance,  sample_set_ready_callback_g, sample_event_addr, twi_scl_pin, twi_sda_pin, high_sensitivity)
+
+    sample_set_ready_callback = sample_set_ready_callback_g;   //theta_sample_ready
+    twi_basic_config.scl_pin = twi_scl_pin;  // P0.11
+    twi_basic_config.sda_pin = twi_sda_pin;  // P0.13
+    state_machine_stopped = true;
+    stop_state_machine = false;
+
+    //Setup our twi basic config
+    twi_basic_config.twi_basic_event_listener = static_twi_basic_event_handler;  //事件
+    twi_basic_config.twi_basic_event_listener_context = this;    //here
+    twi_basic_config.frequency = NRF_TWIM_FREQ_600K;
+
+    //Init twi_basic instance
+    acquire_i2c(instance);
+
+    //Allocate PPI's
+    VERIFY_SUCCESS(nrfx_ppi_channel_alloc(&ppi_channel_sample_start_twi));
+    VERIFY_SUCCESS(nrfx_ppi_channel_assign(ppi_channel_sample_start_twi, sample_event_addr, twi_basic_instance->get_twim_start_task(NRFX_TWIM_XFER_RX)));
+
+    return_val = init_mag(high_sensitivity);
+
+    //Release twi bus
+    release_i2c();
+
+
+
+
+TLE493D_single_sampler::twi_basic_event_handler(  evt )
+
+        //(*sample_set_ready_callback)(mag_data);
+            theta_sample_ready(mag_data);
+
+
+-----
+
+twi_basic::twim_event_handler(  *p_event)
+
+    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))
+    
+        //Stop timeout timer
+        APP_ERROR_CHECK( rtc_timeout->disable_timeout(rtc_timeout_channel) );
+
+        switch(p_event->type)
+        
+          case NRFX_TWIM_EVT_DONE:
+            last_event = TWI_BASIC_EVT_DONE;   
+            break;
+
+          case NRFX_TWIM_EVT_ADDRESS_NACK:
+          case NRFX_TWIM_EVT_BUS_ERROR:
+            last_event = TWI_BASIC_EVT_ADDRESS_NACK;
+            break;
+
+          case NRFX_TWIM_EVT_DATA_NACK:
+            last_event = TWI_BASIC_EVT_DATA_NACK;
+            break;
+
+          default:
+            APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
+            break;
+        
+
+        if(!disable_callback)
+
+            //our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
+                 static_twi_basic_event_handler(last_event, our_config.twi_basic_event_listener_context);
+  
+
+-----
+
+static_event_handler(  *p_event, *p_context)
+
+    ((twi_basic*)p_context)->twim_event_handler(p_event);
+
+
+-------
+
+twi_basic::acquire_i2c( *twi_basic_config)
+
+    ......
+
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
+
+
+
+
+-----------------
+
+参数：&twi_peripheral, &config, static_event_handler, this
+nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
+
+    ......
+
+    p_cb->handler         = event_handler;  //static_event_handler
+
+    ......
+
+   irq_handlers[0] = { nrfx_twim_0_irq_handler };
+ 
+   nrfx_prs_acquire(p_instance->p_twim,  irq_handlers[0]);
+
+
+------------
+
+可作为硬件irq中断入口
+twim_irq_handler(  * p_twim,  * p_cb)
+
+    ......
+
+
+    if (!(p_cb->flags & NRFX_TWIM_FLAG_NO_XFER_EVT_HANDLER) || p_cb->error)
+     
+        //p_cb->handler(&event, p_cb->p_context);
+           static_event_handler(&event, p_cb->p_context)
+  
+------------
+
+可作为硬件irq中断入口
+nrfx_twim_0_irq_handler(  )
+ 
+    twim_irq_handler(NRF_TWIM0, &m_cb[0]);
+
+
+
+------
+
+参数： NRF_TWIM0,  nrfx_twim_0_irq_handler
+nrfx_prs_acquire( * p_base_addr,  irq_handler)
+
+    ......
+
+    prs_box_t * p_box = prs_box_get(p_base_addr);  //NRF_TWIM0
+
+    p_box->handler  = irq_handler;   //nrfx_twim_0_irq_handler  //把中断函数的指针，保存到twi块的硬件地址
+    p_box->acquired = true;
+ 
+ 
+
+
+-----
+
+TLE493D_single_sampler::static_twi_basic_event_handler(  p_event, *p_context)
+
+    ((TLE493D_single_sampler*)p_context)->twi_basic_event_handler(p_event);
+
+
+------------
+
+数据流：mag_data_raw --> mag_data
+TLE493D_single_sampler::twi_basic_event_handler(  evt )
+
+    if(stop_state_machine)
+    
+        twi_basic_instance->clear_repeated_transfer();
+        state_machine_stopped = true;
+    
+    else if(evt == TWI_BASIC_EVT_DONE)
+    
+        //Reset I2C timeout timer
+        twi_basic_instance->reset_timeout();
+
+        //Save data in reasonable format
+        x = ((int16_t)mag_data_raw[0] << 8) | (int16_t)mag_data_raw[4];
+        x >>= 4;
+        y = ((int16_t)mag_data_raw[1] << 8) | ((int16_t)(mag_data_raw[4]&0x0F)<<4);
+        y >>= 4;
+        z = ((int16_t)mag_data_raw[2] << 8) | ((int16_t)(mag_data_raw[5]&0x0F)<<4);
+        z >>= 4;
+        temp = ((int16_t)mag_data_raw[3] << 8) | ((int16_t)(mag_data_raw[5]&0xC0));
+        temp >>= 6;
+     
+        memcpy(mag_data+0, &x, 2);
+        memcpy(mag_data+2, &y, 2);
+        memcpy(mag_data+4, &z, 2);
+        memcpy(mag_data+6, &temp, 2);
+    
+    else if(evt == TWI_BASIC_EVT_TIMEOUT)
+
+        twi_basic_instance->reset_timeout();
+    
+    else
+
+        twi_basic_instance->reset_timeout();
+  
+
+    if(evt == TWI_BASIC_EVT_DONE) 
+
+        //(*sample_set_ready_callback)(mag_data);
+            theta_sample_ready(mag_data);
+
+
+-----------
+
+theta_sample_ready(  mag_data[])
+
+    ...... （忽略，见下面 ）
+
+
+
+
+================================= TLE493D  =====tx============================
+
+flow:
+
+    (irq) -- theta_sample_ready -- check_for_complete_packet_and_send --  usb_serial_write_data_packet_vargs -- cobs_encode_post_zero_pad_vargs
+
+
+
+
+
+----------------------------------------------------------------
+
+
+数据流：mag_data --> virtualcomm_tx_buffer
+参数：mag_data
+theta_sample_ready(  mag_data[])
+
+    memcpy(virtualcomm_tx_buffer, mag_data, 8);  
+
+    mag_data_ready = true; 
+    check_for_complete_packet_and_send();
+
+
+---------
+
+全局变量：virtualcomm_tx_buffer，
+
+check_for_complete_packet_and_send()
+
+    if(packet_id != 0xFF && mag_data_ready && imu_data_ready)
+    
+        mag_data_ready = false;
+        imu_data_ready = false;
+
+        if(data_mode_enabled)        
+
+            code = usb_serial_write_data_packet_vargs(11+8+imu_sampler.get_data_length(),
+                1, &packet_id,
+                4, &cur_sample_timestamp,
+                2, &cur_encoder_timestamp_offset,
+                2, &cur_encoder_value,
+                2, &encoder_speed,
+                8 + imu_sampler.get_data_length(), virtualcomm_tx_buffer,
+                0);
+
+            cur_sample_timestamp = next_sample_timestamp;
+            cur_encoder_timestamp_offset = next_encoder_timestamp_offset;
+            cur_encoder_value = next_encoder_value;
+
+
+-------
+
+//--待理解
+usb_serial_write_data_packet_vargs( size_t data_length, ...) 
+
+    //output_length = COBS_ENCODING_MAXIMUM_POSSIBLE_LENGTH(data_length) + 1;    //Add 1 to give space for 0 packet terminator
+       output_length = ( data_length +1 +data_length/256 ) + 1;    
+
+
+    if( (usb_serial_tx_buffer_top + output_length) < 8192)      
+        usb_serial_tx_buffer_top += output_length;
+
+
+     va_list args;
+     va_start(args, data_length);
+     cobs_encode_post_zero_pad_vargs(usb_serial_tx_buffer_active + usb_serial_tx_buffer_top - output_length, output_length, args);
+     va_end(args);
+ 
+ 
+
+
+------------
+
+//--待理解
+参数：p_start , args
+cobs_encode_post_zero_pad_vargs(  *dst, dst_length, valist)
+
+    void* cur_arg;
+    int32_t cur_arg_len;
+ 
+    u8 *end = dst + dst_length;
+    u8 code, *code_ptr;  
+ 
+    //StartBlock();
+       code_ptr = dst++
+       code     = 1;
+
+    while(1)
+    
+        u32 arg_len = va_arg(valist, int32_t);   //这里用u32_t 不用u8_t ？   //--待理解
+
+        if(arg_len == 0)  
+            break;
+ 
+        u8 *arg_data = va_arg(valist, uint8_t *);
+ 
+        for(size_t b = 0; b < arg_len; b++)
+        
+            if (code != 0xFF)
+            
+                uint8_t c = *arg_data++;
+
+                if (c != 0)
+                
+                    *dst++ = c;
+                    code++;
+                    continue;                
+            
+
+            //FinishBlock();
+                *code_ptr = code
+
+            //StartBlock();
+                code_ptr = dst++
+                code     = 1;
+        
+    
+    //FinishBlock();
+        *code_ptr = code
+
+    ASSERT(dst <= end);
+
+    while(dst < end) *dst++ = 0;
+
+
+
+
+
+================================= TLE493D  =====rx============================
+
+flow:
+
+    
+
+
+
+---------------------------------------------------------
+
+TLE493D_single_sampler::enable()
+
+    VERIFY_TRUE(state_machine_stopped, NRF_ERROR_INVALID_STATE);
+
+    //Set state machine bits
+    state_machine_stopped = false;
+    stop_state_machine = false;
+
+    //Schedule triggered read that repeats until cancelled
+    twi_basic_instance->read_data_noaddr(TLE493D_SLAVE_ADDR, mag_data_raw, TLE493D_DATA_READ_LENGTH, NRFX_TWIM_FLAG_HOLD_XFER | NRFX_TWIM_FLAG_REPEATED_XFER);
+    VERIFY_SUCCESS(nrfx_ppi_channel_enable(ppi_channel_sample_start_twi));
+
+
+
+
+
+
+
+
+
+
+
+
