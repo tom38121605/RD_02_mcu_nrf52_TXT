@@ -11,17 +11,11 @@ flow: (最后运行的是 theta_sample_ready  )
    main -- TLE493D_single_sampler::init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire --  (p_cb->handler = static_event_handler) 
    -- (p_box->handler(硬件地址) = nrfx_twim_0_irq_handler) 
 
-   nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler
-   -- (our_config.twi_basic_event_listener) -- static_twi_basic_event_handler -- (this)p_context->twi_basic_event_handler 
-   --  TLE493D_single_sampler::twi_basic_event_handler -- (sample_set_ready_callback) -- theta_sample_ready
 
    
 
-//数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
-
-//数据流： sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
-//数据流： hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
-//数据流： our_config.twi_basic_event_listener = twi_basic_event_handler;    //twi_basic_event_handler
+数据流：  （待完成，先忽略跳过）
+ 
 
 ------------------------------------------------------------------------------
 
@@ -122,7 +116,7 @@ twi_basic::twim_event_handler(  *p_event)
 
 static_event_handler(  *p_event, *p_context)
 
-    ((twi_basic*)p_context)->twim_event_handler(p_event);
+    (p_context)->twim_event_handler(p_event);
 
 
 -------
@@ -152,248 +146,111 @@ nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
    nrfx_prs_acquire(p_instance->p_twim,  irq_handlers[0]);
 
 
-------------
 
-可作为硬件irq中断入口
-twim_irq_handler(  * p_twim,  * p_cb)
 
-    ......
 
 
-    if (!(p_cb->flags & NRFX_TWIM_FLAG_NO_XFER_EVT_HANDLER) || p_cb->error)
-     
-        //p_cb->handler(&event, p_cb->p_context);
-           static_event_handler(&event, p_cb->p_context)
-  
-------------
 
-可作为硬件irq中断入口
-nrfx_twim_0_irq_handler(  )
- 
-    twim_irq_handler(NRF_TWIM0, &m_cb[0]);
 
+================================= twi write data =================================
 
 
-------
+（待完成，先跳过）
 
-参数： NRF_TWIM0,  nrfx_twim_0_irq_handler
-nrfx_prs_acquire( * p_base_addr,  irq_handler)
 
-    ......
 
-    prs_box_t * p_box = prs_box_get(p_base_addr);  //NRF_TWIM0
 
-    p_box->handler  = irq_handler;   //nrfx_twim_0_irq_handler  //把中断函数的指针，保存到twi块的硬件地址
-    p_box->acquired = true;
- 
- 
+================================= twi read data =================================
 
 
------
 
-TLE493D_single_sampler::static_twi_basic_event_handler(  p_event, *p_context)
+flow:
 
-    ((TLE493D_single_sampler*)p_context)->twi_basic_event_handler(p_event);
+    TLE493D_single_sampler::enable  --  read_data_noaddr --  twi_basic::trx -- nrfx_twim_xfer
 
 
-------------
+数据流：register数据 -- > mag_data_raw
 
-TLE493D_single_sampler::twi_basic_event_handler(  evt )
 
-    if(stop_state_machine)
-    
-        twi_basic_instance->clear_repeated_transfer();
-        state_machine_stopped = true;
-    
-    else if(evt == TWI_BASIC_EVT_DONE)
-    
-        //Reset I2C timeout timer
-        twi_basic_instance->reset_timeout();
+---------------------------------------------------------
 
-        //Save data in reasonable format
-        x = ((int16_t)mag_data_raw[0] << 8) | (int16_t)mag_data_raw[4];
-        x >>= 4;
-        y = ((int16_t)mag_data_raw[1] << 8) | ((int16_t)(mag_data_raw[4]&0x0F)<<4);
-        y >>= 4;
-        z = ((int16_t)mag_data_raw[2] << 8) | ((int16_t)(mag_data_raw[5]&0x0F)<<4);
-        z >>= 4;
-        temp = ((int16_t)mag_data_raw[3] << 8) | ((int16_t)(mag_data_raw[5]&0xC0));
-        temp >>= 6;
-     
-        memcpy(mag_data+0, &x, 2);
-        memcpy(mag_data+2, &y, 2);
-        memcpy(mag_data+4, &z, 2);
-        memcpy(mag_data+6, &temp, 2);
-    
-    else if(evt == TWI_BASIC_EVT_TIMEOUT)
+功能: twi读取传感器数据
+数据流：register数据 -- > mag_data_raw
+TLE493D_single_sampler::enable()
 
-        twi_basic_instance->reset_timeout();
-    
-    else
 
-        twi_basic_instance->reset_timeout();
-  
-
-    if(evt == TWI_BASIC_EVT_DONE) 
-
-        //(*sample_set_ready_callback)(mag_data);
-            theta_sample_ready(mag_data);
-
-
------------
-
-theta_sample_ready(  mag_data[])
-
-    memcpy(virtualcomm_tx_buffer, mag_data, TLE493D_DATA_OUTPUT_LENGTH); //Mag data
-
-    mag_data_ready = true; 
-    check_for_complete_packet_and_send();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-====================================================参考================================================
-
-
-
-
-
-=========================================================
-
- 
-rtc_timeout_gen rtc_timeout(OMMO_RTC_TIMEOUT_GEN_RTC);
-twi_basic   twi_basic_instance(OMMO_MAG_MOT_TWIM, &rtc_timeout);
- 
- a49406_twi_driver   motor_driver;
-
-main
-
-
- 
-
-    //Init motor driver
-    motor_driver.init(&twi_basic_instance, OMMO_MOT_SCL_PIN, OMMO_MOT_SDA_PIN, OMMO_MOT_BRAKE_PIN, 
-        target_rotation_rate, ic_def_encoder.encoder_ppr);
-  
-
-
-
--------------------
-
-uint32_t a49406_twi_driver::init(twi_basic *instance,  twi_scl_pin,   twi_sda_pin,   brake_pin_g,  target_rotation_rate,   encoder_ppr)
- 
-
-    //Save globals
-    brake_pin = brake_pin_g;
-    twi_basic_config.scl_pin = twi_scl_pin;
-    twi_basic_config.sda_pin = twi_sda_pin;
-
-    //Init pid value
-    encoder_speed_setpoint = A49406_ENC_SPD_TO_SP(target_rotation_rate, encoder_ppr);
-    prev_error = 0;
-    integral = 0;
-
-    //Configure brake pin to output and turn on
-    nrf_gpio_cfg_output(brake_pin);
-    nrf_gpio_pin_write(brake_pin, 1);
-
-    //Setup our twi basic config
-    twi_basic_config.twi_basic_event_listener = static_twi_basic_event_handler;
-    twi_basic_config.twi_basic_event_listener_context = this;
-    twi_basic_config.frequency = NRF_TWIM_FREQ_100K;
-
-    //Init twi_basic instance
-    acquire_i2c(instance);
-
-    twi_basic_instance->write_uint16be(A49406_SLAVE_ADDR, A49406_DEMAND_REG, 0x2200, 0x00, true);
- 
-    release_i2c();
- 
- 
-
-------------------
-
- a49406_twi_driver::acquire_i2c(twi_basic *instance)
- 
-    twi_basic_instance = instance;
-    twi_basic_instance->acquire_i2c(&twi_basic_config);
- 
-
-----------------------
-
- 
-//init i2c
- twi_basic::acquire_i2c( *twi_basic_config )
-  
-   
-    //Save config
-    our_config = *twi_basic_config;
-
-    //Init TWIM hardware / pins
-    nrfx_twim_config_t config =
-    {
-       .scl                = our_config.scl_pin,
-       .sda                = our_config.sda_pin,
-       .frequency          = our_config.frequency,
-       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
-       .hold_bus_uninit    = false
-    };
-    APP_ERROR_CHECK(nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this));
-    nrf_gpio_cfg(our_config.scl_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, (our_config.scl_push_pull ? NRF_GPIO_PIN_H0H1 : NRF_GPIO_PIN_H0D1), NRF_GPIO_PIN_NOSENSE);
-    nrf_gpio_cfg(our_config.sda_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP, NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
-    nrfx_twim_enable(&twi_peripheral);
-
-    //Setup timeout multipliers
-    update_timeout_scale(our_config.frequency);
-
- 
-
--------------------------
-
-uint32_t TLE493D_single_sampler::init(twi_basic *instance, sensors_callback_func_type sample_set_ready_callback_g, uint32_t sample_event_addr, uint8_t twi_scl_pin, uint8_t twi_sda_pin, bool high_sensitivity)
-{
-uint32_t return_val;
-
-    //Let things boot up
-    nrf_delay_us(TLE493D_STARTUPDELAY);
-
-    //Save globals
-    sample_set_ready_callback = sample_set_ready_callback_g;
-    twi_basic_config.scl_pin = twi_scl_pin;
-    twi_basic_config.sda_pin = twi_sda_pin;
-    state_machine_stopped = true;
+    state_machine_stopped = false;
     stop_state_machine = false;
 
-    //Setup our twi basic config
-    twi_basic_config.twi_basic_event_listener = static_twi_basic_event_handler;
-    twi_basic_config.twi_basic_event_listener_context = this;
-    twi_basic_config.frequency = NRF_TWIM_FREQ_600K;
 
-    //Init twi_basic instance
-    acquire_i2c(instance);
+    //twi_basic_instance->read_data_noaddr( 0x35, mag_data_raw, 6, 1<<3 | 1<<4 );  //读取6byte传感器数据到mag_data_raw
+       trx(0x35, NULL, 0, mag_data_raw, 6, 1<<3 | 1<<4, false, 0);
 
-    //Allocate PPI's
-    VERIFY_SUCCESS(nrfx_ppi_channel_alloc(&ppi_channel_sample_start_twi));
-    VERIFY_SUCCESS(nrfx_ppi_channel_assign(ppi_channel_sample_start_twi, sample_event_addr, twi_basic_instance->get_twim_start_task(NRFX_TWIM_XFER_RX)));
 
-    return_val = init_mag(high_sensitivity);
+    nrfx_ppi_channel_enable(ppi_channel_sample_start_twi);
 
-    //Release twi bus
-    release_i2c();
 
-    return return_val;
-}
+---
+功能: twi读取传感器数据
+参数：0x35, NULL, 0, mag_data_raw, 6, 1<<3 | 1<<4, false, 0  
+twi_basic::trx( slave_addr, *tx_data, tx_len, *rx_data, rx_len, flags, blocking, timeout_override)
+
+
+    nrfx_twim_xfer_desc_t xfer =
+    
+       .address            = slave_addr,     //0x35
+       .primary_length     = tx_len,         //0
+       .secondary_length   = rx_len,
+       .p_primary_buf      = tx_data,         //null
+       .p_secondary_buf    = rx_data,
+    
+
+    if(rx_len == 0 && tx_len != 0)
+     
+        xfer.type = NRFX_TWIM_XFER_TX;
+    
+    else if(rx_len != 0 && tx_len == 0)
+     
+        xfer.type = NRFX_TWIM_XFER_RX;
+
+        xfer.p_primary_buf = rx_data;
+        xfer.p_secondary_buf = NULL;
+        xfer.primary_length = rx_len;
+        xfer.secondary_length = 0;
+
+    
+
+    disable_callback = blocking;  //false
+    twi_xfer_done = false;
+
+
+    if(timeout_override == 0) timeout_override = CALC_I2C_TIMEOUT(tx_len+rx_len);
+    rtc_timeout->set_timeout(rtc_timeout_channel, timeout_override);
+
+    nrfx_twim_xfer(&twi_peripheral, &xfer, flags);
+
+
+    if(blocking)
+
+        //return block_internal();
+            while(!twi_xfer_done) __WFE();
+
+
+-------
+
+功能: twi读取传感器数据
+参数：twi_peripheral, &xfer, flags
+nrfx_twim_xfer(  * p_instance,  * p_xfer_desc,  flags)
+
+    p_cb = &m_cb[0];
+
+    NRFX_LOG_HEXDUMP_DEBUG(p_xfer_desc->p_primary_buf,  p_xfer_desc->primary_length * sizeof(*->p_primary_buf[0]));
+
+    twim_xfer(p_cb, p_instance->p_twim, p_xfer_desc, flags);
+
+
+
+
 
 
 

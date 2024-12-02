@@ -216,6 +216,18 @@ USB_CDC_OnControlLineStateChange( * pLineState)
 
     usb_serial_state_port_dtr = pLineState->DTR;   //取得DTR的打开状态
 
+    //--add
+    if(usb_serial_state_port_dtr==true )
+    {
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--add
+        main_led.event_queue_process();                           //--add
+    }
+    else 
+    {
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_BLUE(255));  //--add
+        main_led.event_queue_process();                           //--add    
+    }
+
 
 ----------
 
@@ -318,7 +330,7 @@ flow：
    main -- 电脑打开DTR -- usb_serial_write -- (DTR open =true) -- usb_serial_event_queue_process -- USBD_WriteAsync -- USBD_WriteOverlapped -- USBD_PROFILE_CALL_U32x4
 
 
-数据流："abcde"  -->  usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData  -->  EPIn（USB端点） 
+数据流："abcde"  -->  usb_serial_tx_buffer_active  -->  (usb_serial_tx_buffer_primary)  -->  filled_buffer  -->  _io_context_write.pData  -->  EPIn（USB端点） 
 数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size  -->  _io_context_write.NumBytesToTransfer
  
 
@@ -608,10 +620,10 @@ usb_serial_event_queue_process()
 
         _io_context_read.pfOnComplete = USBD_ReadCompleteCb;
 
-        //USBD_CDC_ReadAsync(_usb_cdc_inst, &_io_context_read, true);                       //here， 读取usb数据
+        //USBD_CDC_ReadAsync(_usb_cdc_inst, &_io_context_read, true);                         //here， 读取usb数据
            //USBD_ReadAsync(_aInst[hInst].EPOut, _io_context_read, ShortRead);
-              //USB__Read(EPIndex, pContext->pData, pHook->NumBytesToTransfer, 0, Mode);    //数据流：usb --> pContext->pData(usb_serial_rx_raw_buffer)
-              //   USBD_BUFFER_Read(&pEPStat->Dir.RxInfo.Buffer, pData, NumBytesReq);        //数据流： Buffer --> pData  
+              //USB__Read(EPIndex, pContext->pData, pHook->NumBytesToTransfer, 0, Mode);      //数据流：usb --> pContext->pData(usb_serial_rx_raw_buffer)
+              //   USBD_BUFFER_Read(&pEPStat->Dir.RxInfo.Buffer, pData, NumBytesReq);         //数据流： Buffer --> pData  
                        USB_MEMCPY(pData, pBuffer->pData + pBuffer->RdPos, NumBytesAtOnce);    //数据流： pBuffer --> pData  
               //pContext->pfOnComplete(_io_context_read);
                   USBD_ReadCompleteCb(_io_context_read);
@@ -632,6 +644,17 @@ usb_serial_event_queue_process()
 数据流：_io_context_read.NumBytesTransferred  -->  usb_serial_rx_packet_length
 参数： _io_context_read
 USBD_ReadCompleteCb( *pIOContext)
+
+    if(pIOContext->NumBytesTransferred>0)
+    {
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
+        main_led.event_queue_process();                      //--test
+        nrf_delay_ms(300);
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--test
+        main_led.event_queue_process();                      //--test
+        usb_serial_write_now(usb_serial_rx_raw_buffer, pIOContext->NumBytesTransferred,0);  //--test
+    }
+
 
     for(uint16_t i = 0; i < pIOContext->NumBytesTransferred && usb_serial_rx_cobs_buffer_top<USB_SERIAL_RX_BUFFER_SIZE; i++)
     

@@ -3,13 +3,13 @@ TLE493D: 三维磁性传感器
 ================================= TLE493D  init =================================
 
 
-flow: (最后运行的是 theta_sample_ready  )
+flow: (通过twi0的irq，最后运行的是 theta_sample_ready  )
 
    main -- TLE493D_single_sampler::init -- (sample_set_ready_callback = theta_sample_ready)  
    --  (twi_basic_config.twi_basic_event_listener = static_twi_basic_event_handler) -- (twi_basic_config.twi_basic_event_listener_context = this)
 
    main -- TLE493D_single_sampler::init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire --  (p_cb->handler = static_event_handler) 
-   -- (p_box->handler(硬件地址) = nrfx_twim_0_irq_handler) 
+   -- (p_box->handler(twi0硬件地址) = nrfx_twim_0_irq_handler) 
 
    nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler
    -- (our_config.twi_basic_event_listener) -- static_twi_basic_event_handler -- (this)p_context->twi_basic_event_handler 
@@ -250,14 +250,19 @@ theta_sample_ready(  mag_data[])
 
 
 
-================================= TLE493D  =====tx============================
+========================================= TLE493D  =====tx====================================
 
 flow:
 
     (irq) -- theta_sample_ready -- check_for_complete_packet_and_send --  usb_serial_write_data_packet_vargs -- cobs_encode_post_zero_pad_vargs
 
+     usb_serial_init -- usb_serial_event_queue_process --  (详见 debug5_cdc_uart)
 
 
+数据流：mag_data --> virtualcomm_tx_buffer  --> usb_serial_tx_buffer_active --> usb_serial_tx_buffer_primary
+
+数据流：usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData
+数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size   -->  _io_context_write.NumBytesToTransfer
 
 
 ----------------------------------------------------------------
@@ -302,7 +307,7 @@ check_for_complete_packet_and_send()
 
 -------
 
-//--待理解
+数据流：virtualcomm_tx_buffer  --> usb_serial_tx_buffer_active
 usb_serial_write_data_packet_vargs( size_t data_length, ...) 
 
     //output_length = COBS_ENCODING_MAXIMUM_POSSIBLE_LENGTH(data_length) + 1;    //Add 1 to give space for 0 packet terminator
@@ -323,7 +328,7 @@ usb_serial_write_data_packet_vargs( size_t data_length, ...)
 
 ------------
 
-//--待理解
+数据流：virtualcomm_tx_buffer  --> usb_serial_tx_buffer_active
 参数：p_start , args
 cobs_encode_post_zero_pad_vargs(  *dst, dst_length, valist)
 
@@ -377,28 +382,166 @@ cobs_encode_post_zero_pad_vargs(  *dst, dst_length, valist)
 
 
 
+----------------------------
 
-================================= TLE493D  =====rx============================
+
+数据流：usb_serial_tx_buffer_active --> usb_serial_tx_buffer_primary
+usb_serial_init( br_callback,  ev_callback)
+
+    ......
+
+    usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+
+
+
+------
+
+数据流：usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData
+数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size   -->  _io_context_write.NumBytesToTransfer
+usb_serial_event_queue_process()
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);  //确认无已触发待处理的中断
+    
+
+    if(usb_serial_state_port_dtr && !usb_serial_state_port_open) //DTR打开，亮蓝灯
+    
+        ......(略)        
+
+
+    //Check for data to transmit
+    if(usb_serial_state_port_open)
+ 
+
+        //Check if we have enough data to TX, or we need to force a packet out NOW
+        if( (usb_serial_tx_buffer_top > OMMO_USB_SERIAL_MIN_PACKET_SIZE || (usb_serial_write_force && usb_serial_tx_buffer_top > 0)) &&
+            !usb_serial_state_tx_in_progress)
+        
+            //Don't need to send anything again for at least 500ms            
+            if(usb_serial_timeout_gen != NULL)
+                APP_ERROR_CHECK(usb_serial_timeout_gen->reset_timeout(usb_serial_buffer_flush_timeout_channel));
+
+            uint8_t *filled_buffer = usb_serial_tx_buffer_active;
+            uint16_t filled_buffer_size = usb_serial_tx_buffer_top;
+
+            //Switch buffers while DMA writes to USB port
+            usb_serial_tx_buffer_top = 0x00;
+            if(usb_serial_tx_buffer_active == usb_serial_tx_buffer_primary)
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_secondary;
+            else
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+
+            //Buffer ready, start the write
+            usb_serial_state_tx_in_progress = true;
+
+
+            _io_context_write.NumBytesToTransfer = filled_buffer_size;
+            _io_context_write.pData = filled_buffer;
+            _io_context_write.pfOnComplete = USBD_WriteCompleteCb;
+
+            //USBD_CDC_WriteAsync(_usb_cdc_inst, &_io_context_write, usb_serial_write_force);
+                 USBD_WriteAsync(_aInst[hInst].EPIn, _io_context_write, usb_serial_write_force );  //here
+
+
+            usb_serial_write_force = false;
+
+
+
+
+
+========================================= TLE493D  =====rx====================================
 
 flow:
 
-    
+    TLE493D_single_sampler::enable  --  read_data_noaddr --  twi_basic::trx -- nrfx_twim_xfer
 
+
+数据流：register数据 -- > mag_data_raw
 
 
 ---------------------------------------------------------
 
+功能: twi读取传感器数据
+数据流：register数据 -- > mag_data_raw
 TLE493D_single_sampler::enable()
 
-    VERIFY_TRUE(state_machine_stopped, NRF_ERROR_INVALID_STATE);
 
-    //Set state machine bits
     state_machine_stopped = false;
     stop_state_machine = false;
 
-    //Schedule triggered read that repeats until cancelled
-    twi_basic_instance->read_data_noaddr(TLE493D_SLAVE_ADDR, mag_data_raw, TLE493D_DATA_READ_LENGTH, NRFX_TWIM_FLAG_HOLD_XFER | NRFX_TWIM_FLAG_REPEATED_XFER);
-    VERIFY_SUCCESS(nrfx_ppi_channel_enable(ppi_channel_sample_start_twi));
+
+    //twi_basic_instance->read_data_noaddr( 0x35, mag_data_raw, 6, 1<<3 | 1<<4 );  //读取6byte传感器数据到mag_data_raw
+       trx(0x35, NULL, 0, mag_data_raw, 6, 1<<3 | 1<<4, false, 0);
+
+
+    nrfx_ppi_channel_enable(ppi_channel_sample_start_twi);
+
+
+---
+功能: twi读取传感器数据
+参数：0x35, NULL, 0, mag_data_raw, 6, 1<<3 | 1<<4, false, 0  
+twi_basic::trx( slave_addr, *tx_data, tx_len, *rx_data, rx_len, flags, blocking, timeout_override)
+
+
+    nrfx_twim_xfer_desc_t xfer =
+    
+       .address            = slave_addr,     //0x35
+       .primary_length     = tx_len,         //0
+       .secondary_length   = rx_len,
+       .p_primary_buf      = tx_data,         //null
+       .p_secondary_buf    = rx_data,
+    
+
+    if(rx_len == 0 && tx_len != 0)
+     
+        xfer.type = NRFX_TWIM_XFER_TX;
+    
+    else if(rx_len != 0 && tx_len == 0)
+     
+        xfer.type = NRFX_TWIM_XFER_RX;
+
+        xfer.p_primary_buf = rx_data;
+        xfer.p_secondary_buf = NULL;
+        xfer.primary_length = rx_len;
+        xfer.secondary_length = 0;
+
+    
+
+    disable_callback = blocking;  //false
+    twi_xfer_done = false;
+
+
+    if(timeout_override == 0) timeout_override = CALC_I2C_TIMEOUT(tx_len+rx_len);
+    rtc_timeout->set_timeout(rtc_timeout_channel, timeout_override);
+
+    nrfx_twim_xfer(&twi_peripheral, &xfer, flags);
+
+
+    if(blocking)
+
+        //return block_internal();
+            while(!twi_xfer_done) __WFE();
+
+
+-------
+
+功能: twi读取传感器数据
+参数：twi_peripheral, &xfer, flags
+nrfx_twim_xfer(  * p_instance,  * p_xfer_desc,  flags)
+
+    p_cb = &m_cb[0];
+
+    NRFX_LOG_HEXDUMP_DEBUG(p_xfer_desc->p_primary_buf,  p_xfer_desc->primary_length * sizeof(*->p_primary_buf[0]));
+
+    twim_xfer(p_cb, p_instance->p_twim, p_xfer_desc, flags);
+
+
+
+
+
+
+
+
+
 
 
 
