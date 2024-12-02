@@ -1,0 +1,97 @@
+
+#define ADC_CARTES_SLAVE_ADDR       0x63
+#define OMMO_CARTES_ADC_TWI_SCL_PINS      {NRF_GPIO_PIN_MAP(0,11)} //MOSI
+#define OMMO_CARTES_ADC_SPI_SDA_PINS      {NRF_GPIO_PIN_MAP(0,6)} //CS0
+
+
+
+------------------
+
+#define OMMO_CARTES_ADC_TWI_PERIPHERALS   {NRFX_TWIM_INSTANCE(0),NRFX_TWIM_INSTANCE(1)}
+
+const nrfx_twim_t twi_peripherals[]  = OMMO_CARTES_ADC_TWI_PERIPHERALS;
+
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+#define OMMO_CARTES_ADC_NUM_PORTS 1
+
+
+
+------------------------------
+
+
+#define IC_DATA_DISABLED_INDEX 1
+ 
+uint8_t ss_map[OMMO_CARTES_ADC_NUM_PORTS];      //1
+ 
+uint8_t ports_with_adc[OMMO_CARTES_ADC_NUM_TWI_CHANNELS];    //2 
+
+
+--------------
+
+ 
+
+---------
+
+#define OMMO_CARTES_ADC_NUM_PORTS 1
+uint8_t ss_map[1];                       //OMMO_CARTES_ADC_NUM_PORTS
+
+
+
+-------------
+
+
+volatile ic_data_dictionary_entry   ic_data[] =   //volatile to ensure the struct in ram
+{
+    {IC_TYPE_NONE, false}, //Nothing present
+    {IC_TYPE_NONE, true}, //Something present, but disabled
+    {IC_TYPE_CARTES_VTRAN, false, ADC_CARTES_DATA_LENGTH, ADC_CARTES_DATA_OFFSET, true, {0}, 0, 12 + 0}
+};
+
+  typedef struct
+  {
+      uint8_t ic_type;                      // IC_TYPE_CARTES_VTRAN
+      bool is_disabled;                     // false
+      uint8_t data_length;                  // ADC_CARTES_DATA_LENGTH
+      uint8_t data_offset;                  // DC_CARTES_DATA_OFFSET
+      bool is_adc;                          // true
+      uint8_t data_read_command[2];              // {0}
+      uint8_t data_read_command_tx_len;          // 0
+      uint8_t data_read_command_rx_len;          // 12+0
+  } ic_data_dictionary_entry;
+
+
+
+================================= class twi_basic ======================================
+
+class twi_basic
+
+    public:
+        twi_basic(nrfx_twim_t twi_instance, rtc_timeout_gen *rtc_timeout_g);
+
+    private:
+        nrfx_twim_t          twi_peripheral;
+        twi_basic_config_t   our_config;
+        rtc_timeout_gen      *rtc_timeout;
+
+-----
+
+参数：OMMO_SENSOR_TWIM,  &rtc_timeout
+twi_basic::twi_basic( twi_instance,  *rtc_timeout_g)
+
+    twi_peripheral = twi_instance;   //OMMO_SENSOR_TWIM    //here
+    rtc_timeout = rtc_timeout_g;     //rtc_timeout
+  
+    rtc_timeout->get_timeout_channel(&rtc_timeout_channel, static_timeout_handler, this);
+
+
+
+
+
+
+
+
+

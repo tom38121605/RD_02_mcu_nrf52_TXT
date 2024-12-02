@@ -1,0 +1,85 @@
+-------------------------- config\ommo_config.h --------------------------------------
+
+#define OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD     (15984 * 1)
+
+
+
+------------------------- ommo\ic_constants.h  ---------------------------------
+
+//scale numbers
+#define ADC_CARTES_VTRAN_SCALE_GAIN_4       45.0324e-04 //uT/bit
+#define ADC_CARTES_VTRAN_SCALE_GAIN_8       22.5162e-04 //uT/bit
+#define ADC_CARTES_VTRAN_SCALE_GAIN_16      11.2581e-04 //uT/bit
+#define ADC_CARTES_VTRAN_SCALE_GAIN_24      7.5054e-04 //uT/bit
+#define ADC_CARTES_VTRAN_SCALE_GAIN_32      5.6290e-04 //uT/bit
+#define ADC_CARTES_VTRAN_SCALE_GAIN_64      2.8145e-04 //uT/bit
+
+//x: pga gain
+#define ADC_CARTES_VTRAN_SCALE(x) ( \
+    (x) == 4 ? ADC_CARTES_VTRAN_SCALE_GAIN_4 : \
+    (x) == 8 ? ADC_CARTES_VTRAN_SCALE_GAIN_8 : \
+    (x) == 16 ? ADC_CARTES_VTRAN_SCALE_GAIN_16 : \
+    (x) == 24 ? ADC_CARTES_VTRAN_SCALE_GAIN_24 : \
+    (x) == 32 ? ADC_CARTES_VTRAN_SCALE_GAIN_32 : \
+    (x) == 64 ? ADC_CARTES_VTRAN_SCALE_GAIN_64: \
+    -1 /* Error value for unsupported x */ \
+)
+
+#define ADC_CARTES_SLAVE_ADDR       0x63
+
+#define ADC_CARTES_DATA_LENGTH      12
+#define ADC_CARTES_DATA_OFFSET      0
+
+#define ADC_CARTES_FIFO2_ADDR                   0x00
+#define ADC_CARTES_FIFO2_SET_CURRENT            (1<<7)
+#define ADC_CARTES_FIFO2_RESET_CURRENT          (1<<6)
+#define ADC_CARTES_FIFO2_CURRENT_DURATION_1US   (0<<5)
+#define ADC_CARTES_FIFO2_CURRENT_DURATION_2US   (1<<5)
+#define ADC_CARTES_FIFO2_ENABLE_XYZ_MEASURE     (1<<1)
+#define ADC_CARTES_FIFO2_ENABLE_TEMP_MEASURE    (1)
+
+#ifdef ADC_CARTES_SAMPLE_TEMP
+#define ADC_CARTES_FIFO2_VAL                    (ADC_CARTES_FIFO2_ENABLE_TEMP_MEASURE)
+#else
+#define ADC_CARTES_FIFO2_VAL_SET                (ADC_CARTES_FIFO2_SET_CURRENT | ADC_CARTES_FIFO2_CURRENT_DURATION_1US | ADC_CARTES_FIFO2_ENABLE_XYZ_MEASURE | ADC_CARTES_FIFO2_ENABLE_TEMP_MEASURE)
+#define ADC_CARTES_FIFO2_VAL_RESET              (ADC_CARTES_FIFO2_RESET_CURRENT | ADC_CARTES_FIFO2_CURRENT_DURATION_1US | ADC_CARTES_FIFO2_ENABLE_XYZ_MEASURE | ADC_CARTES_FIFO2_ENABLE_TEMP_MEASURE)
+#define ADC_CARTES_FIFO2_VAL                    (ADC_CARTES_FIFO2_ENABLE_XYZ_MEASURE | ADC_CARTES_FIFO2_ENABLE_TEMP_MEASURE)
+//#define ADC_CARTES_FIFO2_VAL                    (ADC_CARTES_FIFO2_SET_CURRENT | ADC_CARTES_FIFO2_CURRENT_DURATION_1US | ADC_CARTES_FIFO2_ENABLE_XYZ_MEASURE)
+#endif
+
+#define ADC_CARTES_REG_20   0x20
+#define ADC_CARTES_REG_20_VREF_EN        (1 << 7)
+//#define ADC_CARTES_REG_20_PGA_POWER      (0 << 5)  
+#define ADC_CARTES_REG_20_PGA_GAIN_4     (0 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN_8     (1 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN_16    (2 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN_24    (3 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN_32    (4 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN_64    (5 << 2)
+#define ADC_CARTES_REG_20_PGA_GAIN(x) ( \
+    (x) == 4 ? ADC_CARTES_REG_20_PGA_GAIN_4 : \
+    (x) == 8 ? ADC_CARTES_REG_20_PGA_GAIN_8 : \
+    (x) == 16 ? ADC_CARTES_REG_20_PGA_GAIN_16 : \
+    (x) == 24 ? ADC_CARTES_REG_20_PGA_GAIN_24 : \
+    (x) == 32 ? ADC_CARTES_REG_20_PGA_GAIN_32 : \
+    (x) == 64 ? ADC_CARTES_REG_20_PGA_GAIN_64: \
+    ADC_CARTES_REG_20_PGA_GAIN_4 /* Error value: use the least gain*/ \
+)
+#define ADC_CARTES_REG_20_CTRL_PGA_EN         (1 << 0)
+#define ADC_CARTES_REG_20_VAL(x)              (ADC_CARTES_REG_20_PGA_GAIN(x) | ADC_CARTES_REG_20_VREF_EN | ADC_CARTES_REG_20_CTRL_PGA_EN)
+
+#define ADC_CARTES_OSR_1          0x26
+#define ADC_CARTES_OSR_2          0x27
+#define ADC_CARTES_OSR_VALUE      256                                      //12 bits
+#define ADC_CARTES_OSR_1_VALUE    ((ADC_CARTES_OSR_VALUE & 0xF00) >> 8)     //top 4 bits of osr fill in reg LSB 4 bits
+#define ADC_CARTES_OSR_2_VALUE    (ADC_CARTES_OSR_VALUE & 0x0FF)            //osr LSB 8 bits
+
+/* =============== MISC =============== */
+
+#define DEBUG_DATA_LENGTH 12
+
+
+
+
+
+

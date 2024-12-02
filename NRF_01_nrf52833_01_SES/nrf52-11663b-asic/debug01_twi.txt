@@ -1,0 +1,346 @@
+
+================================= twi  init =================================
+
+flow:
+
+   main  -->  adc_cartes_init  -->  twi_basic::twi_basic  -->  twi_basic::acquire_i2c
+   
+
+数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+
+数据流： sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
+数据流： hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
+数据流： our_config.twi_basic_event_listener = twi_basic_event_handler;    //twi_basic_event_handler
+
+------------------------------------------------------------------------------
+
+main( )
+
+    adc_cartes_init(&sample_set_ready, &hot_plug_callback, &rtc_timeout);
+
+
+
+---------------------------
+
+全局变量：
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+功能：选择I2C0, 配置I2C引脚，频率，回调函数？
+参数：sample_set_ready, hot_plug_callback, rtc_timeout
+数据流：  NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+adc_cartes_init( sample_set_ready_callback_function,  hot_plug_cb,   *rtc_timeout_g)
+
+    sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
+    hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
+
+    timestamp_add_sample_event_callback(sample_timer_event_handler);   
+
+          ...... (跳过)
+
+     for(i=0; ... )
+
+        //senors_twi_basic_instance[i] = new twi_basic(twi_peripherals[i], rtc_timeout_g);
+           twi_peripheral = twi_instance;   //twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral
+           rtc_timeout = rtc_timeout_g;
+
+        senors_twi_basic_config[i].twi_basic_event_listener = twi_basic_event_handler;
+        senors_twi_basic_config[i].twi_basic_event_listener_context = 0;
+        senors_twi_basic_config[i].frequency = NRF_TWIM_FREQ_400K;
+        senors_twi_basic_config[i].sda_pin = twi_sda_pins[i];         //p0.6
+        senors_twi_basic_config[i].scl_pin = twi_scl_pins[i];         //p0,11
+        senors_twi_basic_config[i].scl_push_pull = false;
+
+        senors_twi_basic_instance[0]->acquire_i2c(&senors_twi_basic_config[i]);
+
+ 
+------
+
+功能：I2C0初始化
+参数：senors_twi_basic_config[0]
+twi_basic::acquire_i2c( *twi_basic_config)
+
+    our_config = *twi_basic_config;
+
+    nrfx_twim_config_t config =    
+       .scl                = our_config.scl_pin,      // p0.11
+       .sda                = our_config.sda_pin,      // p0.6
+       .frequency          = our_config.frequency,    // 400kHz
+       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
+       .hold_bus_uninit    = false
+    
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
+
+    nrf_gpio_cfg(our_config.scl_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP,   //输入，上拉
+                 (our_config.scl_push_pull ? NRF_GPIO_PIN_H0H1 : NRF_GPIO_PIN_H0D1), NRF_GPIO_PIN_NOSENSE);
+
+    nrf_gpio_cfg(our_config.sda_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP,    //输入，上拉
+                  NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
+
+    nrfx_twim_enable(&twi_peripheral);
+
+    update_timeout_scale(our_config.frequency);
+
+    i2c_acquired = true;
+
+
+----------
+
+static_event_handler(  *p_event,  *p_context)
+
+    ((twi_basic*)p_context)->twim_event_handler(p_event);
+
+
+------
+
+twi_basic::twim_event_handler( *p_event)
+
+    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))    
+        
+        rtc_timeout->disable_timeout(rtc_timeout_channel);   //Stop timeout timer
+
+        switch(p_event->type)
+        
+          case NRFX_TWIM_EVT_DONE:
+            last_event = TWI_BASIC_EVT_DONE;   
+            break;
+
+          case NRFX_TWIM_EVT_ADDRESS_NACK:
+          case NRFX_TWIM_EVT_BUS_ERROR:
+            last_event = TWI_BASIC_EVT_ADDRESS_NACK;
+            break;
+
+          case NRFX_TWIM_EVT_DATA_NACK:
+            last_event = TWI_BASIC_EVT_DATA_NACK;
+            break;
+
+          default:
+            APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
+            break;
+       
+
+        if(!disable_callback)
+            our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
+ 
+
+
+-------------------------
+
+回调函数一
+功能： ？
+sample_set_ready( *data, data_size, timestamp, timestamp_offset)
+
+    if(data_mode == DATA_MODE_DISABLED || timestamp_is_synch_lost())
+        return;
+
+    if(data_mode == DATA_MODE_USB)
+    
+        size_t packet_size = 1 + 4 + data_size; 
+
+        //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via USB
+        code = usb_serial_write_data_packet_vargs(packet_size,
+            1, &packet_id, 
+            4, &timestamp, 
+            data_size, data,
+            0);
+
+        if(code == NRF_ERROR_BUSY)
+            skipped_tx_count++;
+        else
+            OMMO_APP_ERROR_CHECK(code, STRING("USB data transfer error"), 0);
+    
+    //Update count
+    tx_count++;
+ 
+
+---------------
+
+回调函数二 （忽略）
+
+hot_plug_callback(  adc_removed) 
+ 
+#ifndef HOT_PLUG_OFF
+    if(usb_serial_state_port_open)
+    {
+        uint8_t hot_plug_cmd_buf[2] = {0};
+        hot_plug_cmd_buf[0] = OMMO_COMMAND_HOT_PLUG_DETECT;
+        hot_plug_cmd_buf[1] = (adc_removed) ? 1 : 0;
+
+        usb_serial_send_command_packet(hot_plug_cmd_buf, 2);
+    }
+#endif
+  
+
+
+-------
+
+回调函数三
+功能：？
+
+
+twi_basic_event_handler( p_event, *p_context)
+
+    uint32_t twi_channel = p_context;
+
+    twi_xfer_done[twi_channel] = true;
+
+    if(adc_cartes_rw_finished() && !disable_twi_callback)
+    
+        adc_cartes_state_change();
+    
+
+-----
+
+adc_cartes_rw_finished()
+
+    for(int32_t i=0; i<OMMO_CARTES_ADC_NUM_PORTS; i++)  //1
+    
+        if(!twi_xfer_done[i]) return false;
+
+
+
+------
+
+adc_cartes_state_change()
+
+uint8_t len, offset, port;
+
+    wait_for_callback = false;
+
+    while(!wait_for_callback)
+    
+        switch(current_state)
+        
+            case SETUP_ADC_START_SAMPLE:
+
+                for(port = 0; port < OMMO_CARTES_ADC_NUM_PORTS; port++)    // 1                
+                    adc_cartes_setup_PPI_start_sample_packet(port);                
+
+                //Enable PPI for all spi channels
+                adc_cartes_set_ppi_start_transfer_event_addr(timestamp_get_sample_event_address());
+                nrfx_ppi_group_enable(ppi_group_sample_start_spi); //Next PPI will be on sample timer
+
+                current_state = WAITING_FOR_ADC_START_SAMPLE_COMPLETION;
+                wait_for_callback = true;
+                break;
+
+            case WAITING_FOR_ADC_START_SAMPLE_COMPLETION:
+                //Turn off PPI
+                nrfx_ppi_group_disable(ppi_group_sample_start_spi);      
+
+                //Switch states        
+                current_state_index = -1;        
+                current_state = SETUP_NEXT_ADC_DATA_READ;
+                break;
+
+            case SETUP_NEXT_ADC_DATA_READ:
+                current_state_index++;
+                if(current_state_index < num_ports_with_adc)
+                
+                    //Start the SPI mag data read on busses with mags
+                    if(ADC_PRESENT(ports_with_adc[current_state_index]))
+                        adc_cartes_start_data_read(ports_with_adc[current_state_index]);
+
+                  //Wait for data read to finish
+                  current_state = WAITING_FOR_ADC_DATA_READ_COMPLETION;
+                  wait_for_callback = true;
+                
+                else                
+                    current_state = SETUP_STATE_MACHINE_RESTART;
+                
+                break;
+
+            case WAITING_FOR_ADC_DATA_READ_COMPLETION:
+                //Save read data
+                if(ADC_PRESENT(ports_with_adc[current_state_index]))
+                
+                    len = ic_data[ss_map[ports_with_adc[current_state_index]]].data_length;
+                    offset = ic_data[ss_map[ports_with_adc[current_state_index]]].data_offset;
+
+                    memcpy( current_output_data + data_output_index[ports_with_adc[current_state_index]], 
+                            m_twi_rx_buf[ports_with_adc[current_state_index]]+offset, len);
+                
+
+                current_state = SETUP_NEXT_ADC_DATA_READ;
+                break;
+
+
+            case SETUP_STATE_MACHINE_RESTART:
+                if(stop_state_machine_bit)
+                
+                    stop_state_machine_bit = false;
+                    current_state = STATE_MACHINE_STOPPED;
+                    wait_for_callback = true;
+                
+                else
+                
+                    //swap buffers
+                    swap_sample_buffers_and_flag_sample_callback();
+                    current_state = SETUP_ADC_START_SAMPLE;
+                
+                break;
+
+
+            default:
+                APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
+
+
+
+
+================================= twi write data =================================
+
+
+
+adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],  buffer_size) 
+
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x23, 0x00) ;                      //MSB bit 0: Vref 1.2V
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x20, ADC_CARTES_REG_20_VAL(4);    //-- set the gain to 4x
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x1e, 0x01);
+
+
+---
+
+参数：  0x63, 0x23, 0x00
+数据流：0x00 --> REG23
+twi_basic::write_byte_blocking( slave_addr, register_addr, data)
+
+    write_data(slave_addr, register_addr, &data, 1, 0x00, true);
+
+
+
+
+
+================================= twi read data =================================
+
+
+adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],   buffer_size)  
+ 
+      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x20, &reg_value[0]);
+      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x21, &reg_value[1]);
+ 
+
+
+------
+
+参数：  0x63, 0x20, &reg_value[0]
+数据流：reg20 --> reg_value[0]
+twi_basic::read_byte_blocking(uint8_t slave_addr, uint8_t register_addr, uint8_t* data)
+
+    trx(slave_addr, &register_addr, 1, data, 1, 0x00, true);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
