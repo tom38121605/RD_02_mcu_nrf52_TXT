@@ -69,7 +69,7 @@ TLE493D_single_sampler::init( *instance,  sample_set_ready_callback_g, sample_ev
     release_i2c();
 
 
-
+--------
 
 TLE493D_single_sampler::twi_basic_event_handler(  evt )
 

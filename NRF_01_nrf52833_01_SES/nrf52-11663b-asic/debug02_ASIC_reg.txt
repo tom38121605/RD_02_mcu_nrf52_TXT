@@ -4,90 +4,337 @@ current_output_data
 
 
 
-============================================= asic init =======================================================
+============================================= asic 回调函数 init =======================================================
 
 
-int main(void)
+flow: (通过twi0的irq，最后运行的是 adc_cartes_state_change  )
+
+   main -- adc_cartes_init -- (sample_set_ready_callback = sample_set_ready) -- (hot_plug_event_callback = Sample timestamp callback)
+   --  (senors_twi_basic_config[0].twi_basic_event_listener = twi_basic_event_handler) -- (*.twi_basic_event_listener_context = 0)
+   -- twi_basic::acquire_i2c -- nrfx_twim_init -- (p_cb->handler = static_event_handler) -- (p_cb->p_context = twi_basic::)
+
+  nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler
+  -- (our_config.twi_basic_event_listener) -- twi_basic_event_handler -- adc_cartes_state_change 
+
+   main -- adc_cartes_init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire -- (p_box->handler(twi0硬件地址) = nrfx_twim_0_irq_handler) 
 
 
-    usb_serial_init(usb_serial_packet_received, usb_serial_connect_disconnect);   
 
+----------------------------------------------------------------------
+
+main()
+
+
+    adc_cartes_init(&sample_set_ready, &hot_plug_callback, &rtc_timeout);
+
+
+-------------------------
+
+全局变量：
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+功能：选择I2C0, 配置I2C引脚，频率，回调函数
+参数：sample_set_ready, hot_plug_callback, rtc_timeout
+数据流：  NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
+
+    sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
+    hot_plug_event_callback = hot_plug_cb;                             //hot_plug_callback
+    
+    timestamp_add_sample_event_callback(sample_timer_event_handler);  //Sample timestamp callback 
+
+    current_output_data = output_data_1;
+    next_output_data = output_data_2;
+    next_next_output_data = output_data_3;
+    memset(output_data_1, 0x55, OMMO_SENSOR_MAX_PACKET_LENGTH);
+    memset(output_data_2, 0x55, OMMO_SENSOR_MAX_PACKET_LENGTH);
+    memset(output_data_3, 0x55, OMMO_SENSOR_MAX_PACKET_LENGTH);
+
+    current_state = STATE_MACHINE_STOPPED;
+    disable_twi_callback = false;
+    stop_state_machine_bit = false;
+    total_num_ics = 0;
+    ppi_start_transfer_tasks_assigned = 0;
+ 
+    mag_calibration_mode = true; 
+    onboard_sensors_enabled = true;
+
+    hot_plug_current_state_index = 0;
+    hot_unplug_double_check = false;
+    hot_plug_send_event = false;
+
+    execute_sample_ready_callback = false;
+
+    memset(ss_map, 0, sizeof(ss_map));
+    num_ports_with_adc = 0;
+
+    last_timestamp = current_timestamp = 0;
+    last_timestamp_offset = current_timestamp_offset = 0;
+
+    current_output_data_timestamp = 0;
+    current_output_data_timestamp_offset = 0;
+
+    set_reset_cnt = SET_RESET_SAMPLE_INTERVAL;   //do a set/reset first
+
+
+    for(i=0; i<1; i++)
+    
+        senors_twi_basic_instance[i] = new twi_basic(twi_peripherals[i], rtc_timeout_g);  //twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral
+
+        senors_twi_basic_config[i].twi_basic_event_listener = twi_basic_event_handler;    //事件   
+        senors_twi_basic_config[i].twi_basic_event_listener_context = 0;   //this?
+        senors_twi_basic_config[i].frequency = NRF_TWIM_FREQ_400K;
+        senors_twi_basic_config[i].sda_pin = twi_sda_pins[i];                                 //P0.6
+        senors_twi_basic_config[i].scl_pin = twi_scl_pins[i];                                 //P0.11
+        senors_twi_basic_config[i].scl_push_pull = false;
+
+        senors_twi_basic_instance[i]->acquire_i2c(&senors_twi_basic_config[i]);  //twi初始化
+    
+    
+    nrfx_ppi_group_alloc(&ppi_group_sample_start_spi);
+
+
+    for(i=0; i<1; i++)
+    
+        twi_xfer_done[i] = true;
+
+        uint32_t transfer_start_task_addr = nrfx_twim_start_task_get(&twi_peripherals[i], NRFX_TWIM_XFER_TX);      //待理解
+        adc_cartes_add_task_to_ppi_start_transfer(transfer_start_task_addr);                                       //待理解
+
+    
+ -------
+
+twi_basic::acquire_i2c( *twi_basic_config)
+
+    ......
+
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
 
 
 -----------------
 
+参数：&twi_peripheral, &config, static_event_handler, this
+nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
 
+    ......
+
+    p_cb->handler         = event_handler;  //static_event_handler
+    p_cb->p_context       = p_context;      //this , 指twi_basic::
+
+    ......
+
+
+
+
+
+=====----------------------------------------------------------
+
+
+
+可作为硬件irq中断入口
+nrfx_twim_0_irq_handler(  )
+ 
+    twim_irq_handler(NRF_TWIM0, &m_cb[0]);
+
+
+------
+
+
+可作为硬件irq中断入口
+twim_irq_handler(  * p_twim,  * p_cb)
+
+    ......
+
+
+    if (!(p_cb->flags & NRFX_TWIM_FLAG_NO_XFER_EVT_HANDLER) || p_cb->error)
+     
+        //p_cb->handler(&event, p_cb->p_context);
+           static_event_handler(&event, twi_basic:: )
+  
+------------
+
+参数：event, twi_basic::
+static_event_handler(  *p_event, *p_context)
+
+    //p_context->twim_event_handler(p_event);
+         twi_basic::twim_event_handler(p_event);
+
+
+-------
+
+
+twi_basic::twim_event_handler(  *p_event)
+
+    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))
+    
+        //Stop timeout timer
+        APP_ERROR_CHECK( rtc_timeout->disable_timeout(rtc_timeout_channel) );
+
+        switch(p_event->type)
+        
+          case NRFX_TWIM_EVT_DONE:
+            last_event = TWI_BASIC_EVT_DONE;   
+            break;
+
+          case NRFX_TWIM_EVT_ADDRESS_NACK:
+          case NRFX_TWIM_EVT_BUS_ERROR:
+            last_event = TWI_BASIC_EVT_ADDRESS_NACK;
+            break;
+
+          case NRFX_TWIM_EVT_DATA_NACK:
+            last_event = TWI_BASIC_EVT_DATA_NACK;
+            break;
+
+          default:
+            APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
+            break;
+        
+
+        if(!disable_callback)
+
+            //our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
+                 twi_basic_event_handler(last_event, 0);
+
+------
+
+
+//直接由中断入口函数而来，可直接当成中断入口函数   
+参数：last_event, 0
+twi_basic_event_handler( p_event, *p_context)
+
+    twi_xfer_done[0] = true;
+
+    //if(adc_cartes_rw_finished() && !disable_twi_callback)
+       if(!twi_xfer_done[0] && !disable_twi_callback)
+    
+           adc_cartes_state_change();
+ 
+
+------
+
+
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
+adc_cartes_state_change()
+ 
+    ......(忽略，见下面read reg data)
+
+
+
+==========------------------------------------------------------------------------------
+
+
+adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
+
+    ......
+
+    senors_twi_basic_instance[i]->acquire_i2c(&senors_twi_basic_config[i]);  //twi初始化
+
+
+
+----------------
+
+twi_basic::acquire_i2c( *twi_basic_config)
+
+    ......
+
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
+
+
+-----------------
+
+参数：&twi_peripheral, &config, static_event_handler, this
+nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
+
+    ......
+
+    p_cb->handler         = event_handler;  //static_event_handler
+
+    ......
+
+   irq_handlers[0] = { nrfx_twim_0_irq_handler };
+ 
+   nrfx_prs_acquire(p_instance->p_twim,  irq_handlers[0]);
+
+
+------------
+
+参数： NRF_TWIM0,  nrfx_twim_0_irq_handler
+nrfx_prs_acquire( * p_base_addr,  irq_handler)
+
+    ......
+
+    prs_box_t * p_box = prs_box_get(p_base_addr);  //NRF_TWIM0
+
+    p_box->handler  = irq_handler;   //nrfx_twim_0_irq_handler  //把中断函数的指针，保存到twi块的硬件地址
+    p_box->acquired = true;
+
+
+
+
+============================================= asic 配置reg init =======================================================
+
+flow：
+
+    main -- usb_serial_event_queue_process -- usb_serial_packet_received //-- adc_cartes_start_state_machine -- adc_cartes_state_change
+    //-- adc_cartes_setup_PPI_start_sample_packet -- adc_cartes_start_data_read --  memcpy(current_output_data , m_twi_rx_buf)
+
+
+
+数据流： 
+
+
+---------------------------------------
+
+
+main 
+
+    usb_serial_event_queue_process();
+
+        usb_serial_packet_received();
+
+
+
+
+--------------------------------------------------------
+
+功能：对接收包usb_serial_rx_packet_buffer(去掉了包头的的应用数据)处理  
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length  
 usb_serial_packet_received( data[], length)
 
-uint16_t response_length = 0;
+    ......
+    
 
-    switch(data[0])
-    {
-        case OMMO_COMMAND_USB_DATA_ENABLE:
-            if(data_mode != DATA_MODE_DISABLED)
-            {
-                usb_serial_send_ack(OMMO_ACK_INVALID_MODE);
-            }
-            else if(length != 2)
-            {
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                //Try to start state machine
-                uint32_t rvalue = adc_cartes_start_state_machine();
-
-                if(rvalue == NRF_SUCCESS)
-                {
-                    packet_id = data[1];
-                    data_mode = DATA_MODE_USB;
-                }
-                
-                //Return success/failure
-                usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
-                set_leds();
-            }
-            return;
-    }
-
-    if(response_length == 0) //No response, try protocol agnostic commands
-        response_length = process_packet_received(data, length, packet_response_buffer, PACKET_RESPONSE_BUFFER_SIZE);
+    response_length = process_packet_received(data, length, response_buffer, 1024); 
    
-    if(response_length == 0) //No response, must be an unknown command
-        response_length = fill_in_ack_packet(packet_response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
-
-    usb_serial_send_command_packet(packet_response_buffer, response_length);
+    ......
 
 
-------------------
+----------
 
-
-process_packet_received(uint8_t data[], uint16_t packet_size, uint8_t response_buffer[], uint16_t response_buffer_size)
-{
-uint16_t response_length;
-
-    response_length = 0;
-
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length ， response_buffer, 1024
+process_packet_received( data[],   packet_size,  response_buffer[],  response_buffer_size)
+ 
     switch(data[0])
-    {
+    
         case OMMO_COMMAND_DATA_DISABLE:
             if(data_mode == DATA_MODE_DISABLED)
-            {
+            
                 response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
+            
             else if(packet_size != 1)
-            {
+            
                 response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
+            
             else
-            {
+            
                 disable_data_mode(false);
                 set_leds();
 
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-            }
-            break;
-    }
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);     
+   
 
     if(response_length == 0) //Try general processor
         response_length = general_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
@@ -96,106 +343,63 @@ uint16_t response_length;
     if(response_length == 0) //Let sensors take a crack at the packet
         response_length = adc_cartes_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
 
-    //No one handled it
-    return response_length;
-}
 
 ----------------
 
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length ， response_buffer, 1024
 adc_cartes_process_packet_received(  data[], data_length, response_buffer[], response_buffer_size)
-{
 
-    if(data[0] == OMMO_COMMAND_SET_MAG_CAL_MODE)
-    {
+    if(data[0] == OMMO_COMMAND_SET_MAG_CAL_MODE)  //15
+    
         if(data_length != 3 || data[1] != 0x55)
-        {
-            return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-        }
-        else
-        {
+        
+            return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);  //2
+        
+        else        
             mag_calibration_mode = data[2];
-            return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-        }
-    }
-    else if(data[0] == OMMO_COMMAND_ONBOARD_SENSOR_ENABLE)
-    {
+            return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);   //0
+        
+    
+    else if(data[0] == OMMO_COMMAND_ONBOARD_SENSOR_ENABLE)     //24
+    
         if(data_length != 2)
-        {
+        
             return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-        }
-        else
-        {
+        
+        else        
             onboard_sensors_enabled = data[1];
             return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-        }
-    }
-    else if(data[0] == OMMO_COMMAND_GET_PACKET_DESCRIPTOR)
-    {
+        
+    
+    else if(data[0] == OMMO_COMMAND_GET_PACKET_DESCRIPTOR)  //13
+    
         if(current_state != STATE_MACHINE_STOPPED && current_state != IDLE_HOT_PLUG_CHECK)
-        {
+        
             return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-        }
-        else
-        {
+        
+        else        
             return adc_cartes_scan_bus_generate_data_descriptor(response_buffer, response_buffer_size);  //here
-        }
-    }
-    else if(data[0] == OMMO_COMMAND_SENSOR_DISABLE)
-    {
+        
+    
+    else if(data[0] == OMMO_COMMAND_SENSOR_DISABLE)  //29
+    
         if(data_length != 3 || data[1] >= OMMO_CARTES_ADC_NUM_PORTS)
-        {
+        
             return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-        }
-        else
-        {
+        
+        else        
             disable_adc_on_port[data[1]] = data[2];
             return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-        }
-    }
-#ifdef OMMO_PORT_LED
-    else if(data[0] == OMMO_COMMAND_SET_PORT_LED)
-    {
-        // Check data length
-        if((OMMO_SENSOR_NUM_PORTS*3) != data_length-1)
-        {
-            return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-        }
-        else if(current_state != STATE_MACHINE_STOPPED && current_state != IDLE_HOT_PLUG_CHECK)
-        {
-            return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-        }
-
-        enum state_enum previous_state = current_state;
-        adc_cartes_stop_state_machine(true);
-
-        #ifdef OMMO_PORT_LED_SPI_CHANNEL_INDEX
-        nrfx_spim_uninit(&spi_peripheral[OMMO_PORT_LED_SPI_CHANNEL_INDEX]);
-        #endif
-        led_pi55tat_spi_init();
-        led_pi55tat_write(&data[1], (OMMO_SENSOR_NUM_PORTS*3));
-        led_pi55tat_spi_uninit();
-        #ifdef OMMO_PORT_LED_SPI_CHANNEL_INDEX
-        init_spi(OMMO_PORT_LED_SPI_CHANNEL_INDEX);
-        #endif
-
-#ifndef HOT_PLUG_OFF
-        if(previous_state == IDLE_HOT_PLUG_CHECK)
-        {
-            adc_cartes_start_idle_hot_plug_check();
-        }
-#endif
-
-        return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-    }
-#endif
-
-    //See if device info processor can process it
+        
+    
     return device_info_process_packet_received(data, data_length, response_buffer, response_buffer_size, mag_calibration_mode);
-}
+
+
 
 
 --------------
 
+功能：初始化配置asic的寄存器
 adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],  buffer_size) 
 
    ......
@@ -227,11 +431,13 @@ twi_basic::read_byte_blocking(uint8_t slave_addr, uint8_t register_addr, uint8_t
 
 
 
-============================================= asic  ===== get adc data ==================================================
+
+============================================= asic  ===  read reg data ==================================================
 
 flow：
 
-
+    main -- usb_serial_event_queue_process -- usb_serial_packet_received -- adc_cartes_start_state_machine -- adc_cartes_state_change
+    -- adc_cartes_setup_PPI_start_sample_packet -- adc_cartes_start_data_read --  memcpy(current_output_data , m_twi_rx_buf)
 
 
 数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
@@ -239,13 +445,87 @@ flow：
 --------------------
 
 
+main 
+
+    usb_serial_event_queue_process();
+
+        usb_serial_packet_received();
+
+
+------------------------------------------
+
+功能：对接收包usb_serial_rx_packet_buffer(去掉了包头的的应用数据)处理  
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length  
+usb_serial_packet_received( data[], length)
+
+    switch(data[0])
+    
+        case OMMO_COMMAND_USB_DATA_ENABLE:            //32
+            if(data_mode != DATA_MODE_DISABLED)
+            
+                usb_serial_send_ack(OMMO_ACK_INVALID_MODE);
+            
+            else if(length != 2)
+            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+            
+                uint32_t rvalue = adc_cartes_start_state_machine();    //here ，处理正确的数据
+
+                if(rvalue == NRF_SUCCESS)
+                
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;                
+                
+                usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
+                set_leds();
+            
+            return;
+    
+    response_length = process_packet_received(data, length, response_buffer, 1024); 
+   
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    //usb_serial_send_command_packet(response_buffer, response_length);
+    //    usb_serial_send_command_packet_blocking(buffer, length, false);
+             length = cobs_encode_usb_command_crc_post0(buffer, length, cobs_buffer);
+             usb_serial_write_now(cobs_buffer, length, block);
+
+
+---------------
+
+adc_cartes_start_state_machine()
+
+    adc_cartes_stop_state_machine();
+
+    current_state = SETUP_ADC_START_SAMPLE;
+    adc_cartes_state_change();
+
+
+-------------------------------------
+
+
+//直接由中断入口函数而来，可直接当成中断入口函数  （参考10036f的debug02_sensor.txt）
+twi_basic_event_handler( p_event, *p_context)
+
+    uint32_t twi_channel = p_context;
+
+    twi_xfer_done[twi_channel] = true;
+
+    //if(adc_cartes_rw_finished() && !disable_twi_callback)
+       if(!twi_xfer_done[0] && !disable_twi_callback)
+    
+        adc_cartes_state_change();
+ 
+
+------
+
 
 数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
 adc_cartes_state_change()
- 
-uint8_t len, offset, port;
 
-bool wait_for_callback = false;
 
     while(!wait_for_callback)
     
@@ -256,7 +536,6 @@ bool wait_for_callback = false;
                 for(port = 0; port < OMMO_CARTES_ADC_NUM_PORTS; port++)
                 
                     adc_cartes_setup_PPI_start_sample_packet(port);  //发送command指令，准备读取相关的xyzt数据
-
 
 
            case WAITING_FOR_ADC_START_SAMPLE_COMPLETION:
@@ -323,7 +602,7 @@ adc_cartes_start_data_read( port)
 ------------
 
 
-功能：发送command指令，准备读取相关的xyzt数据
+功能：发送command指令到 reg00，准备读取相关的xyzt数据
 
 adc_cartes_setup_PPI_start_sample_packet(  port)
 
@@ -346,162 +625,39 @@ adc_cartes_setup_PPI_start_sample_packet(  port)
 
 
 
-============================================= send the asic data to CDC uart =======================================================
+
+============================================= tx asic data to CDC uart =======================================================
 
 
 flow:
 
+    main -- adc_cartes_init -- (sample_set_ready_callback = sample_set_ready)
 
+    main -- adc_cartes_event_queue_process -- (sample_set_ready_callback) -- sample_set_ready -- usb_serial_write_data_packet_vargs
+
+
+
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data  --> usb uart
 
 -------------------------------------------------------------------------
 
 main
 
 
-   while(1)
-
-      adc_cartes_event_queue_process();
+       adc_cartes_init(&sample_set_ready, &hot_plug_callback, &rtc_timeout);
 
 
-------
+    while
 
-adc_cartes_event_queue_process()
- 
-   if(execute_sample_ready_callback)
-           
-      //(*sample_set_ready_callback)(current_output_data, data_output_length, current_output_data_timestamp, current_output_data_timestamp_offset);    
-          sample_set_ready(current_output_data, data_output_length, current_output_data_timestamp, current_output_data_timestamp_offset);    
-
-      execute_sample_ready_callback = false;
+        adc_cartes_event_queue_process();
  
 
------------
 
-swap_sample_buffers_and_flag_sample_callback()
-
-    if(!execute_sample_ready_callback)
-
-        //Save matching timestamp
-        current_output_data_timestamp = last_timestamp;
-        current_output_data_timestamp_offset = last_timestamp_offset;
-
-        execute_sample_ready_callback = true;
-    
+==========---------------------------------------------------------------------------
 
 
-
------------
-
-
-回调函数一
-功能： ？
-sample_set_ready( *data, data_size, timestamp, timestamp_offset)
-
-    if(data_mode == DATA_MODE_DISABLED || timestamp_is_synch_lost())
-        return;
-
-    if(data_mode == DATA_MODE_USB)
-    
-        packet_size = 1 + 4 + data_size; 
-
-        //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via USB
-        code = usb_serial_write_data_packet_vargs(packet_size,
-            1, &packet_id, 
-            4, &timestamp, 
-            data_size, data,
-            0);
-
-        if(code == NRF_ERROR_BUSY)
-            skipped_tx_count++;
-        else
-            OMMO_APP_ERROR_CHECK(code, STRING("USB data transfer error"), 0);
-    
-    //Update count
-    tx_count++;
- 
-
------------
-
-
-功能：设置data_mode
-
-usb_serial_packet_received( data[], length)
-
-uint16_t response_length = 0;
-
-    switch(data[0])
-    
-        case OMMO_COMMAND_USB_DATA_ENABLE:
-
-            if(data_mode != DATA_MODE_DISABLED)
-            
-                usb_serial_send_ack(OMMO_ACK_INVALID_MODE);
-            
-            else if(length != 2)
-            
-                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
-            
-            else
-            
-                //Try to start state machine
-                uint32_t rvalue = adc_cartes_start_state_machine();
-
-                if(rvalue == NRF_SUCCESS)
-                
-                    packet_id = data[1];
-                    data_mode = DATA_MODE_USB;
-                
-                
-                //Return success/failure
-                usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
-                set_leds();
-            
-            return;
-    
-
-    if(response_length == 0) //No response, try protocol agnostic commands
-        response_length = process_packet_received(data, length, packet_response_buffer, PACKET_RESPONSE_BUFFER_SIZE);
-   
-    if(response_length == 0) //No response, must be an unknown command
-        response_length = fill_in_ack_packet(packet_response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
-
-    usb_serial_send_command_packet(packet_response_buffer, response_length);
-
-
-----------
-
-u32 adc_cartes_start_state_machine()
-
-    //Don't start state machine if no sensors/mags are detected (state machine will fail)
-    if(total_num_ics == 0)
-        return NRF_ERROR_NOT_FOUND;
-
-    //Stop idle hot_plug
-    adc_cartes_stop_state_machine();
-
-    //Change states
-    current_state = SETUP_ADC_START_SAMPLE;
-    adc_cartes_state_change();
-
-
-
-
-----------
-
-timestamp_is_synch_lost()
-
-    ASSERT(timestamp_synch_lost_found_callback != NULL);
-
-    return timestamp_synch_lost;
-
-
------------
-
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
 adc_cartes_state_change()
-
-uint8_t len, offset, port;
-
-    wait_for_callback = false;
 
     while(!wait_for_callback)
     
@@ -509,78 +665,235 @@ uint8_t len, offset, port;
         
             case SETUP_ADC_START_SAMPLE:
 
-                for(port = 0; port < OMMO_CARTES_ADC_NUM_PORTS; port++)    // 1                
-                    adc_cartes_setup_PPI_start_sample_packet(port);                
+                for(port = 0; port < OMMO_CARTES_ADC_NUM_PORTS; port++)                
+                    adc_cartes_setup_PPI_start_sample_packet(port);  //发送command指令，准备读取相关的xyzt数据
 
-                //Enable PPI for all spi channels
-                adc_cartes_set_ppi_start_transfer_event_addr(timestamp_get_sample_event_address());
-                nrfx_ppi_group_enable(ppi_group_sample_start_spi); //Next PPI will be on sample timer
-
-                current_state = WAITING_FOR_ADC_START_SAMPLE_COMPLETION;
-                wait_for_callback = true;
-                break;
-
-            case WAITING_FOR_ADC_START_SAMPLE_COMPLETION:
-                //Turn off PPI
-                nrfx_ppi_group_disable(ppi_group_sample_start_spi);      
-
-                //Switch states        
-                current_state_index = -1;        
-                current_state = SETUP_NEXT_ADC_DATA_READ;
-                break;
 
             case SETUP_NEXT_ADC_DATA_READ:
+
                 current_state_index++;
-                if(current_state_index < num_ports_with_adc)
-                
-                    //Start the SPI mag data read on busses with mags
+
+                if(current_state_index < num_ports_with_adc)                
+
                     if(ADC_PRESENT(ports_with_adc[current_state_index]))
-                        adc_cartes_start_data_read(ports_with_adc[current_state_index]);
+                        adc_cartes_start_data_read(ports_with_adc[current_state_index]);   //数据流：xyzt数据 --> m_twi_rx_buf[0]
 
-                  //Wait for data read to finish
-                  current_state = WAITING_FOR_ADC_DATA_READ_COMPLETION;
-                  wait_for_callback = true;
-                
-                else                
-                    current_state = SETUP_STATE_MACHINE_RESTART;
-                
-                break;
+                  ......
 
-            case WAITING_FOR_ADC_DATA_READ_COMPLETION:
-                //Save read data
+   
+            case WAITING_FOR_ADC_DATA_READ_COMPLETION:   //  数据流：xyzt数据 --> m_twi_rx_buf[0]  -->  current_output_data
+                
                 if(ADC_PRESENT(ports_with_adc[current_state_index]))
                 
                     len = ic_data[ss_map[ports_with_adc[current_state_index]]].data_length;
                     offset = ic_data[ss_map[ports_with_adc[current_state_index]]].data_offset;
-
-                    memcpy( current_output_data + data_output_index[ports_with_adc[current_state_index]], 
-                            m_twi_rx_buf[ports_with_adc[current_state_index]]+offset, len);
-                
+                    memcpy(current_output_data + data_output_index[ports_with_adc[current_state_index]], m_twi_rx_buf[ports_with_adc[current_state_index]]+offset, len);        
 
                 current_state = SETUP_NEXT_ADC_DATA_READ;
-                break;
 
 
-            case SETUP_STATE_MACHINE_RESTART:
-                if(stop_state_machine_bit)
-                
-                    stop_state_machine_bit = false;
-                    current_state = STATE_MACHINE_STOPPED;
-                    wait_for_callback = true;
-                
-                else
-                
-                    //swap buffers
-                    swap_sample_buffers_and_flag_sample_callback();    //here
-                    current_state = SETUP_ADC_START_SAMPLE;
-                
-                break;
+==========---------------------------------------------------------------------------
+
+全局变量：
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+功能：选择I2C0, 配置I2C引脚，频率，回调函数
+参数：sample_set_ready, hot_plug_callback, rtc_timeout
+数据流：  NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
+
+    sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
+    hot_plug_event_callback = hot_plug_cb;                             //hot_plug_callback
+
+    ......
+
+    current_output_data = output_data_1;
+    next_output_data = output_data_2;
+
+    ......
 
 
-            default:
-                APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
+
+------
+
+功能：处理发送asic传感器数据到pc的任务
+adc_cartes_event_queue_process()
+
+    if(execute_sample_ready_callback)           
+
+        //(*sample_set_ready_callback)(current_output_data, data_output_length, current_output_data_timestamp, current_output_data_timestamp_offset);
+            sample_set_ready(current_output_data, data_output_length, current_output_data_timestamp, current_output_data_timestamp_offset);
+
+        
+        execute_sample_ready_callback = false;   
+
+
+-----------
+
+
+功能： 把asic的xyzt数据发送到pc
+sample_set_ready( *data, data_size, timestamp, timestamp_offset)
+
+
+    if(data_mode == DATA_MODE_USB)
+    
+        packet_size = 1 + 4 + data_size; 
+
+        code = usb_serial_write_data_packet_vargs(packet_size,
+            1, &packet_id, 
+            4, &timestamp, 
+            data_size, data,
+            0);
+
+***-----
+
+数据流：virtualcomm_tx_buffer  --> usb_serial_tx_buffer_active
+usb_serial_write_data_packet_vargs(  data_length, ...) 
+
+    //output_length = COBS_ENCODING_MAXIMUM_POSSIBLE_LENGTH(data_length) + 1;    //Add 1 to give space for 0 packet terminator
+       output_length = ( data_length +1 +data_length/256 ) + 1;    
+
+
+    if( (usb_serial_tx_buffer_top + output_length) < 8192)      
+        usb_serial_tx_buffer_top += output_length;
+
+
+     va_list args;
+     va_start(args, data_length);
+     cobs_encode_post_zero_pad_vargs(usb_serial_tx_buffer_active + usb_serial_tx_buffer_top - output_length, output_length, args);
+     va_end(args);
+ 
+ 
+
+------------
+
+数据流：virtualcomm_tx_buffer  --> usb_serial_tx_buffer_active
+参数：p_start , args
+cobs_encode_post_zero_pad_vargs(  *dst, dst_length, valist)
+
+    void* cur_arg;
+    int32_t cur_arg_len;
+ 
+    u8 *end = dst + dst_length;
+    u8 code, *code_ptr;  
+ 
+    //StartBlock();
+       code_ptr = dst++
+       code     = 1;
+
+    while(1)
+    
+        u32 arg_len = va_arg(valist, int32_t);   //这里用u32_t 不用u8_t ？   //--待理解
+
+        if(arg_len == 0)  
+            break;
+ 
+        u8 *arg_data = va_arg(valist, uint8_t *);
+ 
+        for(size_t b = 0; b < arg_len; b++)
+        
+            if (code != 0xFF)
+            
+                uint8_t c = *arg_data++;
+
+                if (c != 0)
+                
+                    *dst++ = c;
+                    code++;
+                    continue;                
+            
+
+            //FinishBlock();
+                *code_ptr = code
+
+            //StartBlock();
+                code_ptr = dst++
+                code     = 1;
         
     
+    //FinishBlock();
+        *code_ptr = code
+
+    ASSERT(dst <= end);
+
+    while(dst < end) *dst++ = 0;
+
+
+
+
+----------------------------
+
+
+数据流：usb_serial_tx_buffer_active --> usb_serial_tx_buffer_primary
+usb_serial_init( br_callback,  ev_callback)
+
+    ......
+
+    usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+
+
+
+------
+
+数据流：usb_serial_tx_buffer_active  -->  filled_buffer  -->  _io_context_write.pData
+数据流2：usb_serial_tx_buffer_top  -->  filled_buffer_size   -->  _io_context_write.NumBytesToTransfer
+usb_serial_event_queue_process()
+
+    ASSERT(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD);  //确认无已触发待处理的中断
+    
+
+    if(usb_serial_state_port_dtr && !usb_serial_state_port_open) //DTR打开，亮蓝灯
+    
+        ......(略)        
+
+
+    //Check for data to transmit
+    if(usb_serial_state_port_open)
+ 
+
+        //Check if we have enough data to TX, or we need to force a packet out NOW
+        if( (usb_serial_tx_buffer_top > OMMO_USB_SERIAL_MIN_PACKET_SIZE || (usb_serial_write_force && usb_serial_tx_buffer_top > 0)) &&
+            !usb_serial_state_tx_in_progress)
+        
+            //Don't need to send anything again for at least 500ms            
+            if(usb_serial_timeout_gen != NULL)
+                APP_ERROR_CHECK(usb_serial_timeout_gen->reset_timeout(usb_serial_buffer_flush_timeout_channel));
+
+            uint8_t *filled_buffer = usb_serial_tx_buffer_active;
+            uint16_t filled_buffer_size = usb_serial_tx_buffer_top;
+
+            //Switch buffers while DMA writes to USB port
+            usb_serial_tx_buffer_top = 0x00;
+            if(usb_serial_tx_buffer_active == usb_serial_tx_buffer_primary)
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_secondary;
+            else
+                usb_serial_tx_buffer_active = usb_serial_tx_buffer_primary;
+
+            //Buffer ready, start the write
+            usb_serial_state_tx_in_progress = true;
+
+
+            _io_context_write.NumBytesToTransfer = filled_buffer_size;
+            _io_context_write.pData = filled_buffer;
+            _io_context_write.pfOnComplete = USBD_WriteCompleteCb;
+
+            //USBD_CDC_WriteAsync(_usb_cdc_inst, &_io_context_write, usb_serial_write_force);
+                 USBD_WriteAsync(_aInst[hInst].EPIn, _io_context_write, usb_serial_write_force );  //here
+
+
+            usb_serial_write_force = false;
+
+
+
+  
+
+
+
+
+
+
 
 
 

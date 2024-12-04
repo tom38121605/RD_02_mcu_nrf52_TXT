@@ -1,3 +1,25 @@
+
+
+uint8_t output_data_1[OMMO_SENSOR_MAX_PACKET_LENGTH];
+
+
+#define ADC_CARTES_SLAVE_ADDR       0x63
+#define OMMO_CARTES_ADC_TWI_SCL_PINS      {NRF_GPIO_PIN_MAP(0,11)}  
+#define OMMO_CARTES_ADC_SPI_SDA_PINS      {NRF_GPIO_PIN_MAP(0,6)}  
+
+
+
+----------------------------------------------------------------------
+
+twi_basic_config_t senors_twi_basic_config[1] = {0};
+twi_basic *senors_twi_basic_instance[1];
+
+#define OMMO_SENSOR_MAX_PACKET_LENGTH 128
+uint8_t output_data_1[OMMO_SENSOR_MAX_PACKET_LENGTH];
+uint8_t output_data_2[OMMO_SENSOR_MAX_PACKET_LENGTH];
+uint8_t output_data_3[OMMO_SENSOR_MAX_PACKET_LENGTH];
+
+
 -------------------------- config\ommo_config.h --------------------------------------
 
 #define OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD     (15984 * 1)
@@ -25,7 +47,7 @@
     -1 /* Error value for unsupported x */ \
 )
 
-#define ADC_CARTES_SLAVE_ADDR       0x63
+
 
 #define ADC_CARTES_DATA_LENGTH      12
 #define ADC_CARTES_DATA_OFFSET      0

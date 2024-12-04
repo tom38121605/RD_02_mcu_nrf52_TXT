@@ -1,4 +1,4 @@
-
+﻿
 
 
 D:\workspace-work\ommo_nrf-gauge
@@ -7,9 +7,12 @@ D:\workspace-work\ommo_nrf-gauge
    .git
    key_vault
    latest_firmware 
+
    .gitignore
    ReadMe.md
    ReleaseNote.md
+   .gitignore
+   .clang-format
 
 
 D:\workspace-work\ommo_nrf-gauge\flash_files
@@ -46,6 +49,7 @@ D:\workspace-work\ommo_nrf-gauge\nanopb-0.4.6-windows-x86
    Test
    tests
    tools
+
    .gitignore
    LICENSE.txt
    README.md
@@ -86,6 +90,14 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\config
    nrf52810
    nrf52811
    nrf52820
+
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples
+   //保留下面文件和目录  （删除其它所有文件和目录）
+   ommo
+
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo
+   //保留下面文件和目录  （删除其它所有文件和目录）
+   ommo_base_10036f
    
 D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx   
    
@@ -101,6 +113,7 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx
 D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk   
    
    //删除下面文件和目录    
+
     arm_startup_nrf51.s
     arm_startup_nrf52805.s
     arm_startup_nrf52810.s
@@ -109,36 +122,28 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     arm_startup_nrf5340_application.s
     arm_startup_nrf5340_network.s
     arm_startup_nrf9160.s
+
     gcc_startup_nrf51.S
     gcc_startup_nrf52805.S
     gcc_startup_nrf52810.S
     gcc_startup_nrf52811.S
+    gcc_startup_nrf52820.S                      
     gcc_startup_nrf5340_application.S
     gcc_startup_nrf5340_network.S
     gcc_startup_nrf9160.S
+
     iar_startup_nrf51.s
     iar_startup_nrf52805.s
     iar_startup_nrf52810.s
     iar_startup_nrf52811.s
+    iar_startup_nrf52820.s
     iar_startup_nrf5340_application.s
     iar_startup_nrf5340_network.s
     iar_startup_nrf9160.s
+
     nrf51.h
     nrf51.svd
-    nrf51422_peripherals.h
-    nrf51422_xxaa.ld
-    nrf51422_xxab.ld
-    nrf51422_xxac.ld
-    nrf51801_peripherals.h
-    nrf51801_xxab.ld
-    nrf51802_peripherals.h
-    nrf51802_xxaa.ld
-    nrf51822_peripherals.h
-    nrf51822_xxaa.ld
-    nrf51822_xxab.ld
-    nrf51822_xxac.ld
-    nrf51824_peripherals.h
-    nrf51824_xxaa.ld
+
     nrf51_bitfields.h
     nrf51_common.ld
     nrf51_deprecated.h
@@ -147,31 +152,7 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     nrf51_xxaa.ld
     nrf51_xxab.ld
     nrf51_xxac.ld
-    nrf52805.h
-    nrf52805.svd
-    nrf52805_bitfields.h
-    nrf52805_peripherals.h
-    nrf52805_xxaa.ld
-    nrf52810.h
-    nrf52810.svd
-    nrf52810_bitfields.h
-    nrf52810_name_change.h
-    nrf52810_peripherals.h
-    nrf52810_to_nrf52811.h
-    nrf52810_xxaa.ld
-    nrf52811.h
-    nrf52811.svd
-    nrf52811_bitfields.h
-    nrf52811_peripherals.h
-    nrf52811_xxaa.ld
-    nrf52820.h
-    nrf52820.svd
-    nrf52820_bitfields.h
-    nrf52820_peripherals.h
-    nrf52820_xxaa.ld
-    nrf52832_peripherals.h
-    nrf52832_xxaa.ld
-    nrf52832_xxab.ld
+
     nrf5340_application.h
     nrf5340_application.svd
     nrf5340_application_bitfields.h
@@ -184,12 +165,60 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     nrf5340_network_peripherals.h
     nrf5340_xxaa_application.ld
     nrf5340_xxaa_network.ld
+
     nrf9160.h
     nrf9160.svd
     nrf9160_bitfields.h
     nrf9160_name_change.h
     nrf9160_peripherals.h
     nrf9160_xxaa.ld
+
+
+    nrf51422_peripherals.h
+    nrf51422_xxaa.ld
+    nrf51422_xxab.ld
+    nrf51422_xxac.ld
+
+    nrf51801_peripherals.h
+    nrf51801_xxab.ld
+
+    nrf51802_peripherals.h
+    nrf51802_xxaa.ld
+
+    nrf51822_peripherals.h
+    nrf51822_xxaa.ld
+    nrf51822_xxab.ld
+    nrf51822_xxac.ld
+
+    nrf51824_peripherals.h
+    nrf51824_xxaa.ld
+
+    nrf52805.h
+    nrf52805.svd
+    nrf52805_bitfields.h
+    nrf52805_peripherals.h
+    nrf52805_xxaa.ld
+
+    nrf52810.h
+    nrf52810.svd
+    nrf52810_bitfields.h
+    nrf52810_name_change.h
+    nrf52810_peripherals.h
+    nrf52810_to_nrf52811.h
+    nrf52810_xxaa.ld
+
+    nrf52811.h
+    nrf52811.svd
+    nrf52811_bitfields.h
+    nrf52811_peripherals.h
+    nrf52811_xxaa.ld
+
+    nrf52820.h
+    nrf52820.svd
+    nrf52820_bitfields.h
+    nrf52820_peripherals.h
+    nrf52820_xxaa.ld
+
     ses_startup_nrf51.s
     ses_startup_nrf52805.s
     ses_startup_nrf52810.s
@@ -198,8 +227,10 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     ses_startup_nrf5340_application.s
     ses_startup_nrf5340_network.s
     ses_startup_nrf9160.s
+
     system_nrf51.c
     system_nrf51.h
+
     system_nrf52805.c
     system_nrf52805.h
     system_nrf52810.c
@@ -208,16 +239,26 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     system_nrf52811.h
     system_nrf52820.c
     system_nrf52820.h
+
     system_nrf5340_application.c
     system_nrf5340_application.h
     system_nrf5340_network.c
     system_nrf5340_network.h
     system_nrf53_approtect.h
+
     system_nrf9160.c
     system_nrf9160.h
 
    
-   
+D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo\ommo_base_10036f\10036f_testblank\ses
+   //删除下面文件和目录    
+   Output
+
+
+
+简化后只剩29.9M  （简化前大约990M）
+
+
    
    
    

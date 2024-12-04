@@ -808,8 +808,7 @@ usb_serial_packet_received( data[], length)
                 if(rvalue == NRF_SUCCESS)
                 
                     packet_id = data[1];
-                    data_mode = DATA_MODE_USB;
-                
+                    data_mode = DATA_MODE_USB;                
                 
                 //Return success/failure
                 usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
@@ -851,142 +850,37 @@ usb_serial_write_now( *buffer,  length,  block)
 
 -----------------------
 
-参数 ：usb_serial_rx_packet_buffer,   usb_serial_rx_packet_length ,   response_buffer,    1024
-process_packet_received(data[], packet_size, response_buffer[],  response_buffer_size)
+
+参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length ， response_buffer, 1024
+process_packet_received( data[],   packet_size,  response_buffer[],  response_buffer_size)
  
 
     switch(data[0])
     
         case OMMO_COMMAND_DATA_DISABLE:
-            if(!(data_mode_enabled || enable_data_after_motor_running))
+            if(data_mode == DATA_MODE_DISABLED)
             
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
             
             else if(packet_size != 1)
             
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
             
             else
-            {
-                data_mode_enable(false);
+            
+                disable_data_mode(false);
+                set_leds();
 
-                if(!leave_motor_on)
-                    stop_motor();
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);            
+   
 
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-            }
-        
-        case OMMO_COMMAND_LEAVE_MOTOR_ON:
-            if(packet_size != 2)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                leave_motor_on = data[1];
-                leave_motor_on_routine(leave_motor_on);
+    if(response_length == 0) //Try general processor
+        response_length = general_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
 
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-            }
+    //If auto sampling, ignore all sensor commands
+    if(response_length == 0) //Let sensors take a crack at the packet
+        response_length = adc_cartes_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
 
-        case OMMO_COMMAND_TURN_MOTOR_OFF:
-            if(packet_size != 1)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else if(!data_mode_enabled)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
-            else
-            {
-                stop_motor(false);
-
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-            }
-
-        case OMMO_COMMAND_READ_MOTOR_CURRENT:
-            if(packet_size != 1)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else if(data_mode_enabled || !leave_motor_on)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
-            else
-            {
-                uint16_t current = read_motor_current();
-                copyUint8(response_buffer, response_length, OMMO_COMMAND_READ_MOTOR_CURRENT);
-                copyUint16_LE(response_buffer, response_length, current);
-                return response_length;
-            }
-
-        case OMMO_COMMAND_GET_PACKET_DESCRIPTOR:
-            if(packet_size != 1)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else if(data_mode_enabled)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
-
-            else
-            {
-                return fill_in_packet_id_request(response_buffer, response_buffer_size);
-            }
-
-        case OMMO_COMMAND_GET_RUNTIME:
-            if(packet_size != 1)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                copyUint8(response_buffer, response_length, OMMO_COMMAND_GET_RUNTIME); //PACKET_ID
-                copyUint32_LE(response_buffer, response_length, total_run_time_logger.get_current_ticks());
-                copyUint32_LE(response_buffer, response_length, motor_run_time_logger.get_current_ticks());
-                return response_length;
-            }
-
-        case OMMO_COMMAND_CLEAR_RUNTIME:
-            if(packet_size != 2 || data[1] != 0x55)
-            {
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                total_run_time_logger.reset();
-                motor_run_time_logger.reset();
-                return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-            }
-
-        case OMMO_COMMAND_SET_MAG_CAL_MODE:
-            {
-                if(packet_size != 3 || data[1] != 0x55)
-                {
-                    return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-                }
-                else
-                {
-                    mag_calibration_mode = data[2];
-                    return fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
-                }
-            }
-
-    }
-
-    //Try general processor
-    response_length = general_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
-    if(response_length != 0)  return response_length;
-
-    //Try device info commands
-    response_length = device_info_process_packet_received(data, packet_size, response_buffer, response_buffer_size, mag_calibration_mode);
-    if(response_length != 0)  return response_length;
-
-
-}
 
 
 
@@ -1242,7 +1136,7 @@ usb_serial_event_queue_process()
 
 -----------------------
 
-功能：对接收包usb_serial_rx_packet_buffer处理  
+功能：对接收包usb_serial_rx_packet_buffer(去掉了包头的的应用数据)处理  
 参数：usb_serial_rx_packet_buffer, usb_serial_rx_packet_length
 usb_serial_packet_received( data[], length)
 
@@ -1321,6 +1215,7 @@ adc_cartes_stop_state_machine( blocking)
 
 ------
 
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
 adc_cartes_state_change()
 
     while(!wait_for_callback)
