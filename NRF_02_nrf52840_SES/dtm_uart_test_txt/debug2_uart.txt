@@ -22,7 +22,7 @@
                  p_reg->TXD.PTR    =   p_cb->p_tx_buffer ;            // tx_buffer
                  p_reg->TXD.MAXCNT = p_cb->tx_buffer_length ;
 
-       rx： 用户数据  DMA  -- mcb  -- rx_buffer  -- m_rx_fifo --  rx_buf  -- rx_byte    (待验证)
+       rx： 用户数据  DMA  -- mcb  -- rx_buffer  -- m_rx_fifo --  rx_buf  -- rx_byte    (待验证)     //rx_buf ?
               p_reg->RXD.PTR    = rx_buffer;
               p_reg->RXD.MAXCNT =1;
 
@@ -287,7 +287,7 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)      //注意，这个函数并不只是初
 
     //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );    //把rx_buffer连接到uarterx的dma
         NRF_UARTE0->RXD.PTR    = rx_buffer;
-        NRF_UARTE0->RXD.MAXCNT =1;
+        NRF_UARTE0->RXD.MAXCNT =1;                //或dma中最大接收数量
 
     if (!second_buffer)    //yes
    
@@ -506,7 +506,7 @@ app_uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init
 
 数据流：  ( rx_buf )  --  buffers  -->  m_rx_fifo  + m_tx_fifo
 数据流2：   rx_buffer + len(=1) -->  m_cb
-数据流3： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
+数据流3： rx_buffer  -->  RXD.PTR，   1  -->  RXD.MAXCNT    //相当于dma的地址连接
 
 数据流：  m_rx_fifo->p_buf[read_pos]   --  （rx_buffer） --  rx_byte
 
@@ -530,12 +530,13 @@ main
 
 ----------------
 
+数据流：  m_rx_fifo->p_buf[read_pos]  -- （rx_buffer） --  rx_byte
 参数： rx_byte
 app_uart_get( * p_byte)
 
     bool rx_ovf = m_rx_ovf;
 
-    app_fifo_get(&m_rx_fifo, p_byte);
+    app_fifo_get(&m_rx_fifo, p_byte);  //m_rx_fifo  --  rx_byte
 
     if (rx_ovf)
     {
@@ -719,6 +720,7 @@ rx_done_event( *p_cb,   bytes, * p_data)
     event.data.rxtx.p_data = p_data;    //p_cb->p_rx_buffer（rx_buffer ）
 
 参数： event， p_cb->p_context
+数据流： (rx_buffer)  --> m_cb.p_rx_buffer[  -->  m_rx_fifo->p_buf   (待验证) 
 uart_event_handler( * p_event,  * p_context) 
 
     switch (p_event->type)
@@ -728,7 +730,6 @@ uart_event_handler( * p_event,  * p_context)
             if(p_event->data.rxtx.bytes == 0)                        //如果是RXTO， 超时     
                nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);     //重新开启接收
                break;            
-
 
             // Write received byte to FIFO.
             err_code = app_fifo_put(&m_rx_fifo, p_event->data.rxtx.p_data[0]);
@@ -763,6 +764,7 @@ uart_event_handler( * p_event,  * p_context)
 
 --------
 
+数据流： (rx_buffer)  --> m_cb.p_rx_buffer[  -->  m_rx_fifo->p_buf   (待验证) 
 参数： &m_rx_fifo,  p_cb->p_rx_buffer[0]    //rx_buffer[0]  
 app_fifo_put( * p_fifo, byte)
 

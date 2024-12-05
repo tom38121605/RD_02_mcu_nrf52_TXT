@@ -1,0 +1,284 @@
+
+=================================== uarte ===init===============================
+
+flow:
+
+    
+
+
+----------------------------------
+
+main
+
+     
+    comms_uarte_init(comms_uarte_synch_uarte, OMMO_COMMS_UARTE_SYNCH_PIN);   //P1.2
+
+
+
+------------------
+
+全局变量：
+NRFX_UARTE_INSTANCE(0)                                
+                                                             
+    .p_reg        = NRF_UARTE0,             
+    .drv_inst_idx = NRFX_UARTE0_INST_IDX 
+
+
+-----------
+
+说明：uarte的详解，可参考dtm的txt文件
+NRFX_UARTE_INSTANCE(1)                              
+    .p_reg        = NRF_UARTE1,             
+    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
+
+参数：NRFX_UARTE_INSTANCE(1), P1.2
+comms_uarte_init( uarte_instance, rx_pin)
+
+    nrfx_uarte_config_t m_uart0_drv_config;
+
+    m_uart0_drv_config.pselrxd = rx_pin;                                            //P1.2
+    m_uart0_drv_config.pseltxd = NRF_UARTE_PSEL_DISCONNECTED;
+    m_uart0_drv_config.pselrts = NRF_UARTE_PSEL_DISCONNECTED;
+    m_uart0_drv_config.pselcts = NRF_UARTE_PSEL_DISCONNECTED;
+    m_uart0_drv_config.hwfc = NRF_UARTE_HWFC_DISABLED;
+    m_uart0_drv_config.parity = NRF_UARTE_PARITY_EXCLUDED;
+    m_uart0_drv_config.baudrate = NRF_UARTE_BAUDRATE_1000000;                         //1M
+    m_uart0_drv_config.interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY;   //6
+
+    nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler), STRING("UARTE initialization error"), 0);
+
+    if(rx_pin != NRF_UARTE_PSEL_DISCONNECTED)
+        nrf_gpio_cfg_input(rx_pin, NRF_GPIO_PIN_PULLUP);    //Prevents random rx events
+
+
+    //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));
+         AAA = nrf_uarte_event_address_get(NRF_UARTE0, NRF_UARTE_EVENT_ENDRX);
+         comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(AAA);
+
+    //把comms_uarte_rx_buffer连接到uarterx的dma，dma一次最大可接收6个byte 开启uarte rx
+    nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6);
+
+
+------------------
+
+参数：NRF_UARTE0.NRF_UARTE_EVENT_ENDRX
+timestamp_add_capture_event( trigger_event_addr)
+ 
+nrf_ppi_channel_t        ppi_channel_timestamp_capture;
+nrf_timer_cc_channel_t   capture_channel;
+
+    capture_channel = timestamp_get_capture_compare_channel();
+
+    //设置PPI，以便在CC0的样本读取事件中捕获时间戳
+    nrfx_ppi_channel_alloc(&ppi_channel_timestamp_capture);
+    nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel])));
+    nrfx_ppi_channel_enable(ppi_channel_timestamp_capture);
+
+    return capture_channel;
+
+
+--------
+
+nrfx_ppi_channel_alloc(  * p_channel)   //跳过先忽略
+
+    nrf_ppi_channel_t channel;
+    uint32_t mask = 0;
+    err_code = NRFX_ERROR_NO_MEM;
+
+    mask = NRFX_PPI_PROG_APP_CHANNELS_MASK;
+
+    for (channel = NRF_PPI_CHANNEL0;  mask != 0; mask &= ~nrfx_ppi_channel_to_mask(channel), channel++)
+ 
+        if ((mask & nrfx_ppi_channel_to_mask(channel)) && (!is_allocated_channel(channel)))
+        
+            channel_allocated_set(channel);
+            *p_channel = channel;
+
+ 
+
+
+
+ 
+      
+
+=================================== uarte === rx ===============================
+
+flow：
+
+
+
+
+
+
+----------------------------------------------
+
+
+static void uarte_irq_handler(NRF_UARTE_Type *        p_uarte,
+                              uarte_control_block_t * p_cb)
+{
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))
+    {
+        nrfx_uarte_event_t event;
+
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
+
+        event.type                   = NRFX_UARTE_EVT_ERROR;
+        event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
+        event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
+        event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
+
+        // Abort transfer.
+        p_cb->rx_buffer_length = 0;
+        p_cb->rx_secondary_buffer_length = 0;
+
+        p_cb->handler(&event, p_cb->p_context);
+    }
+    else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);
+        size_t amount = nrf_uarte_rx_amount_get(p_uarte);
+        // If the transfer was stopped before completion, amount of transfered bytes
+        // will not be equal to the buffer length. Interrupted transfer is ignored.
+        if (amount == p_cb->rx_buffer_length)
+        {
+            if (p_cb->rx_secondary_buffer_length != 0)
+            {
+                uint8_t * p_data = p_cb->p_rx_buffer;
+                nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);
+                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
+                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
+                p_cb->rx_secondary_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_data);
+            }
+            else
+            {
+                p_cb->rx_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);
+            }
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
+
+        if (p_cb->rx_buffer_length != 0)
+        {
+            p_cb->rx_buffer_length = 0;
+            // In case of using double-buffered reception both variables storing buffer length
+            // have to be cleared to prevent incorrect behaviour of the driver.
+            p_cb->rx_secondary_buffer_length = 0;
+            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
+
+        // Transmitter has to be stopped by triggering STOPTX task to achieve
+        // the lowest possible level of the UARTE power consumption.
+        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
+
+        if (p_cb->tx_buffer_length != 0)
+        {
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
+        if (p_cb->tx_buffer_length != 0)
+        {
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        }
+    }
+}
+
+
+-----------
+
+ rx_done_event(  * p_cb,   bytes,   p_data)
+ 
+    nrfx_uarte_event_t event;
+
+    event.type             = NRFX_UARTE_EVT_RX_DONE;
+    event.data.rxtx.bytes  = bytes;
+    event.data.rxtx.p_data = p_data;
+
+    //p_cb->handler(&event, p_cb->p_context);
+        comms_uarte_handler( &event, p_cb->p_context);
+
+ 
+
+--------------------
+
+
+参数：event, p_cb->p_context
+comms_uarte_handler(  *p_event,  *p_context) 
+
+    if(p_event->type == NRFX_UARTE_EVT_RX_DONE)
+     
+        index = (comms_uarte_in_synch?0:1);
+        if(comms_uarte_rx_buffer[index+5] == 0x00)
+        
+            comms_uarte_in_synch = true;
+
+            //Grab basestation timestmap @ sample_time and roll forward by TIMESTAMP_SYNCH_BS_PERIOD to the correct time for our sample event
+            cobs_decode(comms_uarte_rx_buffer+index, 5, (uint8_t*)&basestation_ts);
+
+            //Process timestamp
+            timestamp_synch_recieved(basestation_ts, timestamp_read_capture(comms_uarte_local_ts_capture_channel), TIMESTAMP_SYNCH_SOURCE_UART);
+
+            //Setup next RX
+            OMMO_APP_ERROR_CHECK(nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6), STRING("UARTE communication error"), 0);
+         
+        else
+         
+            nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 7);
+            comms_uarte_in_synch = false;
+        
+
+     
+    else if(p_event->type == NRFX_UARTE_EVT_ERROR)
+     
+        comms_uarte_error_count++;
+
+        nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6);
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
