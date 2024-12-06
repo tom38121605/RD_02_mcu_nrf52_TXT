@@ -46,19 +46,26 @@
 
 flow：
 
-     uart_init  --  APP_UART_FIFO_INIT  --   app_uart_init  --  nrf_drv_uart_init  --  nrfx_uarte_init  --  apply_config  --  nrfx_uarte_rx
+     main -- uart_init -- APP_UART_FIFO_INIT -- app_uart_init -- (m_event_handler = uart_error_handle)
+     --  nrf_drv_uart_init -- (m_handlers[0] = uart_event_handler) -- nrfx_uarte_init -- (p_cb->handler = uart_event_handler) 
+    -- ( m_prs_box_4.handler = nrfx_uarte_0_irq_handler )
 
-数据流：  (rx_buf + tx_buf)  --> buffers  -->  (m_rx_fifo  + m_tx_fifo )  
-数据流2： params  -->  config
-数据流3： uart_error_handle  -->  m_handlers[0]
-数据流4： 0   -->  m_contexts[0]
+     main -- uart_init -- APP_UART_FIFO_INIT -- app_uart_init -- nrf_drv_uart_init -- nrfx_uarte_init -- nrfx_prs_acquire -- apply_config -- nrf_drv_uart_rx -- nrfx_uarte_rx
 
-数据流51： uart_error_handle  + 常量 -->  m_cb[0]  
+数据流：uart_error_handle  --> m_event_handler  
+数据流：  (rx_buf + tx_buf)  --> buffers  -->  (m_rx_fifo  + m_tx_fifo )        //黄色大巴rx 和黄色大巴tx，连接上海旅行社
+数据流： params  -->  config
+
+数据流：uart_event_handler  -->  m_handlers[0]
+数据流： 0   -->  m_contexts[0]
+
+数据流51： uarte_evt_handler  + 常量 -->  m_cb[0]                                       //uarte_evt_handler连接西安旅行社
 数据流52： config  -- 寄存器
-数据流53： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
+数据流：  nrfx_uarte_0_irq_handler  -->   irq_handlers[0]
+数据流： nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler ,   true -- m_prs_box_4.acquired 
 
-数据流61： rx_buffer -->  m_cb
-数据流62： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT 
+数据流61： rx_buffer -->  m_cb[0]                                                                                         //绿色大巴rx 连接西安旅行社
+数据流62： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT                                                    //绿色大巴rx 对接dma rx
 
 评论： buffers 就是多此一举
 
@@ -95,14 +102,14 @@ void uart_init(void)
 -----------------
 
 评论： buffers 是多此一举
-参数：   params, 256， 256， uart_error_handle,  7，  err_code
 数据流：  rx_buf + tx_buf  --> buffers
+参数：   params, 256， 256， uart_error_handle,  7，  err_code
 #define APP_UART_FIFO_INIT(P_COMM_PARAMS,   RX_BUF_SIZE,   TX_BUF_SIZE,   EVT_HANDLER, IRQ_PRIO,   ERR_CODE)  
     do                                                                                             
     {                                                                                              
         app_uart_buffers_t buffers;       //全局变量    （或是uart_init中的局部static变量 ）                                                                  
-        static uint8_t     rx_buf[256];      //全局变量   （或是uart_init中的局部static变量 ）                                                     
-        static uint8_t     tx_buf[256];      //全局变量    （或是uart_init中的局部static变量 ）                                                         
+        static uint8_t     rx_buf[256];      //全局变量   （或是uart_init中的局部static变量 ）        //黄色大巴rx                                             
+        static uint8_t     tx_buf[256];      //全局变量    （或是uart_init中的局部static变量 ）        //黄色大巴tx                                                         
                                                                                                     
         buffers.rx_buf      = rx_buf;                                                               
         buffers.rx_buf_size = sizeof (rx_buf);                                                      
@@ -113,18 +120,16 @@ void uart_init(void)
  
 -----------------
 
-参数：   params,  buffers， uart_error_handle,  7 
-数据流： buffers  -->  m_rx_fifo  + m_tx_fifo
+数据流：uart_error_handle  --> m_event_handler  
+数据流：  rx_buf + tx_buf  -->  buffers  -->  m_rx_fifo  + m_tx_fifo   （把绿色大巴挂靠在上海旅行社）
 数据流2：params  -->  config
-数据流3：m_event_handler = uart_error_handle
- 
+参数：   params,  buffers， uart_error_handle,  7  
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
-    uint32_t err_code;
-    m_event_handler = event_handler;   //uart_error_handle
+    m_event_handler = event_handler;   //uart_error_handle     //这个回调函数只处理错误，名称取得有点坑 （建议改为 m_err_event_handler ）
  
     //app_fifo_init(&m_rx_fifo, p_buffers->rx_buf, p_buffers->rx_buf_size); 
-        m_rx_fifo->p_buf         =  p_buffers->rx_buf;
+        m_rx_fifo->p_buf         =  p_buffers->rx_buf;                                   //黄色大巴rx  --> 上海旅行社rx
         m_rx_fifo->buf_size_mask = p_buffers->rx_buf_size - 1;
         m_rx_fifo->read_pos      = 0;
         m_rx_fifo->write_pos     = 0;
@@ -150,7 +155,7 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
     m_rx_ovf = false;
 
-    //把rx_buffer连接到uarterx的dma， 开启uarte rx
+    //把rx_buffer连接到uarterx的dma， 开启uarte rx                           //绿色大巴rx 对接dma rx
     //nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
          nrfx_uarte_rx(&app_uart_inst->uarte, rx_buffer,1);    
 
@@ -182,31 +187,32 @@ nrf_drv_uart_init(  *p_instance, *p_config,  event_handler)
 
     //if (NRF_DRV_UART_USE_UARTE)
        if( nrf_drv_uart_use_easy_dma[0] )                 //1    //yes    (已log验证) 
-          nrfx_uarte_init(&p_instance->uarte,  &config,  uarte_evt_handler );
- 
+          nrfx_uarte_init(&p_instance->uarte,  &config,  uarte_evt_handler ); 
 
 ------------
 
-// 参数： &app_uart_inst.uarte,  &config,  uart_event_handler
+// 参数： &app_uart_inst.uarte,  &config,  uarte_evt_handler
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
-数据流：uart_event_handler + 常量(lenth + state) -->  m_cb[0]      //给m_cb[0]赋值（给大部分成员赋值， 发送和接收缓冲尚未赋值）
-数据流2： config  -- 寄存器
-数据流3： uarte_irq_handler --  nrfx_uarte_0_irq_handler  --   irq_handlers[0]
+数据流：uarte_evt_handler + 常量(lenth + state) -->  m_cb[0]      //给m_cb[0]赋值（发送和接收缓冲尚未赋值）  //把uarte_evt_handler挂靠到 西安旅行社
+数据流： config  -->  寄存器
+数据流：  nrfx_uarte_0_irq_handler  -->   irq_handlers[0]
+数据流： nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler ,   true -- m_prs_box_4.acquired 
 nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
     uarte_control_block_t * p_cb = &m_cb[0];       // p_instance->drv_inst_idx=0
  
     static nrfx_irq_handler_t  const irq_handlers[1] = { nrfx_uarte_0_irq_handler };   //NRFX_UARTE_ENABLED_COUNT=1
- 
-     。。。（参考1--定义prs_box_t 变量记录已初始化标志，跳过）
+
+    //nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[p_instance->drv_inst_idx] );   //数据流：nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler
+           nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler] );
 
     //配置串口引脚和波特率 
     apply_config(p_instance, p_config);     
 
-    p_cb->handler   = event_handler;              //uart_event_handler
-    p_cb->p_context = p_config->p_context;   //null
+    p_cb->handler   = event_handler;             //uarte_evt_handler
+    p_cb->p_context = p_config->p_context;   //0
 
     if (p_cb->handler)
         interrupts_enable(p_instance, p_config->interrupt_priority);  //清中断标志，开启中断和优先级，使能中断
@@ -218,7 +224,42 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
     p_cb->tx_buffer_length           = 0;
     p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
  
+ ------------------------
+
+ 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
+数据流： nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler
+nrfx_prs_acquire( * p_base_addr,  irq_handler) 
+
+    //prs_box_t * p_box = prs_box_get(p_base_addr);
+         p_box =  m_prs_box_4； 
+             .handler = NULL 
+             .acquired = false 
+
+    if (p_box != NULL)
+
+        if (p_box->acquired)
+            busy = true;
+        else                                                   //yes
+            p_box->handler  = irq_handler;
+            p_box->acquired = true;      
+
+--------
+
+功能： 判断NRF_UARTE0  和 NRFX_PRS_BOX_4_ADDR 是同一个地址（yes），然后返回m_prs_box_4 （待理解）
+参数：  NRF_UARTE0
+static prs_box_t * prs_box_get(  * p_base_addr)
  
+    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
+    #define IS_PRS_BOX(n, NRF_UARTE0)  (  NRF_UARTE0  == NRFX_PRS_BOX_##n##_ADDR)
+
+    //if (IS_PRS_BOX(4, p_base_addr)) 
+    if ( NRF_UARTE0  == NRFX_PRS_BOX_4_ADDR )      //yes
+
+         //return &m_prs_box_4;  
+              return m_prs_box_4 ； 
+                    .handler = NULL 
+                    .acquired = false 
+
 -----------------------------------
 
 // 功能： 配置串口引脚和波特率
@@ -238,23 +279,21 @@ apply_config( * p_instance, * p_config)
         nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                   //rx   P1.15 ， input  nopull
 
         nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                       //设置波特率  19200
-
         nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);         //设置，无奇偶校验，无硬件流控制
-
         nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //设置uart的tx，rx引脚
 
    
 -----------------
 
-//功能： 把rx_buffer连接到uarterx的dma， 开启uarte rx
-// 参数： &app_uart_inst 
+//功能： 把rx_buffer连接到uarterx的dma， 开启uarte rx                  //绿色大巴rx 对接dma rx
+// 全局变量： &app_uart_inst 
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
 参数： app_uart_inst->uarte,  rx_buffer,  1
-数据流： rx_buffer + len(=1) -->  m_cb
-数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接
+数据流： rx_buffer + len(=1) -->  m_cb[0]                                                                    //绿色大巴rx 连接 西安旅行社
+数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT    //相当于dma的地址连接       //绿色大巴rx 对接dma rx
 nrfx_uarte_rx(  * p_instance, * p_data,  length)      //注意，这个函数并不只是初始化才调用，在接收数据时会反复调用
  
     uarte_control_block_t * p_cb = &m_cb[0];
@@ -265,41 +304,40 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)      //注意，这个函数并不只是初
         //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //做相关配置前，先关闭这2个中断
                INTENCLR = 1<<9 | 1<<4;
     
-    if ( p_cb->rx_buffer_length != 0 )         //no, 跳过     
+    if ( p_cb->rx_buffer_length != 0 )         //第一次是no, 跳过     
         if ( p_cb->rx_secondary_buffer_length != 0 )            
             if (p_cb->handler)        //  yes， uart_error_handle             
                 nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
             return err_code;         
         second_buffer = true;     
 
-    if (!second_buffer)     //yes 
-
+    if (!second_buffer)     //第一次是yes 
         p_cb->rx_buffer_length = length;             //1
         p_cb->p_rx_buffer      = p_data;              //rx_buffer 
         p_cb->rx_secondary_buffer_length = 0;
  
     else   //no
-        p_cb->p_rx_secondary_buffer = p_data;     
-        p_cb->rx_secondary_buffer_length = length;
+        p_cb->p_rx_secondary_buffer = p_data;            //rx_buffer 
+        p_cb->rx_secondary_buffer_length = length;      //1
 
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //或清除中断标志
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //或清除中断标志
 
     //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );    //把rx_buffer连接到uarterx的dma
-        NRF_UARTE0->RXD.PTR    = rx_buffer;
+        NRF_UARTE0->RXD.PTR    = rx_buffer;                                                                            //绿色大巴rx 对接dma rx
         NRF_UARTE0->RXD.MAXCNT =1;                //或dma中最大接收数量
 
-    if (!second_buffer)    //yes
+    if (!second_buffer)    //第一次是yes
    
         //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
            TASK_STARTRX = 1;    //开启uarte 接收
 
-    else     //no
+    else    
         nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
-            SHORTS |= (1<<5);   //使能shortcut ， startrx 和 endrx之间的shortcut      //待理解
+            SHORTS |= (1<<5);   //使能shortcut ， event ENDRX and task STARTRX之间的shortcut      //待理解  （或跟循环接收有关）
 
 
-    if (m_cb[0].handler == NULL)   //no       
+    if (m_cb[0].handler == NULL)   //no   （uart_error_handle）    
             。。。 
   
     else        //yes
@@ -310,7 +348,6 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)      //注意，这个函数并不只是初
 
 
 ===========================uart tx===================================
-
 
 flow：
 
@@ -492,8 +529,6 @@ uart_event_handler( * p_event,  * p_context)  //--待继续理解
                 m_event_handler(&app_uart_event);
         
             break;
-
-
 
 
 
@@ -799,104 +834,7 @@ uart_error_handle(* p_event)
 
 ===============================跳过的参考====keep=============================
 
-
----------------------------------------------参考1---------------------------------------------------------------
-
-    //if ( nrfx_prs_acquire( p_instance->p_reg,  irq_handlers[0] ) != NRFX_SUCCESS )          //no,跳过
-    //    if ( nrfx_prs_acquire( NRF_UARTE0,  nrfx_uarte_0_irq_handler ) != NRFX_SUCCESS )  
-              prs_box_t * p_box；
-                  .handler = NULL 
-                 .acquired = false 
-              if (p_box->acquired)   //no，跳过
-                   return =1；   //err
-              p_box->handler  =uart_error_handle;
-              p_box->acquired = true;
-              return =0；    //ok
-
-              if(return 1）   //err
-
-                  err_code = NRFX_ERROR_BUSY;
-                  。。。
- 
-------
-
-参数：  NRF_UARTE0
-static prs_box_t * prs_box_get(  * p_base_addr)
- 
-    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
-    #define IS_PRS_BOX(n, NRF_UARTE0)  (  NRF_UARTE0  == NRFX_PRS_BOX_##n##_ADDR)
-
-    //if (IS_PRS_BOX(4, p_base_addr)) 
-    if ( NRF_UARTE0  == NRFX_PRS_BOX_4_ADDR )      //yes
-
-         //return &m_prs_box_4;  
-              return m_prs_box_4 ； 
-                    .handler = NULL 
-                    .acquired = false 
-
-    else 
-        return NULL;
-
------------------
-
-// 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
-nrfx_prs_acquire( * p_base_addr,  irq_handler) 
-
-    //prs_box_t * p_box = prs_box_get(p_base_addr);
-         p_box =  m_prs_box_4； 
-             .handler = NULL 
-             .acquired = false 
-
-    if (p_box != NULL)
- 
-        bool busy = false;
-
-        NRFX_CRITICAL_SECTION_ENTER();
-
-        //if (p_box->acquired)
-        //    busy = true;
-        //else
-
-            p_box->handler  = irq_handler;
-            p_box->acquired = true;
-
-        NRFX_CRITICAL_SECTION_EXIT();
-
-        if (busy)    
-            ret_code = NRFX_ERROR_BUSY;
-            LOG_FUNCTION_EXIT(WARNING, ret_code);
-            return ret_code;
-        
-    ret_code = NRFX_SUCCESS;
-    LOG_FUNCTION_EXIT(INFO, ret_code);
-    return ret_code;
-
----------
-
-#define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0     //nrfx_prs.h
-
-typedef struct {
-    nrfx_irq_handler_t     handler;
-    bool                       acquired;
-} prs_box_t;
-
-
-#define PRS_BOX_DEFINE(n)      //n=4
-                                                
-    //static prs_box_t  m_prs_box_##n =  { .handler = NULL, .acquired = false };  
-         static prs_box_t  m_prs_box_4 =  { .handler = NULL, .acquired = false };  
-
-    void nrfx_prs_box_4_irq_handler(void)                               
-    {                                                                       
-         NRFX_ASSERT(m_prs_box_4.handler);                                   
-         m_prs_box_4.handler();                                            
-    }
-
----
-
-m_prs_box_4
-
----------------------------------------------参考1---------end-----------------------------------------------------
+-
 
 
 

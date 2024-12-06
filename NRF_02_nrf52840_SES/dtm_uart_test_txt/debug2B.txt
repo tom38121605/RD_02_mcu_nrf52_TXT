@@ -1,4 +1,29 @@
 
+
+
+#define NRF_UARTE0                  ((NRF_UARTE_Type*)         NRF_UARTE0_BASE)
+#define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0
+
+typedef struct {
+    nrfx_irq_handler_t     handler;
+    bool                       acquired;
+} prs_box_t;
+
+
+#define PRS_BOX_DEFINE(n)      //n=4
+                                                
+    //static prs_box_t  m_prs_box_##n =  { .handler = NULL, .acquired = false };  
+         static prs_box_t  m_prs_box_4 =  { .handler = NULL, .acquired = false };  
+
+    void nrfx_prs_box_4_irq_handler()                               
+    {                                                                       
+         NRFX_ASSERT(m_prs_box_4.handler);                                   
+         m_prs_box_4.handler();                                            
+    }
+
+PRS_BOX_DEFINE(4)
+
+---------------------------------------------
 #define FIFO_LENGTH()   fifo_length(p_fifo)  
 
 static __INLINE uint32_t fifo_length(app_fifo_t * p_fifo)
@@ -7,7 +32,8 @@ static __INLINE uint32_t fifo_length(app_fifo_t * p_fifo)
     return p_fifo->write_pos - tmp;
 }
 
----------------------------------------------
+----------------------------------------
+
 
 typedef struct
 {
