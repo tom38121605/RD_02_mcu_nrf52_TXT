@@ -4,6 +4,12 @@
 #define NRF_UARTE0                  ((NRF_UARTE_Type*)         NRF_UARTE0_BASE)
 #define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0
 
+
+
+============= m_prs_box_4 =================
+
+#define nrfx_power_clock_irq_handler    POWER_CLOCK_IRQHandler
+
 typedef struct {
     nrfx_irq_handler_t     handler;
     bool                       acquired;
@@ -23,7 +29,10 @@ typedef struct {
 
 PRS_BOX_DEFINE(4)
 
----------------------------------------------
+==========================
+
+
+
 #define FIFO_LENGTH()   fifo_length(p_fifo)  
 
 static __INLINE uint32_t fifo_length(app_fifo_t * p_fifo)
