@@ -5,6 +5,33 @@
 #define NRFX_PRS_BOX_4_ADDR     NRF_UARTE0
 
 
+===================================
+
+typedef struct
+{
+    uint8_t * p_data;  
+    uint8_t   bytes;  
+} nrf_drv_uart_xfer_evt_t;
+
+ 
+typedef struct
+{
+    nrf_drv_uart_xfer_evt_t     rxtx;    
+    uint32_t                         error_mask; 
+} nrf_drv_uart_error_evt_t;
+
+ 
+typedef struct
+{
+    nrf_drv_uart_evt_type_t type;     
+    union
+    {
+        nrf_drv_uart_xfer_evt_t       rxtx;  
+        nrf_drv_uart_error_evt_t     error; 
+    } data;
+
+} nrf_drv_uart_event_t;
+
 
 ============= m_prs_box_4 =================
 

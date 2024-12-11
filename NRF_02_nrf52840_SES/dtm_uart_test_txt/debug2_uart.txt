@@ -1,6 +1,6 @@
 
 
-´ı²ì1£º  rx_buffer ºÍ rx_buf µÄÇø±ğ
+´ı²ì1ok£º  rx_buffer ºÍ rx_buf µÄÇø±ğ
              rx_buffer  -- ¹Ì¶¨Á¬½Ó½ÓÊÕDMA£¬( RXD.PTR ºÍ RXD.MAXCNT )
              rx_buf   -- ÓÃ»§µÄÊı¾İ£¬ÓÃÓÚ´æ´¢rx_buffer½ÓÊÕµ½µÄÊı¾İ
 
@@ -10,7 +10,7 @@
          ¡£¶şÊÇÁ¬½Óm_rx_fifo£¬½ÓÊÕÓÃ»§µÄÊı¾İ
 
 
-´ı²ì3£º mcb ºÍm_tx_fifo£¬m_rx_fifoµÄ¹ØÏµ
+´ı²ì3ok£º mcb ºÍm_tx_fifo£¬m_rx_fifoµÄ¹ØÏµ
 ´ğ£º Êı¾İ¹ØÏµÈçÏÂ£º      
        tx£º ÓÃ»§Êı¾İbyte -- tx_buf  --> m_tx_fifo  -->  tx_buffer --  mcb  -->  DMA 
                   p_fifo->p_buf[*->write_pos] = byte;  
@@ -22,7 +22,7 @@
                  p_reg->TXD.PTR    =   p_cb->p_tx_buffer ;            // tx_buffer
                  p_reg->TXD.MAXCNT = p_cb->tx_buffer_length ;
 
-       rx£º ÓÃ»§Êı¾İ  DMA  -- mcb  -- rx_buffer  -- m_rx_fifo --  rx_buf  -- rx_byte    (´ıÑéÖ¤)     //rx_buf ?
+       rx£º ÓÃ»§Êı¾İ  RXD  -- mcb  -- rx_buffer  -- m_rx_fifo --  rx_buf  -- rx_byte    
               p_reg->RXD.PTR    = rx_buffer;
               p_reg->RXD.MAXCNT =1;
 
@@ -36,19 +36,27 @@
             rx_byte = m_rx_fifo->p_buf[read_pos]
            p_fifo->read_pos++;
 
-´ı²ì4£º  m_contexts[0]µÄ×÷ÓÃ
+´ı²ì4ok£º  m_contexts[0]µÄ×÷ÓÃ
+       ´ğ£º ¾ßÌåÓÃÔÚuarte_evt_handlerÖĞ£¬ÓÃÓÚunion´íÎó´¦ÀíµÄ·ÖÖ§  £¨contexts Ö÷ÒªÊÇÖ¸Ã÷»Øµ÷º¯ÊıÊÇÊôÓÚÄÄ¸öÀà£¬Èç¹ûµÈÓÚ0£¬Ôò¸Ã»Øµ÷º¯ÊıÊÇ¶ÀÁ¢º¯Êı£¬²»ÊôÓÚÈÎºÎÀà£©
 
-´ı²ì5£º  mcbµÄp_rx_secondary_buffer  ÊÇÈçºÎ¸ú   p_rx_buffer ½»ÌæµÄ   £¨Êµ¼ÊÉÏ£¬»áÓÃµ½Õâ¸ö¹¦ÄÜ£©
 
+´ı²ì5£¿£º  mcbµÄp_rx_secondary_buffer  ÊÇÈçºÎ¸ú   p_rx_buffer ½»ÌæµÄ   £¨Êµ¼ÊÉÏ£¬»áÓÃµ½Õâ¸ö¹¦ÄÜ£©
+´ı²ì5£¿£º´ıÀí½âm_rx_ovf £¨»ò´¦ÀíË«buf£©
+´ı²ì5£¿£º´ıÀí½âsecond_buffer  £¨»ò´¦ÀíË«buf£©
+
+´ı²ì6£¿£º fifoÊı¾İÊÇÈçºÎ»Ø¹öµÄ£¬¾ÍÊÇÂúÁËÖ®ºó£¬ÈçºÎ»Øµ½¿ªÊ¼Î»ÖÃµÄ £¨ÔÚÄÄ¸öº¯ÊıÀïÃæÊµÏÖ£©
+
+
+¡£ok£¬FIFO_LENGTH() : ÊÇÖ¸µ±Ç°´ó°Íp_fifoÀïÃæµÄÈËÊı
+¡£ok£¬rx½ÓÊÕÊı¾İÊ±£¬´Ómcb×ªÈëÊı¾İµ½fifo£¬ÊÇÔÚirqÀïÃæ×Ô¶¯ÊµÏÖµÄ£¬¾ßÌå¿´NRF_DRV_UART_EVT_RX_DONE  £¨txÊ±£¬fifoµ½mcbÊÇÊÖ¶¯µÄ£©
 
 
 ===========================uart init===================================
 
-¡£»¹ĞèÒª¶ÔtxtÎÄ¼ş°´ÏÂÃæµÄÂÃĞĞÉçÏà¹Ø¶ÔÓ¦Ãû³Æ£¬ÖØĞÂÊáÀíÒ»±é
-¡£´ıÀí½âm_rx_ovf £¨»ò´¦ÀíË«buf£©
 
-£¨¹«Ô°£©RXD -- Î÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Írx£¨rx_buffer£©  --  ÉÏº£ÂÃĞĞÉç£¨m_rx_fifo£©  --  »ÆÉ«´ó°Írx£¨rx_buf£© -- 00x80£¨ÓÎ¿Í£©
-£¨ÓÎ¿Í£©0x80 --ÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£© --  »ÆÉ«´ó°Ítx£¨tx_buf£© --  Î÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Ítx£¨tx_buffer£© -- TXD£¨¹«Ô°£© 
+
+£¨¹«Ô°£©RXD -- Î÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Írx£¨rx_buffer£©  --  ÉÏº£ÂÃĞĞÉç£¨m_rx_fifo£©  --  »ÆÉ«´ó°Írx£¨rx_buf£© -- byte£¨ÓÎ¿Í¼ÒÀï£©
+£¨ÓÎ¿Í¼ÒÀï£©byte --ÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£© --  »ÆÉ«´ó°Ítx£¨tx_buf£© --  Î÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Ítx£¨tx_buffer£© -- TXD£¨¹«Ô°£© 
 
 
 flow£º
@@ -129,7 +137,8 @@ void uart_init(void)
 
 Êı¾İÁ÷£ºuart_error_handle  --> m_event_handler  
 Êı¾İÁ÷£º  rx_buf + tx_buf  -->  buffers  -->  m_rx_fifo  + m_tx_fifo   £¨°ÑÂÌÉ«´ó°Í¹Ò¿¿ÔÚÉÏº£ÂÃĞĞÉç£©
-Êı¾İÁ÷2£ºparams  -->  config
+Êı¾İÁ÷£ºparams  -->  config
+Êı¾İÁ÷£ºm_rx_ovf = false
 ²ÎÊı£º   params,  buffers£¬ uart_error_handle,  7  
 app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
@@ -330,9 +339,9 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)                       //×¢Òâ£¬Õ
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //»òÇå³ıÖĞ¶Ï±êÖ¾
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //»òÇå³ıÖĞ¶Ï±êÖ¾
 
-    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );    //°Ñrx_bufferÁ¬½Óµ½uarterxµÄdma
-        NRF_UARTE0->RXD.PTR    = rx_buffer;                                                                            //ÂÌÉ«´ó°Írx ¶Ô½Ódma rx
-        NRF_UARTE0->RXD.MAXCNT =1;                //»òdmaÖĞ×î´ó½ÓÊÕÊıÁ¿
+    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );                
+        NRF_UARTE0->RXD.PTR    = rx_buffer;                                    //ÂÌÉ«´ó°Írx ¶Ô½Ódma rx
+        NRF_UARTE0->RXD.MAXCNT =1;                                            //»òdmaÖĞ×î´ó½ÓÊÕÊıÁ¿
 
     if (!second_buffer)    //µÚÒ»´ÎÊÇyes
    
@@ -371,8 +380,6 @@ flow£º
 Êı¾İÁ÷£º (m_tx_fifo ) -- [ tx_buf + read_pos ]  --  tx_buffer        // °ÑÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£© µÄ  »ÆÉ«´ó°Ítx£¨tx_buf£© ÔËËÍµ½  ÂÌÉ«´ó°Ítx£¨tx_buffer£©
 Êı¾İÁ÷£º tx_buffer + len -- mcb                                             // °ÑÂÌÉ«´ó°Ítx£¨tx_buffer£©¹Ò¿¿Î÷°²ÂÃĞĞÉç
 Êı¾İÁ÷£º mcb  -->  TXD.PTR£¬ 1  -->  TXD.MAXCNT               // °ÑÎ÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Ítx£¨tx_buffer£© Á¬½Óµ½ TXD£¨¹«Ô°£© 
-
-
 
 -------------------------------------
 
@@ -415,7 +422,7 @@ app_uart_put(  byte )
                     m_tx_fifo >read_pos++;
 
                //Á¬½Óµ½uartµÄtx dma£¬ ¿ªÆôuartµÄtx·¢ËÍ
-               //nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
+               //nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);                        //·¢ËÍÊÇÒ»¸öÒ»¸ö·¢ËÍµÄ£¬·¢ËÍÒ»¸öºó£¬Èç¹û»¹ÓĞÊı¾İ£¬ÔÙÀ´Ò»¸önrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);
                //   nrfx_uarte_tx(app_uart_inst->uarte,  tx_buffer,  1);
                         nrfx_uarte_tx_with_hold(app_uart_inst->uarte,  tx_buffer,  1, false);
 
@@ -443,18 +450,18 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
          if(!( m_cb[0].tx_buffer_length != 0) )                  
              return err_code;
    
-    p_cb->tx_buffer_length = 1;          //len  --  mcb[0]
+    p_cb->tx_buffer_length = 1;                 //len  --  mcb[0]
     p_cb->p_tx_buffer      = tx_buffer;        // tx_buffer -- mcb[0]
 
     //ÇåÏÂÃæµÄÁ½¸öÖĞ¶Ï±êÖ¾ ENDTX ºÍ TXSTOPPED
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
 
-    //nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, 1 );    //°Ñtx_bufferÁ¬½Óµ½uartetxµÄdma
+    //nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, 1 );    //ÂÌÉ«´ó°Ítx£¨tx_buffer£©Á¬½Óµ½TXD
         p_reg->TXD.PTR    =  tx_buffer;
         p_reg->TXD.MAXCNT = length;   //1
 
-    if(!hold_xfer)              //yes
+    if(!hold_xfer)              //yes     //hold_xferÊÇ²ÎÊı´«Èëfalse £¨ºöÂÔ£©
 
         nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
              p_reg->TASKS_STARTTX =1;        //¿ªÆôuart tx·¢ËÍ
@@ -468,8 +475,8 @@ nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
 
 ¹¦ÄÜ£º ÇåtxÖĞ¶Ï±êÖ¾UARTE0->EVENT_ENDTX=0£¬Í£Ö¹tx£¨UARTE0->TASK_STOPTX.1=1£©£¬ÇåÁã m_cb[0].tx_buffer_length
   
+¿É¿´×÷Ó²¼şÖĞ¶ÏÈë¿Ú³ÌĞò £¨Ïê¼ûÉÏÃæµÄflow£©
 ²ÎÊı£º NRF_UARTE0,  &m_cb[0] 
-
 uarte_irq_handler( *p_uarte,  *p_cb)
  
     //---¼ì²éuarteÖĞ¶ÏµÄ´íÎó±êÖ¾---
@@ -537,9 +544,9 @@ uart_event_handler( * p_event,  * p_context)
             //Èç¹û»¹ÓĞ·¢ËÍµÄÊı¾İ£¨ m_tx_fifo³¤¶È>0£©
             if (app_fifo_get(&m_tx_fifo, tx_buffer) == NRF_SUCCESS)      //»ÆÉ«´ó°ÍtxÖĞ»¹ÓĞÈËÃ»ÏÂ³µ
             
-                 nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);     //¼ÌĞø°Ñ³Ë¿Íµ¼³öµ½¹«Ô°
+                 nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);     //»ØÈ¥ÔÙ·¢ËÍ    //¼ÌĞø°Ñ³Ë¿Íµ¼³öµ½¹«Ô°
             
-            else   //»ÆÉ«´ó°ÍtxÒÑ¿ÕÎŞÒ»ÈË£¬Ôò  £¨ÏÂÃæ¿ÉºöÂÔ£¬Êµ¼ÊÎ´×öÈÎºÎ´¦Àí£©
+            else   //yes£¬ÕâÀï²âÊÔÒ»¸ö×Ö½Ú·¢Íê¾Í¿ÕÁË                     //»ÆÉ«´ó°ÍtxÒÑ¿ÕÎŞÒ»ÈË£¬Ôò  £¨ÏÂÃæ¿ÉºöÂÔ£¬Êµ¼ÊÎ´×öÈÎºÎ´¦Àí£©
 
                 app_uart_event.evt_type = APP_UART_TX_EMPTY;
 
@@ -561,6 +568,7 @@ uart_error_handle( * p_event)
 
 ===========================uart rx===================================
 
+
 £¨¹«Ô°£©RXD -- Î÷°²ÂÃĞĞÉç£¨mcb£© --  ÂÌÉ«´ó°Írx£¨rx_buffer£©  --  ÉÏº£ÂÃĞĞÉç£¨m_rx_fifo£©  --  »ÆÉ«´ó°Írx£¨rx_buf£© -- 0x80£¨ÓÎ¿Í£©
 
 
@@ -578,7 +586,7 @@ flow£º
 Êı¾İÁ÷£º rx_buffer  -->  RXD.PTR£¬   1  -->  RXD.MAXCNT        // °ÑÂÌÉ«´ó°Írx£¨rx_buffer£© Á¬½Óµ½ RXD(¹«Ô°)
 
 Êı¾İÁ÷£º  m_rx_fifo->p_buf[read_pos]  --  rx_byte(0x80)            // ´ÓÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£©µÄ »ÆÉ«´ó°Írx£¨rx_buf£©Ğ¶ÏÂ 0x80£¨ÓÎ¿Í£©   
-
+ 
 
 
 ---------------------------------------------------------------------------------------------------------------
@@ -617,7 +625,7 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
 ²ÎÊı£º app_uart_inst->uarte,  rx_buffer,  1
 
 Êı¾İÁ÷£º rx_buffer + len(=1) -->  m_cb                                // °ÑÂÌÉ«´ó°Írx£¨rx_buffer£©¹Ò¿¿ÔÚÎ÷°²ÂÃĞĞÉç£¨mcb£©
-Êı¾İÁ÷2£º rx_buffer  -->  RXD.PTR£¬ 1  -->  RXD.MAXCNT    // °ÑÂÌÉ«´ó°Írx£¨rx_buffer£© Á¬½Óµ½ RXD(¹«Ô°)
+Êı¾İÁ÷£º rx_buffer  -->  RXD.PTR£¬ 1  -->  RXD.MAXCNT    // °ÑÂÌÉ«´ó°Írx£¨rx_buffer£© Á¬½Óµ½ RXD(¹«Ô°)
 nrfx_uarte_rx(  * p_instance, * p_data,  length)                      // ×¢Òâ£¬Õâ¸öº¯Êı²¢²»Ö»ÊÇ³õÊ¼»¯²Åµ÷ÓÃ£¬ÔÚ½ÓÊÕÊı¾İÊ±»á·´¸´µ÷ÓÃ
  
     uarte_control_block_t * p_cb = &m_cb[0];
@@ -706,9 +714,8 @@ app_fifo_get(  *p_fifo,  *p_byte )
 
 =====-------------------------------------------------
 
-¹¦ÄÜ£º  
+¿É¿´×÷Ó²¼şÖĞ¶ÏÈë¿Ú £¨ Ïê¼ûÉÏÃæµÄflow £©
 ²ÎÊı£º NRF_UARTE0,  &m_cb[0] 
-
 uarte_irq_handler( *p_uarte,  *p_cb)
  
     //---¼ì²éuarteÖĞ¶ÏµÄ´íÎó±êÖ¾---
@@ -724,8 +731,7 @@ uarte_irq_handler( *p_uarte,  *p_cb)
         p_cb->rx_secondary_buffer_length = 0;
 
         //p_cb->handler(&event, p_cb->p_context);      
-             uarte_evt_handler (&event, 0);      
-
+             uarte_evt_handler (&event, 0);       //×ª´íÎó´¦Àí¹«Â· £¨ÏÈºöÂÔ£©
   
     //---¼ì²éuarteÖĞ¶ÏµÄ½ÓÊÕÍê³É±êÖ¾---
     else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
@@ -769,6 +775,28 @@ uarte_irq_handler( *p_uarte,  *p_cb)
             rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);   
  
 
+---------
+
+²ÎÊı£º &event, 0  
+uarte_evt_handler(  *p_event,   *p_context)
+
+    inst_idx = p_context;     //0
+
+    nrf_drv_uart_event_t    event =
+
+        .type = p_event->type,
+
+        .data =      
+            .error =           
+                .rxtx =               
+                    .p_data = p_event->data.error.rxtx.p_data,
+                    .bytes  = p_event->data.error.rxtx.bytes,          
+                .error_mask = p_event->data.error.error_mask,
+ 
+    //m_handlers[0](&event, m_contexts[0]);
+          uart_event_handler( &event, 0 );
+
+
 --------
 
 ²ÎÊı£º p_cb, 1, p_cb->p_rx_buffer
@@ -796,11 +824,11 @@ uart_event_handler( * p_event,  * p_context)
   
         case NRF_DRV_UART_EVT_RX_DONE:    
 
-            if(p_event->data.rxtx.bytes == 0)                        //Èç¹ûÊÇRXTO£¬ ³¬Ê±     
+            if(p_event->data.rxtx.bytes == 0)                        //Èç¹ûÊÇRXTO³¬Ê±ÊÂ¼şÒıÆğµÄRXDONE     
                nrf_drv_uart_rx(&app_uart_inst, rx_buffer, 1);     //ÖØĞÂ¿ªÆô½ÓÊÕ
                break;            
             
-            app_fifo_put(&m_rx_fifo, p_event->data.rxtx.p_data[0]);        //m_cb  -->  m_rx_fifo  //°ÑÎ÷°²ÂÃĞĞÉç£¨mcb£©µÄ ÂÌÉ«´ó°ÍrxµÄÈË×°ÈëÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£©µÄ»ÆÉ«´ó°Írx£¨rx_buf£©
+            app_fifo_put(&m_rx_fifo, p_event->data.rxtx.p_data[0]);        //m_cb  -->  m_rx_fifo  //°ÑÎ÷°²ÂÃĞĞÉç£¨mcb£©µÄ ÂÌÉ«´ó°ÍrxµÄÈË×ª³µµ½ÉÏº£ÂÃĞĞÉç£¨m_tx_fifo£©µÄ»ÆÉ«´ó°Írx£¨rx_buf£©
 
             if (err_code != NRF_SUCCESS)
             
@@ -811,7 +839,6 @@ uart_event_handler( * p_event,  * p_context)
                       uart_error_handle(&app_uart_event);
 
             
-            // Notify that there are data available.
             else if (FIFO_LENGTH(m_rx_fifo) != 0)
             
                 app_uart_event.evt_type = APP_UART_DATA_READY;  //Õâ¸öÊÂ¼şÔÚ´íÎó´¦Àíº¯ÊıÖĞ£¬»òÃ»ÓĞÓÃµ½
@@ -827,7 +854,6 @@ uart_event_handler( * p_event,  * p_context)
                 // Overflow in RX FIFO.
                 m_rx_ovf = true;            
 
-            break;
 
 
 --------
