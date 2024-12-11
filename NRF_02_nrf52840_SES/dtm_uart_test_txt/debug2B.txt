@@ -10,6 +10,15 @@
 
 #define nrfx_power_clock_irq_handler    POWER_CLOCK_IRQHandler
 
+_vectors:
+  ......
+
+/* External Interrupts */
+  .word   POWER_CLOCK_IRQHandler
+
+
+---------------------------------
+
 typedef struct {
     nrfx_irq_handler_t     handler;
     bool                       acquired;
