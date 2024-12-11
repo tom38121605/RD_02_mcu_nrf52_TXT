@@ -39,12 +39,13 @@
 待察4ok：  m_contexts[0]的作用
        答： 具体用在uarte_evt_handler中，用于union错误处理的分支  （contexts 主要是指明回调函数是属于哪个类，如果等于0，则该回调函数是独立函数，不属于任何类）
 
+待察5ok： fifo数据是如何回滚的，就是满了之后，如何回到开始位置的 （在哪个函数里面实现）
+答： 是通过跟mask的&操作实现的，具体在fifo_put函数中
 
-待察5？：  mcb的p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的   （实际上，会用到这个功能）
-待察5？：待理解m_rx_ovf （或处理双buf）
-待察5？：待理解second_buffer  （或处理双buf）
+待察6？： mcb的p_rx_secondary_buffer  是如何跟   p_rx_buffer 交替的   （实际上，会用到这个功能）
+待察6？：待理解m_rx_ovf （或处理双buf）
+待察6？：待理解second_buffer  （或处理双buf）
 
-待察6？： fifo数据是如何回滚的，就是满了之后，如何回到开始位置的 （在哪个函数里面实现）
 
 
 。ok，FIFO_LENGTH() : 是指当前大巴p_fifo里面的人数
@@ -174,7 +175,6 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
     //把rx_buffer连接到uarterx的dma， 开启uarte rx                           //绿色大巴rx 对接dma rx
     //nrf_drv_uart_rx(&app_uart_inst, rx_buffer,1); 
          nrfx_uarte_rx(&app_uart_inst->uarte, rx_buffer,1);    
-
 
  --------------------
 

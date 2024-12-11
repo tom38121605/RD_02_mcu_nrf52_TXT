@@ -3,4 +3,7 @@
 
 SES的版本是 V5.42
 
+测试机子是basestation
+
+
 

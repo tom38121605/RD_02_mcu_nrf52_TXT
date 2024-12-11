@@ -68,6 +68,14 @@ PRS_BOX_DEFINE(4)
 ==========================
 
 
+typedef struct
+{
+    uint8_t *          p_buf;          
+    uint16_t           buf_size_mask;    
+    volatile uint32_t  read_pos;       
+    volatile uint32_t  write_pos;     
+} app_fifo_t;
+
 
 #define FIFO_LENGTH()   fifo_length(p_fifo)  
 
