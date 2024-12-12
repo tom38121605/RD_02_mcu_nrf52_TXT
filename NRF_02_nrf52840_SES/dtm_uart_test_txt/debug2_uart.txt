@@ -55,10 +55,15 @@
 待察8ok：待理解m_rx_ovf （跟双buf无关）
 答： 如果m_rx_fifo中的数据是满的，则等读取一次数据后，再开启下一次nrf_drv_uart_rx接收，详见app_uart_get
 
+
 。ok，FIFO_LENGTH() : 是指当前大巴p_fifo里面的人数
 。ok，rx接收数据时，从mcb转入数据到fifo，是在irq里面自动实现的，具体看NRF_DRV_UART_EVT_RX_DONE  （tx时，fifo到mcb是手动的）
 。ok，event.data.rxtx 和 event.data.error.rxtx 是一样的， 只是error除了rxtx之外还多了一个error_mask
          
+评论： buffers 或是多此一举
+评论： m_event_handler 或是多此一举
+评论： m_handlers[0] 或是多此一举
+评论： uarte_evt_handler 和uart_event_handler可以合并成一个函数
 
 
 ===========================uart init===================================
@@ -86,13 +91,13 @@ flow：
 
 数据流51： uarte_evt_handler  + 常量 -->  m_cb[0]  ,  0 -->  m_cb[0].p_context        //uarte_evt_handler挂靠西安旅行社（出发）
 数据流52： config  -- 寄存器
-数据流：  nrfx_uarte_0_irq_handler  -->   irq_handlers[0]                      //临时变量
+数据流： NRF_UARTE0 --> NRFX_PRS_BOX_4_ADDR     
+数据流： nrfx_uarte_0_irq_handler  -->   irq_handlers[0]                      //临时变量
 数据流： nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler ,   true -- m_prs_box_4.acquired      //关联硬件中断地址
 
 数据流61： rx_buffer -->  m_cb[0]                                                                                         //绿色大巴rx 挂靠西安旅行社
 数据流62： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT                                                    //绿色大巴rx 对接dma rx
 
-评论： buffers 就是多此一举
 
 ----------------------------------------------------
 
@@ -251,7 +256,10 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
  
  ------------------------
 
- 参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
+功能：关联UART的中断入口地址 m_prs_box_4.handler （即 nrfx_prs_box_4_irq_handler， 由.s文件定义而来）
+
+参数： NRF_UARTE0,  nrfx_uarte_0_irq_handler  
+数据流：NRF_UARTE0 --> NRFX_PRS_BOX_4_ADDR     
 数据流： nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler
 nrfx_prs_acquire( * p_base_addr,  irq_handler) 
 
@@ -320,7 +328,7 @@ apply_config( * p_instance, * p_config)
 参数： app_uart_inst->uarte,  rx_buffer,  1
 数据流： rx_buffer + len(=1) -->  m_cb[0]                                                  //把绿色大巴rx（rx_buffer）挂靠在西安旅行社（mcb）
 数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT                         // 把绿色大巴rx（rx_buffer） 连接到 RXD(公园)
-nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //注意，这个函数并不只是初始化才调用，在接收数据时会反复调用
+nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //注意，这个函数并不只是初始化才调用，在接收数据时会连续调用
  
         ...... （详见下面的 uart rx） 
   
@@ -561,17 +569,17 @@ uart_error_handle( * p_event)
 
 ===========================uart rx===================================
 
-
 （公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer）  --  上海旅行社（m_rx_fifo）  --  黄色大巴rx（rx_buf） -- 0x80（游客）
 
  
 flow：
        
    main -- app_uart_init  --  APP_UART_FIFO_INIT -- app_uart_init  -- nrf_drv_uart_init  --  nrfx_uarte_init  -- nrf_drv_uart_rx  -- nrfx_uarte_rx
-   -- app_uart_get -- 
+   main  while -- app_uart_get -- app_fifo_get -- fifo_get -- fifo_peek
 
-  ses_startup_nrf52840.s -- POWER_CLOCK_IRQHandler --  nrfx_power_clock_irq_handler -- nrfx_prs_box_4_irq_handler -- m_prs_box_4.handler
-  --  nrfx_uarte_0_irq_handler -- uarte_irq_handler -- rx_done_event --  (p_cb->handler) -- uarte_evt_handler -- (m_handlers[0]) -- uart_event_handler 
+   ses_startup_nrf52840.s -- POWER_CLOCK_IRQHandler --  nrfx_power_clock_irq_handler -- nrfx_prs_box_4_irq_handler -- m_prs_box_4.handler
+   --  nrfx_uarte_0_irq_handler -- uarte_irq_handler -- rx_done_event --  (p_cb->handler) -- uarte_evt_handler -- (m_handlers[0]) -- uart_event_handler 
+   -- app_fifo_put --  nrf_drv_uart_rx  -- nrfx_uarte_rx
 
 
 数据流：  ( rx_buf )  --  buffers  -->  m_rx_fifo                            // 把黄色大巴rx（rx_buf）挂靠到 上海旅行社（m_tx_fifo）
@@ -579,6 +587,7 @@ flow：
 数据流： rx_buffer  -->  RXD.PTR，   1  -->  RXD.MAXCNT        // 把绿色大巴rx（rx_buffer） 连接到 RXD(公园)
 
 数据流：  m_rx_fifo->p_buf[read_pos]  --  rx_byte(0x80)            // 从上海旅行社（m_tx_fifo）的 黄色大巴rx（rx_buf）卸下 0x80（游客）   
+ 
 
  
 ---------------------------------------------------------------------------------------------------------------
@@ -632,7 +641,7 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
 参数： app_uart_inst->uarte,  rx_buffer,  1
 数据流： rx_buffer + len(=1) -->  m_cb[0]                                                  //把绿色大巴rx（rx_buffer）挂靠在西安旅行社（mcb）
 数据流2： rx_buffer  -->  RXD.PTR， 1  -->  RXD.MAXCNT                         // 把绿色大巴rx（rx_buffer） 连接到 RXD(公园)
-nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //注意，这个函数并不只是初始化才调用，在接收数据时会反复调用
+nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //注意，这个函数并不只是初始化才调用，在接收数据时会连续调用
  
     p_cb = &m_cb[0];
 
