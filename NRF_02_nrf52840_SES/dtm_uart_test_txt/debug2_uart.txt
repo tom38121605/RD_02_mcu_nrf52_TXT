@@ -78,7 +78,7 @@ flow£∫
  ˝æ›¡˜51£∫ uarte_evt_handler  + ≥£¡ø -->  m_cb[0]  ,  0 -->  m_cb[0].p_context        //uarte_evt_handlerπ“øøŒ˜∞≤¬√––…Á£®≥ˆ∑¢£©
  ˝æ›¡˜52£∫ config  -- ºƒ¥Ê∆˜
  ˝æ›¡˜£∫  nrfx_uarte_0_irq_handler  -->   irq_handlers[0]                      //¡Ÿ ±±‰¡ø
- ˝æ›¡˜£∫ nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler ,   true -- m_prs_box_4.acquired 
+ ˝æ›¡˜£∫ nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler ,   true -- m_prs_box_4.acquired      //πÿ¡™”≤º˛÷–∂œµÿ÷∑
 
  ˝æ›¡˜61£∫ rx_buffer -->  m_cb[0]                                                                                         //¬Ã…´¥Û∞Õrx π“øøŒ˜∞≤¬√––…Á
  ˝æ›¡˜62£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT                                                    //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx
@@ -294,35 +294,36 @@ apply_config( * p_instance, * p_config)
  
         nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                   //rx   P1.15 £¨ input  nopull
 
-        nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                            //…Ë÷√≤®Ãÿ¬   19200
-        nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);              //…Ë÷√£¨Œﬁ∆Ê≈º–£—È£¨Œﬁ”≤º˛¡˜øÿ÷∆
-        nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);   //…Ë÷√uartµƒtx£¨rx“˝Ω≈
+        nrf_uart_baudrate_set(p_instance->p_reg, p_config->baudrate);                              //…Ë÷√≤®Ãÿ¬   19200
+        nrf_uart_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);                //…Ë÷√£¨Œﬁ∆Ê≈º–£—È£¨Œﬁ”≤º˛¡˜øÿ÷∆
+        nrf_uart_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);     //…Ë÷√uartµƒtx£¨rx“˝Ω≈
 
    
 -----------------
 
-//π¶ƒ‹£∫ ∞—rx_buffer¡¨Ω”µΩuarterxµƒdma£¨ ø™∆Ùuarte rx                  //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx
+
+//π¶ƒ‹£∫ ∞—rx_buffer¡¨Ω”µΩuarterxµƒdma£¨ ø™∆Ùuarte rx       //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx      // ∞—Œ˜∞≤¬√––…Á£®mcb£©µƒ ¬Ã…´¥Û∞Õrx£®rx_buffer£©∏˙RXD£®π´‘∞£©¡¨Ω”∆¿¥
 // »´æ÷±‰¡ø£∫ &app_uart_inst 
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
 ≤Œ ˝£∫ app_uart_inst->uarte,  rx_buffer,  1
- ˝æ›¡˜£∫ rx_buffer + len(=1) -->  m_cb[0]                                                                    //¬Ã…´¥Û∞Õrx π“øø Œ˜∞≤¬√––…Á
- ˝æ›¡˜2£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT    //œ‡µ±”⁄dmaµƒµÿ÷∑¡¨Ω”       //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx
+ ˝æ›¡˜£∫ rx_buffer + len(=1) -->  m_cb[0]                                                  //¬Ã…´¥Û∞Õrx π“øø Œ˜∞≤¬√––…Á
+ ˝æ›¡˜2£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT                         //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx
 nrfx_uarte_rx(  * p_instance, * p_data,  length)                       //◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
  
-    uarte_control_block_t * p_cb = &m_cb[0];
+    p_cb = &m_cb[0];
 
     bool second_buffer = false;
 
-    if (p_cb->handler)           //  yes£¨ uart_error_handle
+    if (p_cb->handler)           //  yes£¨ uarte_evt_handler 
         //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //◊ˆœ‡πÿ≈‰÷√«∞£¨œ»πÿ±’’‚2∏ˆ÷–∂œ
                INTENCLR = 1<<9 | 1<<4;
     
     if ( p_cb->rx_buffer_length != 0 )         //µ⁄“ª¥Œ «no, Ã¯π˝     
         if ( p_cb->rx_secondary_buffer_length != 0 )            
-            if (p_cb->handler)        //  yes£¨ uart_error_handle             
+            if (p_cb->handler)        //   uarte_evt_handler           
                 nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
             return err_code;         
         second_buffer = true;     
@@ -340,7 +341,7 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)                       //◊¢“‚£¨’
     nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //ªÚ«Â≥˝÷–∂œ±Í÷æ
 
     //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );                
-        NRF_UARTE0->RXD.PTR    = rx_buffer;                                    //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx
+        NRF_UARTE0->RXD.PTR    = rx_buffer;                                     // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
         NRF_UARTE0->RXD.MAXCNT =1;                                            //ªÚdma÷–◊Ó¥ÛΩ” ’ ˝¡ø
 
     if (!second_buffer)    //µ⁄“ª¥Œ «yes
@@ -353,13 +354,15 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)                       //◊¢“‚£¨’
             SHORTS |= (1<<5);   // πƒ‹shortcut £¨ event ENDRX and task STARTRX÷Æº‰µƒshortcut      //¥˝¿ÌΩ‚  £®ªÚ∏˙—≠ª∑Ω” ’”–πÿ£©
 
 
-    if (m_cb[0].handler == NULL)   //no   £®uart_error_handle£©    
+    if (m_cb[0].handler == NULL)   //no   £®uarte_evt_handler £©    
             °£°£°£ 
   
     else        //yes
 
         //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
               INTENSET = ERROR | ENDRX£ª   // πƒ‹’‚2∏ˆ÷–∂œ
+ 
+
  
 
 ===========================uart tx===================================
@@ -628,55 +631,7 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  ˝æ›¡˜£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT    // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
 nrfx_uarte_rx(  * p_instance, * p_data,  length)                      // ◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
  
-    uarte_control_block_t * p_cb = &m_cb[0];
-
-    bool second_buffer = false;
-
-    if (p_cb->handler)           //  yes£¨uarte_evt_handler
-       //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);   //œ»πÿ±’’‚2∏ˆ÷–∂œ
-               INTENCLR = 1<<9 | 1<<4;
-    
-    if ( p_cb->rx_buffer_length != 0 )         //no, Ã¯π˝     
-        if ( p_cb->rx_secondary_buffer_length != 0 )            
-            if (p_cb->handler)        //  yes£¨ uart_error_handle             
-                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);  // πƒ‹2∏ˆERR÷–∂œ
-            return err_code;         
-        second_buffer = true;     
-
-    if (!second_buffer)     //yes 
-
-        p_cb->rx_buffer_length = length;             //1
-        p_cb->p_rx_buffer      = p_data;              //rx_buffer       // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£©π“øø‘⁄Œ˜∞≤¬√––…Á£®mcb£©
-        p_cb->rx_secondary_buffer_length = 0;
- 
-    else   //no
-        p_cb->p_rx_secondary_buffer = p_data;     
-        p_cb->rx_secondary_buffer_length = length;
-
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //ªÚ«Â≥˝÷–∂œ±Í÷æ
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //ªÚ«Â≥˝÷–∂œ±Í÷æ
-
-    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );      // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
-        NRF_UARTE0->RXD.PTR    = rx_buffer;                   
-        NRF_UARTE0->RXD.MAXCNT =1;
-
-    if (!second_buffer)    //yes
-   
-        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
-           TASK_STARTRX = 1;    //ø™∆Ùuarte Ω” ’
-
-    else     //no
-        nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
-            SHORTS |= (1<<5);   // πƒ‹shortcut £¨ startrx ∫Õ endrx÷Æº‰µƒshortcut      //¥˝¿ÌΩ‚
-
-
-    if (m_cb[0].handler == NULL)   //no       
-            °£°£°£ 
-  
-    else        //yes
-
-        //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
-              INTENSET = ERROR | ENDRX£ª   // πƒ‹’‚2∏ˆ÷–∂œ
+    £®º˚…œ√Êinit£©
 
  
 -----------------------------------------------------------------------
