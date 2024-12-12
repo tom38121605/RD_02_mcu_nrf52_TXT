@@ -320,57 +320,10 @@ apply_config( * p_instance, * p_config)
 ≤Œ ˝£∫ app_uart_inst->uarte,  rx_buffer,  1
  ˝æ›¡˜£∫ rx_buffer + len(=1) -->  m_cb[0]                                                  //∞—¬Ã…´¥Û∞Õrx£®rx_buffer£©π“øø‘⁄Œ˜∞≤¬√––…Á£®mcb£©
  ˝æ›¡˜2£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT                         // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
-nrfx_uarte_rx(  * p_instance, * p_data,  length)                       //◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
+nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
  
-    p_cb = &m_cb[0];
-
-    bool second_buffer = false;
-
-    if (p_cb->handler)           //  yes£¨ uarte_evt_handler 
-        //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //◊ˆœ‡πÿ≈‰÷√«∞£¨œ»πÿ±’’‚2∏ˆ÷–∂œ
-               INTENCLR = 1<<9 | 1<<4;
-    
-    if ( p_cb->rx_buffer_length != 0 )         //µ⁄“ª¥Œ «no, Ã¯π˝     
-        if ( p_cb->rx_secondary_buffer_length != 0 )            
-            if (p_cb->handler)        //   uarte_evt_handler           
-                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
-            return err_code;         
-        second_buffer = true;     
-
-    if (!second_buffer)     //µ⁄“ª¥Œ «yes 
-        p_cb->rx_buffer_length = length;             //1
-        p_cb->p_rx_buffer      = p_data;              //rx_buffer 
-        p_cb->rx_secondary_buffer_length = 0;
- 
-    else   //no
-        p_cb->p_rx_secondary_buffer = p_data;            //rx_buffer 
-        p_cb->rx_secondary_buffer_length = length;      //1
-
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //ªÚ«Â≥˝÷–∂œ±Í÷æ
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //ªÚ«Â≥˝÷–∂œ±Í÷æ
-
-    //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );                
-        NRF_UARTE0->RXD.PTR    = rx_buffer;                                     // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
-        NRF_UARTE0->RXD.MAXCNT =1;                                            //ªÚdma÷–◊Ó¥ÛΩ” ’ ˝¡ø
-
-    if (!second_buffer)    //µ⁄“ª¥Œ «yes
-   
-        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
-           TASK_STARTRX = 1;    //ø™∆Ùuarte Ω” ’
-
-    else    
-        nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
-            SHORTS |= (1<<5);   // πƒ‹shortcut £¨ event ENDRX and task STARTRX÷Æº‰µƒshortcut      //¥˝¿ÌΩ‚  £®ªÚ∏˙—≠ª∑Ω” ’”–πÿ£©
-
-
-    if (m_cb[0].handler == NULL)   //no   £®uarte_evt_handler £©    
-            °£°£°£ 
+        ...... £®œÍº˚œ¬√Êµƒ uart rx£© 
   
-    else        //yes
-
-        //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
-              INTENSET = ERROR | ENDRX£ª   // πƒ‹’‚2∏ˆ÷–∂œ
- 
 
  
 
@@ -670,21 +623,31 @@ app_uart_init(  * p_comm_params,  *p_buffers,  event_handler,    irq_priority)
  
 -----------------
  
-//π¶ƒ‹£∫ ∞—rx_buffer¡¨Ω”µΩuarterxµƒdma£¨ ø™∆Ùuarte rx    // ∞—Œ˜∞≤¬√––…Á£®mcb£©µƒ ¬Ã…´¥Û∞Õrx£®rx_buffer£©∏˙RXD£®π´‘∞£©¡¨Ω”∆¿¥
-// ≤Œ ˝£∫ &app_uart_inst 
+//π¶ƒ‹£∫ ∞—rx_buffer¡¨Ω”µΩuarterxµƒdma£¨ ø™∆Ùuarte rx       //¬Ã…´¥Û∞Õrx ∂‘Ω”dma rx      // ∞—Œ˜∞≤¬√––…Á£®mcb£©µƒ ¬Ã…´¥Û∞Õrx£®rx_buffer£©∏˙RXD£®π´‘∞£©¡¨Ω”∆¿¥
+// »´æ÷±‰¡ø£∫ &app_uart_inst 
              .inst_idx =0,          
              .uarte.p_reg         =  NRF_UARTE0
              .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   // 0
 
 ≤Œ ˝£∫ app_uart_inst->uarte,  rx_buffer,  1
-
- ˝æ›¡˜£∫ rx_buffer + len(=1) -->  m_cb                                // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£©π“øø‘⁄Œ˜∞≤¬√––…Á£®mcb£©
- ˝æ›¡˜£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT     // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
-nrfx_uarte_rx(  * p_instance, * p_data,  length)                      // ◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
+ ˝æ›¡˜£∫ rx_buffer + len(=1) -->  m_cb[0]                                                  //∞—¬Ã…´¥Û∞Õrx£®rx_buffer£©π“øø‘⁄Œ˜∞≤¬√––…Á£®mcb£©
+ ˝æ›¡˜2£∫ rx_buffer  -->  RXD.PTR£¨ 1  -->  RXD.MAXCNT                         // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
+nrfx_uarte_rx (  * p_instance, * p_data,  length)                       //◊¢“‚£¨’‚∏ˆ∫Ø ˝≤¢≤ª÷ª «≥ı ºªØ≤≈µ˜”√£¨‘⁄Ω” ’ ˝æ› ±ª·∑¥∏¥µ˜”√
  
-     bool second_buffer = false;
+    p_cb = &m_cb[0];
 
-    ......
+    bool second_buffer = false;
+
+    if (p_cb->handler)           //  yes£¨ uarte_evt_handler 
+        //nrf_uarte_int_disable( NRF_UARTE0 , NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);      //◊ˆœ‡πÿ≈‰÷√«∞£¨œ»πÿ±’’‚2∏ˆ÷–∂œ
+               INTENCLR = 1<<9 | 1<<4;
+    
+    if ( p_cb->rx_buffer_length != 0 )         //µ⁄“ª¥Œ «no, Ã¯π˝     
+        if ( p_cb->rx_secondary_buffer_length != 0 )            
+            if (p_cb->handler)        //   uarte_evt_handler           
+                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |  NRF_UARTE_INT_ENDRX_MASK);
+            return err_code;         
+        second_buffer = true;     
 
     if (!second_buffer)     //µ⁄“ª¥Œ «yes 
         p_cb->rx_buffer_length = length;             //1
@@ -692,16 +655,18 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)                      // ◊¢“‚£¨’
         p_cb->rx_secondary_buffer_length = 0;
  
     else   //no
-        p_cb->p_rx_secondary_buffer = p_data;            //rx_b
- 
-   ......
+        p_cb->p_rx_secondary_buffer = p_data;            //rx_buffer 
+        p_cb->rx_secondary_buffer_length = length;      //1
+
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);   //ªÚ«Â≥˝÷–∂œ±Í÷æ
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //ªÚ«Â≥˝÷–∂œ±Í÷æ
 
     //nrf_uarte_rx_buffer_set(NRF_UARTE0,  rx_buffer,  1 );                
         NRF_UARTE0->RXD.PTR    = rx_buffer;                                     // ∞—¬Ã…´¥Û∞Õrx£®rx_buffer£© ¡¨Ω”µΩ RXD(π´‘∞)
         NRF_UARTE0->RXD.MAXCNT =1;                                            //ªÚdma÷–◊Ó¥ÛΩ” ’ ˝¡ø
 
-
-    if (!second_buffer)    //µ⁄“ª¥Œ «yes   
+    if (!second_buffer)    //µ⁄“ª¥Œ «yes
+   
         //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
            TASK_STARTRX = 1;    //ø™∆Ùuarte Ω” ’
 
@@ -711,12 +676,12 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)                      // ◊¢“‚£¨’
 
 
     if (m_cb[0].handler == NULL)   //no   £®uarte_evt_handler £©    
-            °£°£°£   
-
+            °£°£°£ 
+  
     else        //yes
+
         //nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);
               INTENSET = ERROR | ENDRX£ª   // πƒ‹’‚2∏ˆ÷–∂œ
-
 
 -----------------------------------------------------------------------
 
