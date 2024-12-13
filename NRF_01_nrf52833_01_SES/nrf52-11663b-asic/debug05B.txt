@@ -11,7 +11,27 @@
     #define ESB_PPI_CHANNELS_USED     0 
 
 
+
 ========================================================================
+
+--#define NRFX_PRS_BOX_0_ADDR     NRF_SPIM0
+--#define NRF_SPIM0                   ((NRF_SPIM_Type*)          NRF_SPIM0_BASE)
+
+#define NRF_UARTE1                  ((NRF_UARTE_Type*)         NRF_UARTE1_BASE)
+
+#define nrfx_uarte_1_irq_handler    UARTE1_IRQHandler
+
+---
+
+ses_startup_nrf52833.s
+_vectors:
+  .word   UARTE1_IRQHandler
+
+
+--------------------
+
+
+nrfx_uarte_t comms_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
 
 nrfx_uarte_t comms_uarte_synch_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
 
@@ -27,12 +47,11 @@ nrfx_uarte_t comms_uarte_synch_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
     .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
 
 
-
 enum 
-#if NRFX_CHECK(NRFX_UARTE0_ENABLED)
-    NRFX_UARTE0_INST_IDX,
+#if NRFX_CHECK(NRFX_UARTE0_ENABLED)         //yes
+    NRFX_UARTE0_INST_IDX,                   //0
 
-#if NRFX_CHECK(NRFX_UARTE1_ENABLED)
+#if NRFX_CHECK(NRFX_UARTE1_ENABLED)         //yes
     NRFX_UARTE1_INST_IDX,                   //1
 
 

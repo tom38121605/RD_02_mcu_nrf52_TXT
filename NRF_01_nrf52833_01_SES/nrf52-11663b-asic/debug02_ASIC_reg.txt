@@ -1,8 +1,11 @@
  
 
+说明：在adc_cartes_setup_PPI_start_sample_packet中，发送comman指令 0x03，xyzt （没隔一段时间发送一次0x83， set + xyzt）
+说明：在adc_cartes_start_data_read中，读取xyzt
+说明：通过current_output_data发送到pc  （待整理）
+
+
 current_output_data
-
-
 
 ============================================= asic 回调函数 init =======================================================
 
@@ -406,7 +409,7 @@ adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],  buffe
 
    senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x23, 0x00) ;                      //MSB bit 0: Vref 1.2V
    senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x20, ADC_CARTES_REG_20_VAL(4);    //-- set the gain to 4x
-   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x1e, 0x01);
+
 
    senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x20, &reg_value[0]);
    senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x21, &reg_value[1]);
@@ -620,7 +623,6 @@ adc_cartes_setup_PPI_start_sample_packet(  port)
     
 
     senors_twi_basic_instance[port]->write_data(0x63, 0x00, m_twi_tx_buf[port], 1, NRFX_TWIM_FLAG_HOLD_XFER, false);  //写入command=03，读取xyzt
-
 
 
 
