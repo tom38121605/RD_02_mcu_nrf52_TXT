@@ -1,5 +1,71 @@
 
 
+#define TIMESTAMP_SYNCH_SOURCE_UART 0
+
+
+typedef enum
+
+    NRF_UARTE_EVENT_CTS       = offsetof(NRF_UARTE_Type, EVENTS_CTS),        
+    NRF_UARTE_EVENT_NCTS      = offsetof(NRF_UARTE_Type, EVENTS_NCTS),       
+    NRF_UARTE_EVENT_RXDRDY    = offsetof(NRF_UARTE_Type, EVENTS_RXDRDY),    // Data received in RXD (but potentially not yet transferred to Data RAM) 
+    NRF_UARTE_EVENT_ENDRX     = offsetof(NRF_UARTE_Type, EVENTS_ENDRX),     // Receive buffer is filled up 
+
+
+offsetof(TYPE, MEMBER) __builtin_offsetof (TYPE, MEMBER)
+
+nrf_timer_cc_channel_t next_free_capture_channel = NRF_TIMER_CC_CHANNEL0;
+
+
+typedef enum
+
+    NRF_TIMER_CC_CHANNEL0 = 0,    // Timer capture/compare channel 0 
+
+
+#define NRFX_PPI_PROG_APP_CHANNELS_MASK  ( 0x000FFFFFuL & ~(NRFX_PPI_CHANNELS_USED) )   //FF-FFF
+
+
+nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+#define OMMO_TIMESTAMP_TIMER                   NRFX_TIMER_INSTANCE(3) 
+
+#define NRFX_TIMER_INSTANCE(3)                                   
+                                                                 
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX, 
+    .cc_channel_count = TIMER3_CC_NUM,           
+
+#define PPI_CHENSET_CH0_Set (1UL) /*!< Write: Enable channel */
+
+
+-------------------------------------------
+
+#define NRFX_PPI_CHANNELS_USED  NRF_PPI_CHANNELS_USED   //0
+#define NRF_PPI_CHANNELS_USED (SD_PPI_CHANNELS_USED | GZLL_PPI_CHANNELS_USED | ESB_PPI_CHANNELS_USED)  //0
+
+    #define SD_PPI_CHANNELS_USED      0uL
+    #define GZLL_PPI_CHANNELS_USED    0uL
+    #define ESB_PPI_CHANNELS_USED     0uL 
+
+
+typedef enum
+
+    NRF_PPI_CHANNEL0  = PPI_CHEN_CH0_Pos,   //0
+    NRF_PPI_CHANNEL1  = PPI_CHEN_CH1_Pos,   //1
+
+       ......
+
+
+
+capture_tasks[] = {NRF_TIMER_TASK_CAPTURE0, NRF_TIMER_TASK_CAPTURE1, NRF_TIMER_TASK_CAPTURE2, NRF_TIMER_TASK_CAPTURE3, NRF_TIMER_TASK_CAPTURE4, NRF_TIMER_TASK_CAPTURE5};
+
+
+
+
+
+==========================================================================================
+
+
+
 #define NRFX_PPI_PROG_APP_CHANNELS_MASK  ( 0x000FFFFF  & ~(NRFX_PPI_CHANNELS_USED))  // ~0
 
 #define NRFX_PPI_CHANNELS_USED  NRF_PPI_CHANNELS_USED  //0

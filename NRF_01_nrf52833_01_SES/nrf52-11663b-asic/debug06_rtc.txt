@@ -1,0 +1,256 @@
+ 
+
+
+=================================== rtc ===init===============================
+ 
+
+
+flow:
+
+     
+
+
+数据流： 
+ 
+
+
+----------------------------------
+
+main
+     
+    app_timer_init();
+
+
+
+------------------
+
+功能：设置RTC1的频率和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
+
+app_timer_init( )
+ 
+    drv_rtc_config_t config =  
+        .prescaler          = APP_TIMER_CONFIG_RTC_FREQUENCY,   //0
+        .interrupt_priority = APP_TIMER_CONFIG_IRQ_PRIORITY     //6
+
+    //NRF_ATFIFO_INIT(m_req_fifo);
+       static timer_req_t  m_req_fifo_data[10+1]; 
+       nrf_atfifo_t * m_req_fifo;
+
+       //nrf_atfifo_init(  m_req_fifo, m_req_fifo_data, sizeof(m_req_fifo_data), sizeof(m_req_fifo_data[0]) )
+
+          p_fifo->p_buf     = p_buf;      //m_req_fifo_data
+          p_fifo->tail.tag  = 0;
+          p_fifo->head.tag  = 0;
+          p_fifo->buf_size  = buf_size;   //11x
+          p_fifo->item_size = item_size;  //11
+
+
+    //drv_rtc_init(&m_rtc_inst, &config, rtc_irq);    
+        NRF_RTC1->PRESCALER = 0;              //设置RTC1的频率为32768 
+        NVIC->IP[(17)] =  6 << (8  - 3);      //设置RTC1 的中断优先级 为6
+        NVIC->ISER[0] = 1 << 17 ;             // 使能RTC1 的中断
+
+ 
+    //drv_rtc_overflow_enable(&m_rtc_inst, true);
+    //    evt_enable(m_rtc_inst, 1<<1, 1);
+             NRF_RTC1->EVTENSET = 1<<1 ;   //使能溢出事件
+             NRF_RTC1->INTENSET = 1<<1;    //使能溢出中断
+
+
+    //使能COMPARE[1]的事件， 使能COMPARE[1]的中断，设置cc[1]值
+    drv_rtc_compare_set(&m_rtc_inst, 1, DRV_RTC_MAX_CNT >> 1, true);  //0xFFF-FFF
+
+
+    if (APP_TIMER_KEEPS_RTC_ACTIVE)  //no, 忽略跳过
+    
+        //drv_rtc_start(&m_rtc_inst);
+            nrf_rtc_task_trigger( NRF_RTC1, NRF_RTC_TASK_START);
+                *(p_reg +  NRF_RTC_TASK_START) = 1;   //开启RTC
+    
+
+    m_global_active = true;
+
+
+-----
+功能：使能COMPARE[1]的事件， 使能COMPARE[1]的中断，设置cc[1]值
+
+参数：m_rtc_inst, 1, 0xFFF-FFF >> 1, true
+drv_rtc_compare_set( * p_instance,  cc,  abs_value, irq_enable)
+
+    //cc_int_mask =  NRF_RTC_INT_COMPARE0_MASK << cc;   //1<<16
+       cc_int_mask =  ( 1<<16 )  << 1;
+
+    //cc_evt = CC_IDX_TO_CC_EVENT(cc);
+         cc_evt = offsetof(NRF_RTC_Type, EVENTS_COMPARE[1]) ;  //取得EVENTS_COMPARE[1]的偏移地址
+
+
+    abs_value &= RTC_COUNTER_COUNTER_Msk;  //0xFFF-FFF << 0
+
+    //nrf_rtc_int_disable( NRF_RTC1, cc_int_mask);
+         p_reg->INTENCLR = ( 1<<16 )  << 1;             //INTENCLR.17=1 , 关闭COMPARE[1]中断
+
+    //nrf_rtc_event_disable( NRF_RTC1, cc_int_mask);
+         p_reg->EVTENCLR =( 1<<16 )  << 1;               //关闭COMPARE[1]的事件 
+
+
+    //nrf_rtc_event_clear( NRF_RTC1, cc_evt);    //或清除COMPARE[1]的事件标志
+        *( p_reg +  event) = 0;
+
+    //nrf_rtc_cc_set( NRF_RTC1, cc, abs_value);   //
+         p_reg->CC[1] = 0xFFF-FFF >> 1;
+
+    nrf_rtc_event_enable( NRF_RTC1, cc_int_mask);
+        p_reg->EVTENSET =( 1<<16 )  << 1;               //使能COMPARE[1]的事件 
+
+    if (irq_enable)
+
+        //nrf_rtc_int_enable(p_instance->p_reg, cc_int_mask);
+           p_reg->INTENCLR = ( 1<<16 )  << 1;             //INTENSET.17=1 , 使能COMPARE[1]中断
+
+
+
+-----
+
+功能：或清除COMPARE[1]的事件标志
+参数：NRF_RTC1, cc_evt
+nrf_rtc_event_clear(  * p_reg,  event)
+
+    *( p_reg +  event) = 0;
+ 
+    dummy = *(  p_reg +  event));
+    (void)dummy;
+  
+  
+-----
+
+参数：m_rtc_inst, 1<<1, 1
+evt_enable( * const p_instance,  mask, irq_enable)
+
+    //nrf_rtc_event_enable(NRF_RTC1, 1<<1 );
+       NRF_RTC1->EVTENSET = 1<<1 ;
+
+    if (irq_enable) //1
+    
+        //nrf_rtc_int_enable( NRF_RTC1, 1<<1 );
+           NRF_RTC1->INTENSET = 1<<1;
+    
+
+
+------
+
+功能：设置RTC1的频率和中断优先级，使能RTC1的中断
+
+全局变量： m_rtc_inst
+
+    DRV_RTC_INSTANCE(1)                                       
+                                                                 
+    .p_reg            = NRF_RTC1,                
+    .irq              = RTC1_IRQn,             
+    .instance_id      = DRV_RTC_RTC1_INST_IDX,  //0
+    .cc_channel_count = RTC1_CC_NUM,            //4
+
+参数： m_rtc_inst, &config, rtc_irq
+数据流：rtc_irq --> m_handlers[0]
+数据流：m_rtc_inst --> m_cb[0]
+drv_rtc_init( *p_instance,  * p_config,  handler)
+
+    m_handlers[0] = handler;  //rtc_irq
+
+    //nrf_rtc_prescaler_set( NRF_RTC1, 0);
+       NRF_RTC1->PRESCALER = 0;               //设置RTC1的频率为32768
+
+    //NRFX_IRQ_PRIORITY_SET(RTC1_IRQn, 6);    //设置RTC1 的中断优先级 为6
+    //  NVIC_SetPriority(17, 6);
+           NVIC->IP[(17)] =  6 << (8  - 3);
+
+    //NRFX_IRQ_ENABLE(RTC1_IRQn);
+    //   NVIC->ISER[ 17 >> 5 ] = 1 << 17 ;   // 使能RTC1 的中断
+            NVIC->ISER[0] = 1 << 17 ;
+
+    m_cb[0].state = NRFX_DRV_STATE_INITIALIZED;
+    m_cb[0].p_instance = m_rtc_inst;                   //DRV_RTC_INSTANCE(1) 
+
+
+
+
+
+
+----
+
+rtc_irq(drv_rtc_t const * const  p_instance)
+{
+    if (drv_rtc_overflow_pending(p_instance))
+    {
+        on_overflow_evt();
+    }
+    if (drv_rtc_compare_pending(p_instance, 0))
+    {
+        on_compare_evt(p_instance);
+    }
+    if (drv_rtc_compare_pending(p_instance, 1))
+    {
+        on_compare1_evt(p_instance);
+    }
+
+    timer_req_process(p_instance);
+    rtc_update(p_instance);
+}
+
+
+-------
+
+参数：m_req_fifo,  m_req_fifo_data,  11x , 11
+nrf_atfifo_init(* p_fifo, * p_buf, buf_size, item_size)
+
+    p_fifo->p_buf     = p_buf;
+    p_fifo->tail.tag  = 0;
+    p_fifo->head.tag  = 0;
+    p_fifo->buf_size  = buf_size;
+    p_fifo->item_size = item_size;
+
+
+
+
+
+
+
+
+
+
+
+
+=================================== rtc ===irq===============================
+
+
+
+
+void drv_rtc_rtc_1_irq_handler(void)
+{
+    m_handlers[DRV_RTC_RTC1_INST_IDX](m_cb[DRV_RTC_RTC1_INST_IDX].p_instance);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

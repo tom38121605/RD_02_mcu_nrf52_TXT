@@ -1,0 +1,222 @@
+
+#define APP_TIMER_KEEPS_RTC_ACTIVE 0
+
+typedef enum
+{
+    NRF_RTC_TASK_START            = offsetof(NRF_RTC_Type,TASKS_START),    
+    NRF_RTC_TASK_STOP             = offsetof(NRF_RTC_Type,TASKS_STOP),      
+    NRF_RTC_TASK_CLEAR            = offsetof(NRF_RTC_Type,TASKS_CLEAR),      
+    NRF_RTC_TASK_TRIGGER_OVERFLOW = offsetof(NRF_RTC_Type,TASKS_TRIGOVRFLW),  
+} nrf_rtc_task_t;
+
+
+--------------------------------------------
+
+#define RTC_COUNTER_COUNTER_Pos (0 ) 
+#define RTC_COUNTER_COUNTER_Msk (0xFFFFFFUL << RTC_COUNTER_COUNTER_Pos) 
+
+#define DRV_RTC_MAX_CNT     RTC_COUNTER_COUNTER_Msk   //0xFFF-FFF
+
+#define CC_IDX_TO_CC_EVENT(_cc)    offsetof(NRF_RTC_Type, EVENTS_COMPARE[_cc]) 
+
+
+__IOM uint32_t  EVENTS_COMPARE[6];   
+ 
+
+typedef struct {                                /*!< (@ 0x40008000) TIMER0 Structure                                           */
+  __OM  uint32_t  TASKS_START;                  /*!< (@ 0x00000000) Start Timer                                                */
+  __OM  uint32_t  TASKS_STOP;                   /*!< (@ 0x00000004) Stop Timer                                                 */
+  __OM  uint32_t  TASKS_COUNT;                  /*!< (@ 0x00000008) Increment Timer (Counter mode only)                        */
+  __OM  uint32_t  TASKS_CLEAR;                  /*!< (@ 0x0000000C) Clear time                                                 */
+  __OM  uint32_t  TASKS_SHUTDOWN;               /*!< (@ 0x00000010) Deprecated register - Shut down timer                      */
+  __IM  uint32_t  RESERVED[11];
+  __OM  uint32_t  TASKS_CAPTURE[6];             /*!< (@ 0x00000040) Description collection: Capture Timer value to
+                                                                    CC[n] register                                             */
+  __IM  uint32_t  RESERVED1[58];
+  __IOM uint32_t  EVENTS_COMPARE[6];            /*!< (@ 0x00000140) Description collection: Compare event on CC[n]
+                                                                    match                                                      */
+  __IM  uint32_t  RESERVED2[42];
+  __IOM uint32_t  SHORTS;                       /*!< (@ 0x00000200) Shortcuts between local events and tasks                   */
+  __IM  uint32_t  RESERVED3[64];
+  __IOM uint32_t  INTENSET;                     /*!< (@ 0x00000304) Enable interrupt                                           */
+  __IOM uint32_t  INTENCLR;                     /*!< (@ 0x00000308) Disable interrupt                                          */
+  __IM  uint32_t  RESERVED4[126];
+  __IOM uint32_t  MODE;                         /*!< (@ 0x00000504) Timer mode selection                                       */
+  __IOM uint32_t  BITMODE;                      /*!< (@ 0x00000508) Configure the number of bits used by the TIMER             */
+  __IM  uint32_t  RESERVED5;
+  __IOM uint32_t  PRESCALER;                    /*!< (@ 0x00000510) Timer prescaler register                                   */
+  __IM  uint32_t  RESERVED6[11];
+  __IOM uint32_t  CC[6];                        /*!< (@ 0x00000540) Description collection: Capture/Compare register
+                                                                    n                                                          */
+} NRF_TIMER_Type;     
+
+#define offsetof(TYPE, MEMBER) __builtin_offsetof (TYPE, MEMBER)
+
+#define RTC_COUNTER_COUNTER_Pos     0   
+#define RTC_COUNTER_COUNTER_Msk     0xFFFFFF << RTC_COUNTER_COUNTER_Pos 
+
+
+------------------------
+
+
+#define RTC_INTENSET_OVRFLW_Pos (1 )  
+#define RTC_INTENSET_OVRFLW_Msk (0x1  << RTC_INTENSET_OVRFLW_Pos) 
+
+#define RTC_INTENSET_COMPARE0_Pos (16 )  
+#define RTC_INTENSET_COMPARE0_Msk ( 1  << RTC_INTENSET_COMPARE0_Pos)
+
+typedef enum
+
+    NRF_RTC_INT_OVERFLOW_MASK = RTC_INTENSET_OVRFLW_Msk,    //1<<1
+    NRF_RTC_INT_COMPARE0_MASK = RTC_INTENSET_COMPARE0_Msk   //1<<16
+
+
+---------------
+
+#define APP_TIMER_CONFIG_IRQ_PRIORITY 6
+#define APP_TIMER_CONFIG_RTC_FREQUENCY 0
+
+
+#define NRFX_IRQ_PRIORITY_SET(irq_number, priority)   _NRFX_IRQ_PRIORITY_SET(irq_number, priority)
+
+ _NRFX_IRQ_PRIORITY_SET(  irq_number,  priority)
+ 
+    NVIC_SetPriority(irq_number, priority);
+ 
+
+
+---------------
+
+#define NRF_RTC1        (NRF_RTC_Type*)NRF_RTC1_BASE 
+
+enum 
+{
+    DRV_RTC_RTC1_INST_IDX, //0
+    DRV_RTC_ENABLED_COUNT  //1
+};
+
+#define RTC1_CC_NUM 4
+
+#define NRF_RTC_CC_CHANNEL_COUNT(id)  NRFX_CONCAT_3(RTC, id, _CC_NUM)
+
+static drv_rtc_t m_rtc_inst = DRV_RTC_INSTANCE(1);
+
+#define DRV_RTC_INSTANCE(1)                                       
+                                                                 
+    .p_reg            = NRF_RTC1,                RTC1_IRQn
+    .irq              = RTC1_IRQn,             
+    .instance_id      = DRV_RTC_RTC1_INST_IDX,   //0
+    .cc_channel_count = RTC1_CC_NUM,             //4    
+
+---
+
+#define __NVIC_PRIO_BITS               3         // nrf52833.h
+
+typedef enum       // nrf52833.h
+                                                                     
+  RTC1_IRQn                 =  17,         
+
+
+
+----------------------
+
+
+typedef struct nrf_atfifo_postag_pos_s
+{
+    uint16_t wr;  
+    uint16_t rd;  
+}nrf_atfifo_postag_pos_t;
+
+typedef union nrf_atfifo_postag_u
+{
+    uint32_t                tag;  
+    nrf_atfifo_postag_pos_t pos;  
+}nrf_atfifo_postag_t;
+
+typedef struct nrf_atfifo_s
+{
+    void                * p_buf;         
+    nrf_atfifo_postag_t   tail;          
+    nrf_atfifo_postag_t   head;          
+    uint16_t              buf_size;      
+    uint16_t              item_size;     
+    NRF_LOG_INSTANCE_PTR_DECLARE(p_log)        //忽略，可理解为一个log相关的nrf sdk底层的一个指针
+
+}nrf_atfifo_t;
+
+---------------------------------
+
+typedef void (*app_timer_timeout_handler_t)(void * p_context);
+
+struct nrf_sortlist_item_s
+{
+    nrf_sortlist_item_t * p_next;             
+};
+typedef struct nrf_sortlist_item_s nrf_sortlist_item_t;
+
+#define NRF_LOG_INSTANCE_PTR_DECLARE(_p_name)
+
+typedef struct
+{
+    nrf_sortlist_item_t                 list_item;      
+    uint64_t                            end_val;        
+    uint32_t                            repeat_period;  
+    app_timer_timeout_handler_t         handler;        
+    void *                              p_context;     
+    NRF_LOG_INSTANCE_PTR_DECLARE(p_log)                  //忽略，可理解为一个log相关的nrf sdk底层的一个指针
+} app_timer_t;
+
+
+
+---
+
+typedef enum
+{
+    TIMER_REQ_START,
+    TIMER_REQ_STOP,
+    TIMER_REQ_STOP_ALL
+} app_timer_req_type_t;
+
+typedef struct
+{
+    app_timer_req_type_t   type;        //enum 0,1,2
+    app_timer_t *          p_timer;  
+} timer_req_t;
+
+#define NRF_ATFIFO_DEF(fifo_id, storage_type, item_cnt)     static storage_type NRF_ATFIFO_BUF_NAME(fifo_id)[(item_cnt)+1];  
+
+#define APP_TIMER_CONFIG_OP_QUEUE_SIZE 10
+
+#define NRF_ATFIFO_BUF_NAME(fifo_id)  CONCAT_2(fifo_id, _data)   //m_req_fifo_data
+
+//NRF_ATFIFO_DEF(m_req_fifo, timer_req_t, APP_TIMER_CONFIG_OP_QUEUE_SIZE);
+//  static timer_req_t NRF_ATFIFO_BUF_NAME(m_req_fifo)[10+1];  
+      static timer_req_t  m_req_fifo_data[10+1];                                //here
+
+
+---
+
+
+
+
+    #define NRF_ATFIFO_INIT(fifo_id)        //m_req_fifo
+        
+        nrf_atfifo_init(                            
+            fifo_id,                         //m_req_fifo       
+            NRF_ATFIFO_BUF_NAME(fifo_id),           //m_req_fifo_data
+            sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)),   //m_req_fifo_data
+            sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)[0]) //m_req_fifo_data
+        )
+
+
+
+
+
+
+
+
+
+
+
+
+
