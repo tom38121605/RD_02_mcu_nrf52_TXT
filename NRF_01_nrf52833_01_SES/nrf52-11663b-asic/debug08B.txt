@@ -1,90 +1,6 @@
 
-_vectors:
-  .word   RTC2_IRQHandler    //ses_startup_nrf52833.s
 
-
-#define nrfx_rtc_2_irq_handler      RTC2_IRQHandler
-
-
-typedef enum
-{
-    NRFX_RTC_INT_COMPARE0 = 0,  
-    NRFX_RTC_INT_COMPARE1 = 1,  
-    NRFX_RTC_INT_COMPARE2 = 2, 
-    NRFX_RTC_INT_COMPARE3 = 3,  
-    NRFX_RTC_INT_TICK     = 4, 
-    NRFX_RTC_INT_OVERFLOW = 5    
-} nrfx_rtc_int_type_t;
-
-
-
----------------------
-
-uint8_t timestamp_lost_compare_channel;
-
-#define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY    32768
-#define RTC_TIMEOUT_GEN_FREQUENCY            NRFX_RTC_DEFAULT_CONFIG_FREQUENCY
-
-//#define MS_TO_RTC_TIMEOUT_GEN(x)        x * RTC_TIMEOUT_GEN_FREQUENCY / 1000   
-   #define MS_TO_RTC_TIMEOUT_GEN(500)        500 * 32768 / 1000   
-
-
-
--------------------
-
-
-#define OMMO_RTC_TIMEOUT_GEN_RTC          NRFX_RTC_INSTANCE(2)
-
-rtc_timeout_gen rtc_timeout(OMMO_RTC_TIMEOUT_GEN_RTC);
-
-
-enum   
-    NRFX_RTC0_INST_IDX,     //0
-    NRFX_RTC2_INST_IDX,     //1
-    NRFX_RTC_ENABLED_COUNT  //2
-
-#define RTC2_CC_NUM 4
-
-#define NRFX_RTC_INSTANCE(2)                                   
-{                                                               
-    .p_reg            =  NRF_RTC2 ,             
-    .irq              =  RTC2_IRQn ,            //6
-    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
-    .cc_channel_count =  RTC2_CC_NUM,           //4
-}
-
-
-#define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY 32768
-#define RTC_INPUT_FREQ 32768
-
-#define RTC_FREQ_TO_PRESCALER(FREQ)   (RTC_INPUT_FREQ / FREQ) - 1    //0
-
-#define NRFX_RTC_MAXIMUM_LATENCY_US 2000
-#define NRFX_RTC_US_TO_TICKS(us,freq) (((us) * (freq)) / 1000000U)
-
-
-typedef enum
-{
-    NRF_RTC_TASK_START            = offsetof(NRF_RTC_Type,TASKS_START),   
-    NRF_RTC_TASK_STOP             = offsetof(NRF_RTC_Type,TASKS_STOP),      
-    NRF_RTC_TASK_CLEAR            = offsetof(NRF_RTC_Type,TASKS_CLEAR),     
-    NRF_RTC_TASK_TRIGGER_OVERFLOW = offsetof(NRF_RTC_Type,TASKS_TRIGOVRFLW),
-} nrf_rtc_task_t;
-
-
-
-RTC2_IRQn   =  36,            //nrf52833.h
-
-
-
-
-
-
-
-
-
-======================================================= 参考 =========================================================
-
+----------------------------------------------
 
 #define TIMER_INTENSET_COMPARE0_Pos (16 )  
 #define TIMER_INTENSET_COMPARE0_Msk (0x1  << TIMER_INTENSET_COMPARE0_Pos)
@@ -219,24 +135,6 @@ typedef struct {                                /*!< (@ 0x40008000) TIMER0 Struc
   __IOM uint32_t  CC[6];                        /*!< (@ 0x00000540) Description collection: Capture/Compare register
                                                                     n                                                          */
 } NRF_TIMER_Type;    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 

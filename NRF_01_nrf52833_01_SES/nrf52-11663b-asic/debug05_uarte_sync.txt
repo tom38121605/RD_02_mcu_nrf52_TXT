@@ -80,7 +80,6 @@ comms_uarte_init( uarte_instance, rx_pin)
     .cc_channel_count = TIMER3_CC_NUM,           
 
 
-
 功能：把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来  
 
 参数：NRF_UARTE1.NRF_UARTE_EVENT_ENDRX
@@ -105,21 +104,20 @@ timestamp_add_capture_event( trigger_event_addr)
        //nrfx_ppi_channel_assign(NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX,  DDD  );
        //  nrfx_ppi_channel_assign( NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX, NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0 );
        //    nrf_ppi_channel_endpoint_setup(channel, eep, tep);
-                NRF_PPI->CH[0].EEP = NRF_UARTE1.NRF_UARTE_EVENT_ENDRX;
-                NRF_PPI->CH[0].TEP = NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0;
+                NRF_PPI->CH[0].EEP = NRF_UARTE1.NRF_UARTE_EVENT_ENDRX;     //UARTE1的ENDRX事件
+                NRF_PPI->CH[0].TEP = NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0;   //timer3的CAPTURE0捕获任务
 
 
     //使能 PPI通道0
     //nrfx_ppi_channel_enable(ppi_channel_timestamp_capture);
     //   nrfx_ppi_channel_enable(NRF_PPI_CHANNEL0);
             nrf_ppi_channel_enable(NRF_PPI_CHANNEL0);
-                NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL0);
+                NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL0);        //使能PPI0 （打开ppi0通道）
 
 
     return capture_channel;    //NRF_TIMER_CC_CHANNEL0
 
 
- 
 
 --------
 

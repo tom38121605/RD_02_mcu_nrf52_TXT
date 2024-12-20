@@ -1,31 +1,38 @@
  
 
-
 =================================== timer3 ===init===============================
  
 
 
 flow:
+ 
+     main -- timestamp_init_with_internal_sample_event -- nrfx_timer_init -- nrfx_timer_enable -- nrfx_timer_capture -- nrfx_timer_compare 
+     -- nrfx_ppi_group_alloc -- nrfx_ppi_group_enable -- nrfx_ppi_channel_alloc -- nrfx_ppi_channel_assign
 
-     
 
 
 数据流： 
- 
+
 
 
 ----------------------------------
 
 main
      
+    //初始化并开启timer3，捕获cc并计算新的sample value，使能 COMPARE[0] 中断，分配并打开 ppi group0，
+      把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
     timestamp_init_with_internal_sample_event(3);
 
-    timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found, &rtc_timeout);
+
+    ......
 
 
 
+-----------------
 
-------------------
+
+功能：初始化并开启timer3，捕获cc并计算新的sample value，使能 COMPARE[0] 中断，分配并打开 ppi group0，
+      把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
 
 全局变量：timer_timestamp
 
@@ -51,64 +58,67 @@ timestamp_init_with_internal_sample_event( isr_priority)
     nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler);
 
 
-    //启动timer3
+    //开启timer3
     //nrfx_timer_enable(&timer_timestamp);
-        nrf_timer_task_trigger(NRF_TIMER3, NRF_TIMER_TASK_START);         
-        m_cb[p_instance->instance_id].state = NRFX_DRV_STATE_POWERED_ON;  //启动timer3
+        //nrf_timer_task_trigger(NRF_TIMER3, NRF_TIMER_TASK_START);          //开启timer3
+            p_reg + task = 1;
+
+        m_cb[p_instance->instance_id].state = NRFX_DRV_STATE_POWERED_ON; 
+
 
     //sample_event_compare_channel = timestamp_get_capture_compare_channel();  
-       sample_event_compare_channel = 0 ;   //NRF_TIMER_CC_CHANNEL0            //取得当前空闲的CC通道
+       sample_event_compare_channel = 0 ;   //NRF_TIMER_CC_CHANNEL0            //取得当前空闲的CC通道  (待理解：没有根据timer3去找cc通道)
 
-    //nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);  /或使能CAPTURE[0]事件
 
+    //nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);      
        //nrf_timer_task_trigger( NRF_TIMER3, nrf_timer_capture_task_get(0) );
-           *(NRF_TIMER3 + TASKS_CAPTURE[0] ) =1;                                 //或使能CAPTURE[0]事件
+           NRF_TIMER3 + TASKS_CAPTURE[0]  =1;                                 //启动CAPTURE[0]任务，把定时器的计数值，捕获到cc寄存器中
 
-       //nrf_timer_cc_read( NRF_TIMER3, 0);      //忽略，没有用的
-           p_reg->CC[0];                //取得比较门槛值
+       //rf_timer_cc_read( NRF_TIMER3, 0);      //忽略，没有使用
+           p_reg->CC[0];                           //取得CC值
 
-    //取得并计算CC值
+
+    //捕获定时器计数器值到CC，并计算新的sample_event_trigger_value （用途待理解）
     //sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
     //  sample_event_trigger_value = nrf_timer_cc_read( NRF_TIMER3, 0 ) + 15984;
            sample_event_trigger_value = p_reg->CC[0] + 15984;
 
 
-    //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断
+    //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
     //nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
     //  nrfx_timer_compare(&timer_timestamp, 0, sample_event_trigger_value, true);
            *(NRF_TIMER3 + EVENTS_COMPARE[0])=0;                     //清除COMPARE[0]事件标志  
-           p_reg->INTENSET = 1<<16;                                 //使能 COMPARE[0] 中断
-
+           p_reg->INTENSET = 1<<16;                                 //使能 COMPARE[0]事件的中断
+ 
+           p_reg->CC[0] = cc_value;  //p_reg->CC[0]+15984
 
 
     //分配一个空闲的ppi group channel0
-    nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);  //ppi_group_disable_timestamp_capture = NRF_PPI_CHANNEL_GROUP0;  //0
+    //nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);  
+       ppi_group_disable_timestamp_capture = NRF_PPI_CHANNEL_GROUP0;  //0
 
-    //使能ppi group channel0 
+    //打开 ppi group0 
     //nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture);
-    //  nrf_ppi_group_enable(group);
-          NRF_PPI->TASKS_CHG[0].EN = 1;  //使能ppi group channel0 
+    //  nrf_ppi_group_enable(NRF_PPI_CHANNEL_GROUP0);
+          NRF_PPI->TASKS_CHG[0].EN = 1;  //使能ppi group channel0   //打开 ppi group0
 
 
-    //Setup PPI for disabling timestamp capture on sample timer evt
-
+    //分配一个空闲的ppi channel0
     nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);  // 分配一个空闲的PPI通道 NRF_PPI_CHANNEL1
-       ppi_channel_disable_timestamp_capture = NRF_PPI_CHANNEL1;     //1
+       ppi_channel_disable_timestamp_capture = NRF_PPI_CHANNEL1;     // 1
 
-
+    //给PPI1分配事件和任务 (把关闭group的任务DIS分配给PPI1)
     //nrfx_ppi_channel_assign( NRF_PPI_CHANNEL1, timestamp_get_sample_event_address(), nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture));
     //   nrfx_ppi_channel_assign( NRF_PPI_CHANNEL1, NRF_TIMER3+NRF_TIMER_EVENT_COMPARE0 , &NRF_PPI->TASKS_CHG[0].DIS );
     //      nrf_ppi_channel_endpoint_setup( NRF_PPI_CHANNEL1, eep, tep);
-              NRF_PPI->CH[1].EEP = NRF_TIMER3+NRF_TIMER_EVENT_COMPARE0;     //TIMER3.COMPARE0
-              NRF_PPI->CH[1].TEP = &NRF_PPI->TASKS_CHG[0].DIS;              //PPI.GROUP0
+              NRF_PPI->CH[1].EEP = NRF_TIMER3+NRF_TIMER_EVENT_COMPARE0;     //TIMER3的COMPARE0事件
+              NRF_PPI->CH[1].TEP = &NRF_PPI->TASKS_CHG[0].DIS;              //PPI组 GROUP0的 DIS任务
 
-
-
-    //使能 PPI通道0
+    //使能PPI1 （打开ppi1通道）
     //nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture);
     //   nrfx_ppi_channel_enable(NRF_PPI_CHANNEL1);
             nrf_ppi_channel_enable(NRF_PPI_CHANNEL1);
-                NRF_PPI->CHENSET = 1<< NRF_PPI_CHANNEL1);
+                NRF_PPI->CHENSET = 1<< NRF_PPI_CHANNEL1);  //使能PPI1
 
 
     timestamp_synch_init(isr_priority);  //这里为空函数，忽略跳过
@@ -164,7 +174,7 @@ nrfx_ppi_group_alloc(  * p_group)
 
 ------
 
-功能：清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断
+功能：清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc值
 
 参数：timer_timestamp, 0, p_reg->CC[0]+15984, true
 nrfx_timer_compare( *p_instance, cc_channel, cc_value, enable_int)
@@ -183,11 +193,10 @@ nrfx_timer_compare( *p_instance, cc_channel, cc_value, enable_int)
            p_reg->INTENSET = 1<<16;                                 //使能 COMPARE[0] 中断
  
      
+    //nrf_timer_cc_write(p_instance->p_reg, cc_channel, cc_value);
+       p_reg->CC[0] = cc_value;  //p_reg->CC[0]+15984
 
-    nrf_timer_cc_write(p_instance->p_reg, cc_channel, cc_value);
  
-
-
 
 -------
 
@@ -255,18 +264,6 @@ nrfx_timer_init( *p_instance, * p_config, timer_event_handler)
 
 
 
-
-
-
-------------
-
-
-nrf_timer_event_clear(  * p_reg,  event)
-
-    *( p_reg +  event) = 0;
- 
-    dummy = *(  p_reg +  event));
-    (void)dummy;
 
 
 
@@ -348,6 +345,13 @@ nrfx_ppi_channel_alloc(  * p_channel)
             break;    //如果找到了空闲通道，则退出for循环
 
          mask &= ~(1<<channel);  //mask.0=0,  清零已测试过的通道，继续下一个通道
+
+
+
+
+
+
+
 
 
 

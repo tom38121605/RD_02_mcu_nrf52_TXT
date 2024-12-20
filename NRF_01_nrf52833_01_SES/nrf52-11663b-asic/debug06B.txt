@@ -103,7 +103,7 @@ static drv_rtc_t m_rtc_inst = DRV_RTC_INSTANCE(1);
 
 #define DRV_RTC_INSTANCE(1)                                       
                                                                  
-    .p_reg            = NRF_RTC1,                RTC1_IRQn
+    .p_reg            = NRF_RTC1,                
     .irq              = RTC1_IRQn,             
     .instance_id      = DRV_RTC_RTC1_INST_IDX,   //0
     .cc_channel_count = RTC1_CC_NUM,             //4    

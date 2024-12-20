@@ -1,0 +1,384 @@
+ 
+
+============================================= RTC2 ===init============================================
+
+flow:
+
+     main --  rtc_timeout_gen rtc_timeout(class定义构造函数) -- rtc_timeout_gen::rtc_timeout_gen -- nrfx_rtc_init -- (m_handlers[1] = static_rtc_timer_handler)
+
+     main -- timestamp_set_synch_lost_found_callback -- ( timestamp_synch_lost_found_callback = timestamp_synch_lost_found )
+     -- rtc_timeout_gen::get_timeout_channel -- ( rtc_timeout.callback_funcs[0] = timestamp_lost_timeout ) -- rtc_timeout_gen::set_timeout -- nrfx_rtc_cc_set
+       
+
+
+数据流：NRFX_RTC_INSTANCE(2) -->  rtc_timeout_gen.timeout_rtc
+数据流：static_rtc_timer_handler  --> m_handlers[1]
+数据流：this  -->  m_p_context[1]
+
+数据流：rtc_timeout --> timeout_gen
+数据流：timestamp_synch_lost_found --> timestamp_synch_lost_found_callback
+
+数据流：timestamp_lost_timeout --> rtc_timeout.callback_funcs[0]
+
+
+
+
+------------------------------------------------------
+
+
+//设置RTC2的优先级和分频系数，使能RTC2的irq，启动 RTC2
+rtc_timeout_gen   rtc_timeout( NRFX_RTC_INSTANCE(2) );  
+
+
+main
+     
+    ......
+
+
+    timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found, &rtc_timeout);
+
+
+=======---------------------------------------------------
+
+
+全局变量:NRFX_RTC_INSTANCE(2)                                   
+                                                              
+    .p_reg            =  NRF_RTC2 ,             
+    .irq              =  RTC2_IRQn ,          
+    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
+    .cc_channel_count =  RTC2_CC_NUM,           //4
+
+----------
+
+功能：设置RTC2的优先级和分频系数，使能RTC2的irq，启动 RTC2
+
+数据流：NRFX_RTC_INSTANCE(2) --  rtc_timeout_gen.timeout_rtc
+数据流：static_rtc_timer_handler  --> m_handlers[1]
+参数：NRFX_RTC_INSTANCE(2)
+rtc_timeout_gen::rtc_timeout_gen( timeout_rtc_g)
+  
+    timeout_rtc = timeout_rtc_g;   //NRFX_RTC_INSTANCE(2)
+ 
+    nrfx_rtc_config_t    timer_cfg;
+
+    timer_cfg.prescaler          = RTC_FREQ_TO_PRESCALER(NRFX_RTC_DEFAULT_CONFIG_FREQUENCY);  //0
+    timer_cfg.interrupt_priority = NRFX_RTC_DEFAULT_CONFIG_IRQ_PRIORITY;                      //6
+    timer_cfg.reliable           = NRFX_RTC_DEFAULT_CONFIG_RELIABLE;                           //0
+
+    //timer_cfg.tick_latency       = NRFX_RTC_US_TO_TICKS(NRFX_RTC_MAXIMUM_LATENCY_US, NRFX_RTC_DEFAULT_CONFIG_FREQUENCY);
+    //  timer_cfg.tick_latency       = NRFX_RTC_US_TO_TICKS( 2000, 32768 );
+          timer_cfg.tick_latency       = 2000 * 32768 / 10^6;                                 //65
+
+
+    //设置RTC2的优先级和分频系数，使能RTC2的irq
+    nrfx_rtc_init(&timeout_rtc, &timer_cfg, static_rtc_timer_handler, this) ;
+
+
+    //启动 RTC2
+    //nrfx_rtc_enable(&timeout_rtc);
+    //  nrf_rtc_task_trigger( NRF_RTC2, NRF_RTC_TASK_START);
+           NRF_RTC2 + NRF_RTC_TASK_START =1;   //启动 RTC2
+
+       m_cb[1].state = NRFX_DRV_STATE_POWERED_ON;
+ 
+
+------------------
+
+功能：设置RTC2的优先级和分频系数，使能RTC2的irq
+
+全局变量:rtc_timeout_gen.timeout_rtc
+
+NRFX_RTC_INSTANCE(2)                                   
+                                                              
+    .p_reg            =  NRF_RTC2 ,             
+    .irq              =  RTC2_IRQn ,          
+    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
+    .cc_channel_count =  RTC2_CC_NUM,           //4
+
+
+数据流：static_rtc_timer_handler  --> m_handlers[1]
+数据流：this  -->  m_p_context[1]
+参数：NRFX_RTC_INSTANCE(2), &timer_cfg, static_rtc_timer_handler, this
+nrfx_rtc_init( *p_instance,  * p_config,  handler,  p_context)
+ 
+    m_handlers[1] = handler;     //static_rtc_timer_handler
+    m_p_context[1] = p_context;  //this
+
+
+    //设置 RTC2的irq的优先级为6
+    //NRFX_IRQ_PRIORITY_SET(p_instance->irq, p_config->interrupt_priority);
+    //  NRFX_IRQ_PRIORITY_SET( RTC2_IRQn, 6  );
+    //     _NRFX_IRQ_PRIORITY_SET( RTC2_IRQn, 6 )
+    //        NVIC_SetPriority( RTC2_IRQn, 6 );
+                 __NVIC_SetPriority( RTC2_IRQn, 6 );
+
+    //使能RTC2的irq
+    NRFX_IRQ_ENABLE(p_instance->irq);   
+
+    //设置分频系数为0
+    nrf_rtc_prescaler_set( NRF_RTC2, 0);                  //p_reg->PRESCALER =0
+
+    m_cb[1].reliable     = p_config->reliable;            //0
+    m_cb[1].tick_latency = p_config->tick_latency;        //65
+    m_cb[1].state        = NRFX_DRV_STATE_INITIALIZED;
+ 
+
+
+=======--------------------------------
+
+
+数据流： rtc_timeout --> timeout_gen
+数据流：timestamp_synch_lost_found --> timestamp_synch_lost_found_callback
+
+参数：timestamp_synch_lost_found, &rtc_timeout
+timestamp_set_synch_lost_found_callback(  func, *timeout_gen_g)
+
+    timeout_gen = timeout_gen_g;                  //rtc_timeout
+
+    timestamp_synch_lost_found_callback = func;    //timestamp_synch_lost_found
+
+
+    //Update cc channel to 1/2s out
+
+    //取得空闲的cc通道0
+    timeout_gen->get_timeout_channel(&timestamp_lost_compare_channel, timestamp_lost_timeout, NULL);
+
+    //设置cc[0]门槛值(定时500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+    timeout_gen->set_timeout(timestamp_lost_compare_channel, MS_TO_RTC_TIMEOUT_GEN(500));   //16384
+
+
+
+---------------------
+
+功能：取得空闲的cc通道0
+全局变量: rtc_timeout_gen.timeout_rtc
+NRFX_RTC_INSTANCE(2)                                   
+                                                              
+    .p_reg            =  NRF_RTC2 ,             
+    .irq              =  RTC2_IRQn ,          
+    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
+    .cc_channel_count =  RTC2_CC_NUM,           //4
+
+数据流：timestamp_lost_timeout --> rtc_timeout.callback_funcs[0]
+参数：&timestamp_lost_compare_channel, timestamp_lost_timeout, 0
+rtc_timeout_gen::get_timeout_channel( *channel, callback, *p_context)
+
+    if(next_free_cc_channel == timeout_rtc.cc_channel_count) //4
+        return NRF_ERROR_NO_MEM;
+
+    *channel = next_free_cc_channel;                    //timestamp_lost_compare_channel=0
+
+    callback_funcs[next_free_cc_channel] = callback;    //timestamp_lost_timeout
+
+    callback_context[next_free_cc_channel] = 0; 
+
+    next_free_cc_channel++;
+
+  
+
+
+-----
+
+参数：timestamp_lost_compare_channel=0， 16384
+rtc_timeout_gen::set_timeout(channel,  timeout)
+
+    last_timeout_used[0] = timeout;
+    timeout_running[0]   = true;
+
+ 
+    //nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + timeout, true);
+        nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + 16384, 1);
+ 
+
+-----
+
+功能：设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+
+参数： &timeout_rtc, 0, NRF_RTC2.COUNTER + 16384, 1
+nrfx_rtc_cc_set( *p_instance, channel,  val, enable_irq)
+
+    int_mask = RTC_CHANNEL_INT_MASK(channel);       // 1<<16  <<0
+    event    = RTC_CHANNEL_EVENT_ADDR(channel);     // &EVENTS_COMPARE[0] + 0*4   //已理解
+
+    //关闭EVENTS_COMPARE[0]的事件
+    nrf_rtc_event_disable( NRF_RTC2, int_mask);  //EVTENCLR = 1<<16  <<0        
+
+    //关闭EVENTS_COMPARE[0]的中断
+    nrf_rtc_int_disable( NRF_RTC2, int_mask);     //INTENCLR = 1<<16  <<0
+
+    val = RTC_WRAP(val);   // val &  FFFFFF         //已理解
+
+
+    //设置cc[0]
+    if (m_cb[1].reliable)  //0, no
+   
+        ......(忽略，参考)
+   
+    else  //yes
+    
+        //nrf_rtc_cc_set( NRF_RTC2, channel, val);
+            p_reg->CC[0] = val;   //NRF_RTC2->COUNTER + 16384
+    
+
+    if (enable_irq)  //1
+    
+        nrf_rtc_event_clear( NRF_RTC2, event);      //NRF_RTC2.EVENTS_COMPARE[0] = 0 ，清EVENTS_COMPARE[0]的事件标志
+        nrf_rtc_int_enable( NRF_RTC2, int_mask);    //INTENSET = 1<<16  <<0  , 使能EVENTS_COMPARE[0]的中断     
+
+    nrf_rtc_event_enable( NRF_RTC2,int_mask);       //EVTENSET = 1<<16  <<0 , 使能EVENTS_COMPARE[0]的事件  
+
+
+
+
+
+============================================= RTC2 ===irq=============================================
+
+flow:
+
+   ses_startup_nrf52833.s -- RTC2_IRQHandler -- nrfx_rtc_2_irq_handler -- irq_handler -- (m_handlers[1]) -- static_rtc_timer_handler
+   -- rtc_timeout_gen::rtc_timer_handler -- (callback_funcs[0]) -- timestamp_lost_timeout -- (timestamp_synch_lost_found_callback) 
+   -- timestamp_synch_lost_found -- set_leds
+
+
+
+-------------------------------------------------------------------------
+
+
+//可看作是rtc2的硬件中断入口地址
+nrfx_rtc_2_irq_handler( )
+ 
+    //irq_handler(NRF_RTC2, NRFX_RTC2_INST_IDX, NRF_RTC_CC_CHANNEL_COUNT(2));
+        irq_handler(NRF_RTC2, 1, 4 );
+ 
+
+---------------------
+
+参数：NRF_RTC2, 1, 4 
+irq_handler( * p_reg, instance_id, channel_count)
+
+
+    //-------检查及处理COMPARE事件-----------
+
+    int_mask = NRF_RTC_INT_COMPARE0_MASK;        //1<<16
+
+    event = NRF_RTC_EVENT_COMPARE_0;             //COMPARE[0]事件偏移地址
+
+    for (i = 0; i < channel_count; i++)  //本例只考虑cc0通道
+    
+        if (nrf_rtc_int_is_enabled(p_reg,int_mask) && nrf_rtc_event_pending(p_reg,event))
+        
+            nrf_rtc_event_disable(p_reg,int_mask); //关闭COMPARE0中断
+            nrf_rtc_int_disable(p_reg,int_mask);   //关闭COMPARE0事件
+            nrf_rtc_event_clear(p_reg,event);      //清除COMPARE0事件标志
+
+            //m_handlers[1](  i, m_p_context[1]);
+            //  static_rtc_timer_handler(  i,this);
+            //    this->rtc_timer_handle(  i,this);
+                     rtc_timeout_gen::rtc_timer_handler(  i );
+        
+        int_mask <<= 1;
+        event  = ( event + sizeof(u32));
+    
+
+
+    //---------检查及处理TICK事件------------ (忽略)
+
+    event = NRF_RTC_EVENT_TICK;
+    if (nrf_rtc_int_is_enabled(p_reg,NRF_RTC_INT_TICK_MASK) &&  nrf_rtc_event_pending(p_reg, event))
+
+        nrf_rtc_event_clear(p_reg, event);
+        NRFX_LOG_DEBUG("Event: %s, instance id: %lu.", EVT_TO_STR(event), instance_id);
+
+        //m_handlers[instance_id](NRFX_RTC_INT_TICK, m_p_context[instance_id]
+
+
+
+    //----------检查及处理OVERFLOW事件--------- (忽略)
+
+    event = NRF_RTC_EVENT_OVERFLOW;
+    if ( nrf_rtc_int_is_enabled( p_reg, NRF_RTC_INT_OVERFLOW_MASK) &&   nrf_rtc_event_pending(p_reg, event) )
+    
+        nrf_rtc_event_clear(p_reg,event);
+        NRFX_LOG_DEBUG("Event: %s, instance id: %lu.", EVT_TO_STR(event), instance_id);
+
+        m_handlers[instance_id](NRFX_RTC_INT_OVERFLOW, m_p_context[instance_id]);
+        //  static_rtc_timer_handler(NRFX_RTC_INT_OVERFLOW,this);
+        //     this->rtc_timer_handle(NRFX_RTC_INT_OVERFLOW,this);
+                  rtc_timeout_gen::rtc_timer_handler(NRFX_RTC_INT_OVERFLOW);
+
+
+-------
+
+rtc_timeout_gen::rtc_timer_handler(  int_type)
+ 
+    //Only call callback from either timer OR 
+    if(nrfx_atomic_flag_clear_fetch(&timeout_running[int_type]))
+     
+        nrfx_rtc_cc_disable(&timeout_rtc, int_type);
+
+        if(callback_funcs[int_type] != NULL)
+         
+            timeout_running[int_type] = false;
+
+            //callback_funcs[int_type](callback_context[int_type]);
+               timestamp_lost_timeout(callback_context[int_type]);
+
+      
+
+------
+
+功能： 或丢失同步信号的处理（小灯提示）
+timestamp_lost_timeout(  *p_context)
+
+    if(timestamp_synch_lost_found_callback != NULL)
+    
+        timestamp_synch_lost = true;
+
+        //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+        //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
+               set_leds();
+
+
+
+
+
+
+
+==========================================参考============================================
+
+
+
+参数： &timeout_rtc, 0, NRF_RTC2.COUNTER + 16384, 1
+nrfx_rtc_cc_set( *p_instance, channel,  val, enable_irq)
+
+    ......
+
+
+    if (m_cb[1].reliable)  //0, no
+   
+        nrf_rtc_cc_set( NRF_RTC2, channel,val);
+
+        cnt = nrf_rtc_counter_get( NRF_RTC2);
+
+        diff = cnt - val;
+
+        if (cnt < val)
+        
+            diff += RTC_COUNTER_COUNTER_Msk;
+         
+        if (diff < m_cb[1].tick_latency)
+
+            return err_code;
+
+
+
+
+
+
+
+
+
+
+
+
+
