@@ -7,7 +7,7 @@
 
 flow:
 
-     
+     main -- app_timer_init -- drv_rtc_init -- drv_rtc_overflow_enable -- drv_rtc_compare_set 
 
 
 数据流： 
@@ -18,37 +18,38 @@ flow:
 
 main
      
+
+    //设置RTC1的频率32768和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
     app_timer_init();
 
 
 
 ------------------
 
-功能：设置RTC1的频率和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
+功能：设置RTC1的频率32768和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
 
 app_timer_init( )
  
-    drv_rtc_config_t config =  
+    drv_rtc_config_t     config =  
         .prescaler          = APP_TIMER_CONFIG_RTC_FREQUENCY,   //0
         .interrupt_priority = APP_TIMER_CONFIG_IRQ_PRIORITY     //6
 
     //NRF_ATFIFO_INIT(m_req_fifo);
-       static timer_req_t  m_req_fifo_data[10+1]; 
-       nrf_atfifo_t * m_req_fifo;
+       timer_req_t       m_req_fifo_data[10+1]; 
+       nrf_atfifo_t        * m_req_fifo;
 
        //nrf_atfifo_init(  m_req_fifo, m_req_fifo_data, sizeof(m_req_fifo_data), sizeof(m_req_fifo_data[0]) )
 
-          p_fifo->p_buf     = p_buf;      //m_req_fifo_data
-          p_fifo->tail.tag  = 0;
-          p_fifo->head.tag  = 0;
-          p_fifo->buf_size  = buf_size;   //11x
-          p_fifo->item_size = item_size;  //11
-
+          m_req_fifo->p_buf     = m_req_fifo_data
+          m_req_fifo->tail.tag  = 0;
+          m_req_fifo->head.tag  = 0;
+          m_req_fifo->buf_size  = buf_size;   //11x
+          m_req_fifo->item_size = item_size;  //11
 
     //drv_rtc_init(&m_rtc_inst, &config, rtc_irq);    
         NRF_RTC1->PRESCALER = 0;              //设置RTC1的频率为32768 
-        NVIC->IP[(17)] =  6 << (8  - 3);      //设置RTC1 的中断优先级 为6
-        NVIC->ISER[0] = 1 << 17 ;             // 使能RTC1 的中断
+        NVIC->IP[(17)] =  6 << (8  - 3);           //设置RTC1 的中断优先级 为6
+        NVIC->ISER[0] = 1 << 17 ;                  // 使能RTC1 的中断
 
  
     //drv_rtc_overflow_enable(&m_rtc_inst, true);
@@ -65,8 +66,7 @@ app_timer_init( )
     
         //drv_rtc_start(&m_rtc_inst);
             nrf_rtc_task_trigger( NRF_RTC1, NRF_RTC_TASK_START);
-                *(p_reg +  NRF_RTC_TASK_START) = 1;   //开启RTC
-    
+                *(p_reg +  NRF_RTC_TASK_START) = 1;   //开启RTC    
 
     m_global_active = true;
 
@@ -172,6 +172,7 @@ drv_rtc_init( *p_instance,  * p_config,  handler)
 
 
 
+=================================== rtc1 ===irq===============================
 
 
 
@@ -197,16 +198,6 @@ rtc_irq(drv_rtc_t const * const  p_instance)
 }
 
 
--------
-
-参数：m_req_fifo,  m_req_fifo_data,  11x , 11
-nrf_atfifo_init(* p_fifo, * p_buf, buf_size, item_size)
-
-    p_fifo->p_buf     = p_buf;
-    p_fifo->tail.tag  = 0;
-    p_fifo->head.tag  = 0;
-    p_fifo->buf_size  = buf_size;
-    p_fifo->item_size = item_size;
 
 
 
