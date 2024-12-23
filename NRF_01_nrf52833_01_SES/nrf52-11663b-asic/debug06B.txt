@@ -183,35 +183,58 @@ typedef struct
     app_timer_t *          p_timer;  
 } timer_req_t;
 
-#define NRF_ATFIFO_DEF(fifo_id, storage_type, item_cnt)     static storage_type NRF_ATFIFO_BUF_NAME(fifo_id)[(item_cnt)+1];  
+
+-------------------
+
 
 #define APP_TIMER_CONFIG_OP_QUEUE_SIZE 10
 
+#define NRF_ATFIFO_INST_NAME(fifo_id) CONCAT_2(fifo_id, _inst)  //m_req_fifo_inst
+
+
+参数：m_req_fifo, timer_req_t, 10
+//#define NRF_ATFIFO_DEF(fifo_id, storage_type, item_cnt)   
+
+     //static storage_type NRF_ATFIFO_BUF_NAME(fifo_id)[(item_cnt)+1];                             
+        static timer_req_t m_req_fifo_data[10+1];                           //here
+   
+ 
+     NRF_LOG_INSTANCE_REGISTER(NRF_ATFIFO_LOG_NAME, fifo_id,                               //待理解，忽略  
+                                  NRF_ATFIFO_CONFIG_INFO_COLOR,                                 
+                                  NRF_ATFIFO_CONFIG_DEBUG_COLOR,                                
+                                  NRF_ATFIFO_CONFIG_LOG_INIT_FILTER_LEVEL,                      
+                                  NRF_ATFIFO_CONFIG_LOG_ENABLED ?                               
+                                          NRF_ATFIFO_CONFIG_LOG_LEVEL : NRF_LOG_SEVERITY_NONE); 
+
+     static nrf_atfifo_t NRF_ATFIFO_INST_NAME(fifo_id) = {                       //m_req_fifo_inst                       
+                .p_buf = NULL,                                                   //m_req_fifo_inst.p_buf = NULL                                                         
+                NRF_LOG_INSTANCE_PTR_INIT(p_log, NRF_ATFIFO_LOG_NAME, fifo_id)                  
+        }; 
+                                                                                     
+     //static nrf_atfifo_t * const fifo_id = &NRF_ATFIFO_INST_NAME(fifo_id)
+         static nrf_atfifo_t * const fifo_id = &m_req_fifo_inst
+
+
+------------
+
+
 #define NRF_ATFIFO_BUF_NAME(fifo_id)  CONCAT_2(fifo_id, _data)   //m_req_fifo_data
 
-//NRF_ATFIFO_DEF(m_req_fifo, timer_req_t, APP_TIMER_CONFIG_OP_QUEUE_SIZE);
-//  static timer_req_t NRF_ATFIFO_BUF_NAME(m_req_fifo)[10+1];  
-      static timer_req_t  m_req_fifo_data[10+1];                                //here
+    //#define NRF_ATFIFO_INIT(fifo_id)        //m_req_fifo        
+    //  nrf_atfifo_init( fifo_id, NRF_ATFIFO_BUF_NAME(fifo_id), sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)), sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)[0]) )
+           nrf_atfifo_init( m_req_fifo , m_req_fifo_data, sizeof(m_req_fifo_data), sizeof(m_req_fifo_data[0]) )
 
-
----
-
-
-
-
-    #define NRF_ATFIFO_INIT(fifo_id)        //m_req_fifo
-        
-        nrf_atfifo_init(                            
-            fifo_id,                         //m_req_fifo       
-            NRF_ATFIFO_BUF_NAME(fifo_id),           //m_req_fifo_data
-            sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)),   //m_req_fifo_data
-            sizeof(NRF_ATFIFO_BUF_NAME(fifo_id)[0]) //m_req_fifo_data
-        )
+              m_req_fifo->p_buf     = m_req_fifo_data
+              m_req_fifo->tail.tag  = 0;
+              m_req_fifo->head.tag  = 0;
+              m_req_fifo->buf_size  = buf_size;   //11x
+              m_req_fifo->item_size = item_size;  //11
 
 
 
+------------------------
 
-
+static uint64_t m_base_counter;
 
 
 

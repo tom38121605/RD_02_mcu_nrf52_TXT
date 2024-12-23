@@ -1,18 +1,21 @@
  
+待察1： rtc1的具体作用
 
 
 =================================== rtc1 ===init===============================
  
-
 
 flow:
 
      main -- app_timer_init -- drv_rtc_init -- drv_rtc_overflow_enable -- drv_rtc_compare_set 
 
 
-数据流： 
- 
+数据流：m_req_fifo_data -- m_req_fifo(m_req_fifo_inst)
 
+数据流：rtc_irq    -->  m_handlers[0]
+数据流：m_rtc_inst -->  m_cb[0]
+
+默认指定数据流： cc = 1
 
 ----------------------------------
 
@@ -23,11 +26,11 @@ main
     app_timer_init();
 
 
-
 ------------------
 
-功能：设置RTC1的频率32768和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
+功能：设置RTC1的频率32768和中断优先级，使能RTC1的irq，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
 
+数据流：m_req_fifo_data -- m_req_fifo(m_req_fifo_inst)
 app_timer_init( )
  
     drv_rtc_config_t     config =  
@@ -36,7 +39,8 @@ app_timer_init( )
 
     //NRF_ATFIFO_INIT(m_req_fifo);
        timer_req_t       m_req_fifo_data[10+1]; 
-       nrf_atfifo_t        * m_req_fifo;
+       nrf_atfifo_t      m_req_fifo_inst;
+       nrf_atfifo_t      * m_req_fifo = &m_req_fifo_inst;
 
        //nrf_atfifo_init(  m_req_fifo, m_req_fifo_data, sizeof(m_req_fifo_data), sizeof(m_req_fifo_data[0]) )
 
@@ -47,9 +51,9 @@ app_timer_init( )
           m_req_fifo->item_size = item_size;  //11
 
     //drv_rtc_init(&m_rtc_inst, &config, rtc_irq);    
-        NRF_RTC1->PRESCALER = 0;              //设置RTC1的频率为32768 
+        NRF_RTC1->PRESCALER = 0;                   //设置RTC1的频率为32768 
         NVIC->IP[(17)] =  6 << (8  - 3);           //设置RTC1 的中断优先级 为6
-        NVIC->ISER[0] = 1 << 17 ;                  // 使能RTC1 的中断
+        NVIC->ISER[0] = 1 << 17 ;                  // 使能RTC1 的irq
 
  
     //drv_rtc_overflow_enable(&m_rtc_inst, true);
@@ -59,7 +63,10 @@ app_timer_init( )
 
 
     //使能COMPARE[1]的事件， 使能COMPARE[1]的中断，设置cc[1]值
-    drv_rtc_compare_set(&m_rtc_inst, 1, DRV_RTC_MAX_CNT >> 1, true);  //0xFFF-FFF
+    //drv_rtc_compare_set(&m_rtc_inst, 1, DRV_RTC_MAX_CNT >> 1, true);   //0xFFF-FFF
+        NRF_RTC1->CC[1] = 0xFFF-FFF >> 1;                                //设置cc[1]值
+        NRF_RTC1->EVTENSET =( 1<<16 )  << 1;                             //使能COMPARE[1]的事件
+        NRF_RTC1->INTENSET = ( 1<<16 )  << 1;                            //INTENSET.17=1 , 使能COMPARE[1]中断
 
 
     if (APP_TIMER_KEEPS_RTC_ACTIVE)  //no, 忽略跳过
@@ -72,6 +79,7 @@ app_timer_init( )
 
 
 -----
+
 功能：使能COMPARE[1]的事件， 使能COMPARE[1]的中断，设置cc[1]值
 
 参数：m_rtc_inst, 1, 0xFFF-FFF >> 1, true
@@ -96,17 +104,16 @@ drv_rtc_compare_set( * p_instance,  cc,  abs_value, irq_enable)
     //nrf_rtc_event_clear( NRF_RTC1, cc_evt);    //或清除COMPARE[1]的事件标志
         *( p_reg +  event) = 0;
 
-    //nrf_rtc_cc_set( NRF_RTC1, cc, abs_value);   //
+    //nrf_rtc_cc_set( NRF_RTC1, cc, abs_value);   //设置cc[1]值
          p_reg->CC[1] = 0xFFF-FFF >> 1;
 
     nrf_rtc_event_enable( NRF_RTC1, cc_int_mask);
-        p_reg->EVTENSET =( 1<<16 )  << 1;               //使能COMPARE[1]的事件 
+        p_reg->EVTENSET =(1<<16 )  << 1;               //使能COMPARE[1]的事件 
 
     if (irq_enable)
 
         //nrf_rtc_int_enable(p_instance->p_reg, cc_int_mask);
-           p_reg->INTENCLR = ( 1<<16 )  << 1;             //INTENSET.17=1 , 使能COMPARE[1]中断
-
+           p_reg->INTENSET =   1<<16 )  << 1;                 //INTENSET.17=1 , 使能COMPARE[1]中断
 
 
 -----
@@ -119,22 +126,7 @@ nrf_rtc_event_clear(  * p_reg,  event)
  
     dummy = *(  p_reg +  event));
     (void)dummy;
-  
-  
------
-
-参数：m_rtc_inst, 1<<1, 1
-evt_enable( * const p_instance,  mask, irq_enable)
-
-    //nrf_rtc_event_enable(NRF_RTC1, 1<<1 );
-       NRF_RTC1->EVTENSET = 1<<1 ;
-
-    if (irq_enable) //1
-    
-        //nrf_rtc_int_enable( NRF_RTC1, 1<<1 );
-           NRF_RTC1->INTENSET = 1<<1;
-    
-
+   
 
 ------
 
@@ -172,30 +164,298 @@ drv_rtc_init( *p_instance,  * p_config,  handler)
 
 
 
+
+
 =================================== rtc1 ===irq===============================
 
+flow:
+
+    ses_startup_nrf52833.s -- RTC1_IRQHandler -- drv_rtc_rtc_1_irq_handler --(m_handlers[0]) -- rtc_irq -- on_overflow_evt -- on_compare1_evt
 
 
-----
 
-rtc_irq(drv_rtc_t const * const  p_instance)
-{
-    if (drv_rtc_overflow_pending(p_instance))
-    {
-        on_overflow_evt();
-    }
-    if (drv_rtc_compare_pending(p_instance, 0))
-    {
+
+-------------------------------------------------------------------
+
+全局变量： m_rtc_inst
+
+    DRV_RTC_INSTANCE(1)                                       
+                                                                 
+    .p_reg            = NRF_RTC1,                
+    .irq              = RTC1_IRQn,             
+    .instance_id      = DRV_RTC_RTC1_INST_IDX,  //0
+    .cc_channel_count = RTC1_CC_NUM,            //4
+
+
+
+-------------------
+
+可看作irq硬件入口函数
+drv_rtc_rtc_1_irq_handler( )
+
+    //m_handlers[DRV_RTC_RTC1_INST_IDX](m_cb[DRV_RTC_RTC1_INST_IDX].p_instance);
+    //  rtc_irq(m_cb[0].p_instance);
+          rtc_irq(m_rtc_inst);
+
+
+--------------------
+
+//待理解 (m_base_counter , m_stamp64)
+参数：m_rtc_inst
+rtc_irq(*p_instance)
+
+    //AAA = drv_rtc_overflow_pending(p_instance);
+       AAA = evt_pending(p_instance, NRF_RTC_EVENT_OVERFLOW);    //offsetof(NRF_RTC_Type,EVENTS_OVRFLW) , OVRFLW的事件标志
+    if ( AAA )        
+  
+       //on_overflow_evt();
+           m_base_counter += (DRV_RTC_MAX_CNT + 1); //0xFFFFFF << 0  //待理解
+    
+
+    if ( drv_rtc_compare_pending(p_instance, 0) )    
         on_compare_evt(p_instance);
-    }
-    if (drv_rtc_compare_pending(p_instance, 1))
-    {
-        on_compare1_evt(p_instance);
-    }
 
-    timer_req_process(p_instance);
-    rtc_update(p_instance);
-}
+
+    //BBB = drv_rtc_compare_pending(p_instance, 1);
+       BBB = evt_pending(p_instance, CC_IDX_TO_CC_EVENT(1));     //offsetof(NRF_RTC_Type, EVENTS_COMPARE[1], COMPARE[1]的事件标志    
+    if ( BBB )    
+        //on_compare1_evt(p_instance);
+        //  m_stamp64 = get_now();
+              m_stamp64 = m_base_counter + NRF_RTC1->COUNTER   //待理解
+
+    
+    timer_req_process(p_instance); //待理解 （有汇编处理）
+
+    rtc_update(p_instance);   //待理解
+
+
+------
+
+//待理解
+get_now( )
+ 
+    //now = m_base_counter + drv_rtc_counter_get(&m_rtc_inst);
+        now = m_base_counter + NRF_RTC1->COUNTER
+
+    if (now < m_stamp64) 
+       now += (DRV_RTC_MAX_CNT + 1);   //FFFFFF
+
+    return now;
+
+------
+
+//待理解
+rtc_update( *p_instance )
+
+    while(1)
+    
+        app_timer_t * p_next = sortlist_peek();
+        bool rtc_reconf = false;
+
+        if (p_next)                   //Candidate for active timer        
+
+            if (APP_TIMER_IS_IDLE(p_next)) 
+                (void)sortlist_pop();
+                continue;
+            
+            else if (mp_active_timer == NULL)            
+
+                rtc_reconf = true;
+            
+            else if (p_next->end_val < mp_active_timer->end_val)
+            
+
+                rtc_reconf = true;
+                if (!APP_TIMER_IS_IDLE(mp_active_timer))
+                
+                    NRF_LOG_INST_DEBUG(mp_active_timer->p_log, "Timer preempted.");
+                    nrf_sortlist_add(&m_app_timer_sortlist, &mp_active_timer->list_item);            
+
+            if (rtc_reconf)
+            
+                bool rerun;
+                p_next = sortlist_pop();
+                NRF_LOG_INST_DEBUG(p_next->p_log, "Activating timer (CC:%d/%08x).", p_next->end_val, p_next->end_val);
+                if (rtc_schedule(p_next, &rerun))
+                
+                    if (!APP_TIMER_KEEPS_RTC_ACTIVE && (mp_active_timer == NULL))
+                    
+                        drv_rtc_start(p_instance);
+                    
+                    mp_active_timer = p_next;
+
+                    if (rerun == false)
+                    
+                        //RTC was successfully updated and sortlist was not updated. Function can be terminated.
+                        break;                
+                else
+                
+                    //If RTC driver indicated that timeout already occured a new candidate will be taken from sorted list.
+                    NRF_LOG_INST_DEBUG(p_next->p_log,"Timer expired before scheduled to RTC.");
+                    mp_active_timer = NULL;
+                
+            
+            else
+            
+                //RTC will not be updated. Function can terminate.
+                break;
+            
+        
+        else //No candidate for active timer.
+        
+            if (!APP_TIMER_KEEPS_RTC_ACTIVE && (mp_active_timer == NULL))
+            
+                drv_rtc_stop(p_instance);
+            
+            break;
+      
+  
+------
+
+//待理解
+app_timer_t * sortlist_peek( )
+
+    nrf_sortlist_item_t const * p_next_item = nrf_sortlist_peek(&m_app_timer_sortlist);  //待理解
+
+    return p_next_item ? CONTAINER_OF(p_next_item, app_timer_t, list_item) : NULL;
+
+
+nrf_sortlist_item_t const * nrf_sortlist_peek(nrf_sortlist_t const * p_list)  //待理解
+
+    return p_list->p_cb->p_head;
+
+
+
+
+------
+
+timer_req_process( *p_instance )
+
+    nrf_atfifo_item_get_t   fifo_ctx;
+
+    p_req = nrf_atfifo_item_get(m_req_fifo, &fifo_ctx);
+
+    while (p_req)
+    
+        switch (p_req->type)
+        
+            case TIMER_REQ_START:
+
+                if (!APP_TIMER_IS_IDLE(p_req->p_timer))
+                {
+                    nrf_sortlist_add(&m_app_timer_sortlist, &(p_req->p_timer->list_item));
+                    NRF_LOG_INST_DEBUG(p_req->p_timer->p_log,"Start request (expiring at %d/0x%08x).",
+                                                  p_req->p_timer->end_val, p_req->p_timer->end_val);
+                }
+                break;
+            case TIMER_REQ_STOP:
+                if (p_req->p_timer == mp_active_timer)
+                {
+                    mp_active_timer = NULL;
+                }
+                else
+                {
+                    bool found = nrf_sortlist_remove(&m_app_timer_sortlist, &(p_req->p_timer->list_item));
+                    if (!found)
+                    {
+                         NRF_LOG_INFO("Timer not found on sortlist (stopping expired timer).");
+                    }
+                }
+                NRF_LOG_INST_DEBUG(p_req->p_timer->p_log,"Stop request.");
+                break;
+
+            case TIMER_REQ_STOP_ALL:
+                sorted_list_stop_all();
+                m_global_active = true;
+                NRF_LOG_INFO("Stop all request.");
+                break;
+
+            default:
+                break;
+        
+
+        UNUSED_RETURN_VALUE(nrf_atfifo_item_free(m_req_fifo, &fifo_ctx));
+
+        p_req = nrf_atfifo_item_get(m_req_fifo, &fifo_ctx);
+
+
+-----
+
+参数：m_req_fifo, &fifo_ctx
+nrf_atfifo_item_get( * p_fifo,  *p_context)
+
+    AAA = nrf_atfifo_rspace_req( p_fifo, &(p_context->last_head) );
+
+    if ( AAA )
+
+        void * p_item = (p_fifo->p_buf) + p_context->last_head.pos.rd;
+
+        return p_item;
+
+
+------
+
+nrf_atfifo_rspace_req( * const p_fifo, * p_old_head)
+
+    volatile bool ret;
+    volatile uint32_t old_head;
+    uint32_t new_head;
+    uint32_t temp;
+
+    __ASM volatile(
+        /* For more comments see Keil version above */
+        "1:                                                         \n"
+        "   ldrex %[old_head], [%[p_fifo], %[offset_head]]          \n"
+        "   uxth %[new_head], %[old_head], ror #16                  \n"
+        "                                                           \n"
+        "   ldrh  %[temp], [%[p_fifo], %[offset_tail_rd]]           \n"
+        "   cmp   %[new_head], %[temp]                              \n"
+        "   ittt  eq                                                \n"
+        "   clrexeq                                                 \n"
+        "   moveq %[ret], %[false_val]                              \n"
+        "   beq.n   2f                                              \n"
+        "                                                           \n"
+        "   ldrh  %[temp], [%[p_fifo], %[offset_item_size]]         \n"
+        "   add   %[new_head], %[temp]                              \n"
+        "   ldrh  %[temp], [%[p_fifo], %[offset_buf_size]]          \n"
+        "   cmp   %[new_head], %[temp]                              \n"
+        "   it    hs                                                \n"
+        "   subhs %[new_head], %[new_head], %[temp]                 \n"
+        "                                                           \n"
+        "   pkhbt %[new_head], %[old_head], %[new_head], lsl #16    \n"
+        "                                                           \n"
+        "   strex %[temp], %[new_head], [%[p_fifo], %[offset_head]] \n"
+        "   cmp   %[temp], #0                                       \n"
+        "   bne.n 1b                                                \n"
+        "                                                           \n"
+        "   mov %[ret], %[true_val]                                 \n"
+        "2:                                                         \n"
+        : /* Output operands */
+            [ret]     "=r"(ret),
+            [temp]    "=&r"(temp),
+            [old_head]"=&r"(old_head),
+            [new_head]"=&r"(new_head)
+        : /* Input operands */
+            [p_fifo]          "r"(p_fifo),
+            [offset_head]     "J"(offsetof(nrf_atfifo_t, head)),
+            [offset_tail_rd]  "J"(offsetof(nrf_atfifo_t, tail) + offsetof(nrf_atfifo_postag_pos_t, rd)),
+            [offset_item_size]"J"(offsetof(nrf_atfifo_t, item_size)),
+            [offset_buf_size] "J"(offsetof(nrf_atfifo_t, buf_size)),
+            [true_val]        "I"(true),
+            [false_val]       "I"(false)
+        : /* Clobbers */
+            "cc");
+
+    p_old_head->tag = old_head;
+    UNUSED_VARIABLE(new_head);
+    UNUSED_VARIABLE(temp);
+
+    return ret;
+
+
+
+
+ 
 
 
 

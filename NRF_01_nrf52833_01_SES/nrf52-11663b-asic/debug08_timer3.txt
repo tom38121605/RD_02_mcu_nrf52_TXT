@@ -3,15 +3,15 @@
 =================================== timer3 ===init===============================
  
 
-
 flow:
  
-     main -- timestamp_init_with_internal_sample_event -- nrfx_timer_init -- nrfx_timer_enable -- nrfx_timer_capture -- nrfx_timer_compare 
-     -- nrfx_ppi_group_alloc -- nrfx_ppi_group_enable -- nrfx_ppi_channel_alloc -- nrfx_ppi_channel_assign
+     main -- timestamp_init_with_internal_sample_event -- nrfx_timer_init -- ((m_cb[3].handler=timestamp_timer_event_handler) -- nrfx_timer_enable 
+     -- nrfx_timer_capture -- nrfx_timer_compare      -- nrfx_ppi_group_alloc -- nrfx_ppi_group_enable -- nrfx_ppi_channel_alloc -- nrfx_ppi_channel_assign
 
 
 
-数据流： 
+数据流：timestamp_timer_event_handler --> m_cb[3].handler
+数据流：                         0    --> m_cb[3].context
 
 
 
@@ -19,9 +19,12 @@ flow:
 
 main
      
-    //初始化并开启timer3，捕获cc并计算新的sample value，使能 COMPARE[0] 中断，分配并打开 ppi group0，
-      把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
-    timestamp_init_with_internal_sample_event(3);
+      //设置timer3的中断优先级，使能timer3的中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+      取得空闲的CC0通道，捕获定时器值到cc0并计算新的sample value，使能 COMPARE[0] 中断，设置新的cc0值。
+      分配一个空闲的ppi group0并打开它 ，
+      再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
+
+    timestamp_init_with_internal_sample_event(3);    //优先级3
 
 
     ......
@@ -30,9 +33,10 @@ main
 
 -----------------
 
-
-功能：初始化并开启timer3，捕获cc并计算新的sample value，使能 COMPARE[0] 中断，分配并打开 ppi group0，
-      把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
+功能：设置timer3的中断优先级，使能timer3的中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+      取得空闲的CC0通道，捕获定时器值到cc0并计算新的sample value，使能 COMPARE[0] 中断，设置新的cc0值。
+      分配一个空闲的ppi group0并打开它 ，
+      再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
 
 全局变量：timer_timestamp
 
@@ -48,7 +52,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
     //timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
         .frequency          = NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,     //0
         .mode               = NRFX_TIMER_DEFAULT_CONFIG_MODE,          //0         
-        .bit_width          = NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,     //3
+        .bit_width          = NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,     //3  （对应32位）
         .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,  //6                  
         .p_context          = NULL   
 
@@ -61,24 +65,24 @@ timestamp_init_with_internal_sample_event( isr_priority)
     //开启timer3
     //nrfx_timer_enable(&timer_timestamp);
         //nrf_timer_task_trigger(NRF_TIMER3, NRF_TIMER_TASK_START);          //开启timer3
-            p_reg + task = 1;
+            p_reg + START = 1;
 
-        m_cb[p_instance->instance_id].state = NRFX_DRV_STATE_POWERED_ON; 
+        m_cb[3].state = NRFX_DRV_STATE_POWERED_ON; 
 
 
     //sample_event_compare_channel = timestamp_get_capture_compare_channel();  
-       sample_event_compare_channel = 0 ;   //NRF_TIMER_CC_CHANNEL0            //取得当前空闲的CC通道  (待理解：没有根据timer3去找cc通道)
+       sample_event_compare_channel = 0 ;   //NRF_TIMER_CC_CHANNEL0            //取得当前空闲的CC通道  (已理解：没有根据timer3去找cc通道-- 只有timer3用到这个函数)
 
 
     //nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);      
        //nrf_timer_task_trigger( NRF_TIMER3, nrf_timer_capture_task_get(0) );
            NRF_TIMER3 + TASKS_CAPTURE[0]  =1;                                 //启动CAPTURE[0]任务，把定时器的计数值，捕获到cc寄存器中
 
-       //rf_timer_cc_read( NRF_TIMER3, 0);      //忽略，没有使用
+       //rf_timer_cc_read( NRF_TIMER3, 0);         //忽略，没有使用
            p_reg->CC[0];                           //取得CC值
 
 
-    //捕获定时器计数器值到CC，并计算新的sample_event_trigger_value （用途待理解）
+    //捕获定时器计数器值到CC0，并计算新的sample_event_trigger_value （用于设置将来的cc0值）
     //sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
     //  sample_event_trigger_value = nrf_timer_cc_read( NRF_TIMER3, 0 ) + 15984;
            sample_event_trigger_value = p_reg->CC[0] + 15984;
@@ -126,6 +130,16 @@ timestamp_init_with_internal_sample_event( isr_priority)
     initialized = true;
 
 
+-------
+
+功能： 取得timer的空闲比较通道 NRF_TIMER_CC_CHANNEL0
+timestamp_get_capture_compare_channel()
+ 
+    rvalue = next_free_capture_channel;    //NRF_TIMER_CC_CHANNEL0
+
+    next_free_capture_channel =next_free_capture_channel + 1;
+
+    return rvalue;
 
 -----
 
@@ -198,18 +212,6 @@ nrfx_timer_compare( *p_instance, cc_channel, cc_value, enable_int)
 
  
 
--------
-
-功能： 取得timer的空闲比较通道 NRF_TIMER_CC_CHANNEL0
-timestamp_get_capture_compare_channel()
- 
-    rvalue = next_free_capture_channel;    //NRF_TIMER_CC_CHANNEL0
-
-    next_free_capture_channel =next_free_capture_channel + 1;
-
-    return rvalue;
- 
-
 --------
 
 功能：设置timer3的中断优先级，使能timer3的中断，定时器模式，bitwidth为32位，预分频为0
@@ -218,6 +220,9 @@ timestamp_get_capture_compare_channel()
     .p_reg            = NRF_TIMER3,             
     .instance_id      = NRFX_TIMER3_INST_IDX,   //3
     .cc_channel_count = TIMER3_CC_NUM,          //6
+
+数据流：timestamp_timer_event_handler --> m_cb[3].handler
+数据流：                         0    --> m_cb[3].context
 
 参数：timer_timestamp, &timer_cfg, timestamp_timer_event_handler
 nrfx_timer_init( *p_instance, * p_config, timer_event_handler)
@@ -266,23 +271,64 @@ nrfx_timer_init( *p_instance, * p_config, timer_event_handler)
 
 
 
+========================================== timer3 ===irq=========================================
+
+flow:
+
+     ses_startup_nrf52833.s -- TIMER3_IRQHandler  -- nrfx_timer_3_irq_handler -- irq_handler -- (m_cb[3].handler) 
+     -- timestamp_timer_event_handler
 
 
 
-=================================== timer3 ===irq===============================
 
+
+
+-----------------------------------------------------------------------
+
+void nrfx_timer_3_irq_handler(void)
+{
+    irq_handler(NRF_TIMER3, &m_cb[NRFX_TIMER3_INST_IDX],
+        NRF_TIMER_CC_CHANNEL_COUNT(3));
+}
+
+-----
+
+static void irq_handler(NRF_TIMER_Type        * p_reg,
+                        timer_control_block_t * p_cb,
+                        uint8_t                 channel_count)
+{
+    uint8_t i;
+    for (i = 0; i < channel_count; ++i)
+    {
+        nrf_timer_event_t event = nrf_timer_compare_event_get(i);
+        nrf_timer_int_mask_t int_mask = nrf_timer_compare_int_get(i);
+
+        if (nrf_timer_event_check(p_reg, event) &&
+            nrf_timer_int_enable_check(p_reg, int_mask))
+        {
+            nrf_timer_event_clear(p_reg, event);
+            NRFX_LOG_DEBUG("Compare event, channel: %d.", i);
+
+            //p_cb->handler(event, p_cb->context);
+               timestamp_timer_event_handler(event, 0);
+        }
+    }
+}
+
+
+----------
 
 
 timestamp_timer_event_handler( event_type,  * p_context)
-{
+
     if(event_type == compare_events[sample_event_compare_channel])
-    {
+    
         //Save last sample timestamp
         last_sample_event_trigger_value = sample_event_trigger_value;
 
 
         if(sample_event_compare_channel != 0xFF)
-        {    
+            
             //Setup sample time offset events based off of previous sample time
             for(uint8_t i=0; i<next_free_sample_time_offset_index; i++)
                 nrfx_timer_compare(&timer_timestamp, sample_time_offset_cc_channel[i], sample_event_trigger_value + sample_time_offset_time[i], false);
@@ -295,15 +341,15 @@ timestamp_timer_event_handler( event_type,  * p_context)
             while(calculate_wrapped_delta(nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel) + 100, sample_event_trigger_value, UINT32_MAX) > 0);
 
             nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
-        }
+        
     
 
 
         //Call callback if supplied
         for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
             sample_event_callbacks[i](event_type, p_context);
-    }
-}
+    
+
 
 
 
