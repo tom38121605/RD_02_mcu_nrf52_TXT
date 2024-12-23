@@ -279,41 +279,44 @@ flow:
      -- timestamp_timer_event_handler
 
 
-
-
-
-
 -----------------------------------------------------------------------
 
-void nrfx_timer_3_irq_handler(void)
-{
-    irq_handler(NRF_TIMER3, &m_cb[NRFX_TIMER3_INST_IDX],
-        NRF_TIMER_CC_CHANNEL_COUNT(3));
-}
+可看作是硬件中断入口
+
+全局变量：timer_timestamp                               
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX,     //3
+    .cc_channel_count = TIMER3_CC_NUM,          //6
+
+nrfx_timer_3_irq_handler( )
+
+    //irq_handler(NRF_TIMER3, &m_cb[3],       NRF_TIMER_CC_CHANNEL_COUNT(3));    
+    //    irq_handler(NRF_TIMER3, &m_cb[3],       TIMER3_CC_NUM）;    
+               irq_handler(  NRF_TIMER3,  &m_cb[3],   6 );    
+
 
 -----
 
-static void irq_handler(NRF_TIMER_Type        * p_reg,
-                        timer_control_block_t * p_cb,
-                        uint8_t                 channel_count)
-{
-    uint8_t i;
-    for (i = 0; i < channel_count; ++i)
-    {
-        nrf_timer_event_t event = nrf_timer_compare_event_get(i);
-        nrf_timer_int_mask_t int_mask = nrf_timer_compare_int_get(i);
+参数：NRF_TIMER3,  &m_cb[3],   6
+irq_handler(     * p_reg, * p_cb,  channel_count)
 
-        if (nrf_timer_event_check(p_reg, event) &&
-            nrf_timer_int_enable_check(p_reg, int_mask))
-        {
-            nrf_timer_event_clear(p_reg, event);
-            NRFX_LOG_DEBUG("Compare event, channel: %d.", i);
+    for (i = 0; i < channel_count; ++i)
+    
+        // event = nrf_timer_compare_event_get(i);   
+            event =NRFX_OFFSETOF( NRF_TIMER_Type,  EVENTS_COMPARE[i] );  
+
+        //nrf_timer_int_mask_t int_mask = nrf_timer_compare_int_get(i);
+        //    nrf_timer_int_mask_t int_mask =  NRF_TIMER_INT_COMPARE0_MASK << i;
+                   nrf_timer_int_mask_t int_mask =  1<< 6 << i;
+
+        if ( nrf_timer_event_check(p_reg, event) &&   nrf_timer_int_enable_check(p_reg, int_mask) )   //如果有COMPARE[0]事件标志，并且使能了COMPARE[0]中断
+        
+            //nrf_timer_event_clear(p_reg, event);
+                 NRF_TIMER3 + EVENTS_COMPARE[i] =0 ;          //清除COMPARE[0]事件标志            
 
             //p_cb->handler(event, p_cb->context);
-               timestamp_timer_event_handler(event, 0);
-        }
-    }
-}
+                timestamp_timer_event_handler(event, 0);      //COMPARE[0]中断服务函数
+        
 
 
 ----------
@@ -342,8 +345,6 @@ timestamp_timer_event_handler( event_type,  * p_context)
 
             nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
         
-    
-
 
         //Call callback if supplied
         for(uint8_t i = 0; i < sample_event_callbacks_num; i++)

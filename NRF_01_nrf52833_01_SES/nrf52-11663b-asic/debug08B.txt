@@ -1,5 +1,7 @@
 
 
+#define TIMER3_CC_NUM 6
+
 ----------------------------------------------
 
 #define TIMER_INTENSET_COMPARE0_Pos (16 )  
