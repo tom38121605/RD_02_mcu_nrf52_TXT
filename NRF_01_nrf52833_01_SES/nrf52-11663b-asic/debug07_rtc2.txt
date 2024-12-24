@@ -155,11 +155,12 @@ timestamp_set_synch_lost_found_callback(  func, *timeout_gen_g)
 
 
     //取得空闲的cc通道0
-    timeout_gen->get_timeout_channel(&timestamp_lost_compare_channel, timestamp_lost_timeout, NULL);
+    //timeout_gen->get_timeout_channel(&timestamp_lost_compare_channel, timestamp_lost_timeout, NULL);
+         timestamp_lost_compare_channel=0;   //空闲通道是cc0
+
 
     //设置cc[0]延时门槛值(定时500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
     timeout_gen->set_timeout(timestamp_lost_compare_channel, MS_TO_RTC_TIMEOUT_GEN(500));   //16384
-
 
 
 ---------------------
@@ -172,9 +173,6 @@ timestamp_set_synch_lost_found_callback(  func, *timeout_gen_g)
 
 参数：&timestamp_lost_compare_channel, timestamp_lost_timeout, 0
 rtc_timeout_gen::get_timeout_channel( *channel, callback, *p_context)
-
-    if(next_free_cc_channel == timeout_rtc.cc_channel_count) //4
-        return NRF_ERROR_NO_MEM;
 
     *channel = next_free_cc_channel;                    //timestamp_lost_compare_channel=0，空闲通道是cc0
 
@@ -192,10 +190,10 @@ rtc_timeout_gen::get_timeout_channel( *channel, callback, *p_context)
 参数：timestamp_lost_compare_channel=0， 16384
 rtc_timeout_gen::set_timeout(channel, timeout)
 
-    last_timeout_used[0] = timeout;
+    last_timeout_used[0] = timeout;   // 16384
     timeout_running[0]   = true;
 
- 
+    //设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
     //nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + timeout, true);
         nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + 16384, 1);
  

@@ -22,6 +22,8 @@ flow: (通过twi0的irq，最后运行的是 adc_cartes_state_change  )
    main -- adc_cartes_init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire -- (p_box->handler(twi0硬件地址) = nrfx_twim_0_irq_handler) 
 
 
+数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+数据流： sample_timer_event_handler --> sample_event_callbacks[0]
 
 ----------------------------------------------------------------------
 
@@ -41,13 +43,17 @@ main()
 
 功能：选择I2C0, 配置I2C引脚，频率，回调函数
 参数：sample_set_ready, hot_plug_callback, rtc_timeout
-数据流：  NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
+数据流： sample_timer_event_handler --> sample_event_callbacks[0]
 adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
 
     sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
     hot_plug_event_callback = hot_plug_cb;                             //hot_plug_callback
     
-    timestamp_add_sample_event_callback(sample_timer_event_handler);  //Sample timestamp callback 
+    //timestamp_add_sample_event_callback(sample_timer_event_handler); 
+        sample_event_callbacks[0] = sample_timer_event_handler;  
+        sample_event_callbacks_num++;
+
 
     current_output_data = output_data_1;
     next_output_data = output_data_2;
@@ -128,7 +134,6 @@ nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
     p_cb->p_context       = p_context;      //this , 指twi_basic::
 
     ......
-
 
 
 
