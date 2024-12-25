@@ -333,8 +333,16 @@ rtc_timeout_gen::rtc_timer_handler(  int_type)
          
             timeout_running[0] = false;
 
+
+            //或丢失同步信号的处理（小灯提示）
             //callback_funcs[0](callback_context[0]);
-               timestamp_lost_timeout(0);
+            //  timestamp_lost_timeout(0);             
+
+                 timestamp_synch_lost = true;
+
+                //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+                //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
+                      set_leds();
 
 
 -----
@@ -410,23 +418,7 @@ nrfx_atomic_u32_fetch_and( * p_data, value)   //待理解
 }
 
 
-
-------
-
-功能： 或丢失同步信号的处理（小灯提示）
-参数： 0
-timestamp_lost_timeout(  *p_context)
-
-    if(timestamp_synch_lost_found_callback != NULL)   //timestamp_synch_lost_found
-    
-        timestamp_synch_lost = true;
-
-        //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
-        //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
-               set_leds();
-
-
-
+ 
 
 
 

@@ -3,11 +3,10 @@
 
 
 
-=================================== uarte ===init===============================
+========================================= uarte ===init=====================================
 
 
-（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer）  --  上海旅行社（m_rx_fifo）  --  黄色大巴rx（rx_buf） -- byte（游客家里）
-（游客家里）byte --上海旅行社（m_tx_fifo） --  黄色大巴tx（tx_buf） --  西安旅行社（mcb） --  绿色大巴tx（tx_buffer） -- TXD（公园）
+（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer） 
 
 
 flow:
@@ -36,13 +35,15 @@ main
 
 功能：取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0
 
-全局变量：comms_uarte_synch_uarte （和comms_uarte相同）
+全局变量：comms_uarte_synch_uarte，comms_uarte相同
 NRFX_UARTE_INSTANCE(1)                              
     .p_reg        = NRF_UARTE1,             
     .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
 
+数据流： 常量 -->  m_uart0_drv_config(临时)
+数据流： comms_uarte_handler -->  mcb[1] ，  0 -->  m_cb[1].p_context 
+
 参数：comms_uarte_synch_uarte, P1.2
-数据流： 常量 -->  m_uart0_drv_config
 comms_uarte_init( uarte_instance, rx_pin)
 
     nrfx_uarte_config_t     m_uart0_drv_config;
@@ -57,24 +58,141 @@ comms_uarte_init( uarte_instance, rx_pin)
     m_uart0_drv_config.interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY;   //6
 
 
-    nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler);
+    //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+    nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler);  //数据流：comms_uarte_handler -->  mcb[1]  
 
 
     //设置PPI，以便在CC0的样本读取事件中捕获时间戳   
-    //功能：把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 
+    //在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0 
     //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));   //待理解，先跳过
 
          //UARTE1.NRF_UARTE_EVENT_ENDRX事件地址
          //AAA = nrf_uarte_event_address_get( comms_uarte, NRF_UARTE_EVENT_ENDRX);
          //   AAA = nrf_uarte_event_address_get( NRF_UARTE1, NRF_UARTE_EVENT_ENDRX);
-                 AAA = p_reg + event;                                                 //UARTE1.NRF_UARTE_EVENT_ENDRX事件地址
+                 AAA = p_reg +  NRF_UARTE_EVENT_ENDRX;                                        //UARTE1.NRF_UARTE_EVENT_ENDRX事件地址
 
-         //取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0
-         comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(AAA);   //NRF_TIMER_CC_CHANNEL0
+         //取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0, 返回NRF_TIMER_CC_CHANNEL0
+         //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(AAA);             
+                NRF_PPI->CH[0].EEP = NRF_UARTE1.NRF_UARTE_EVENT_ENDRX;     //UARTE1的ENDRX事件
+                NRF_PPI->CH[0].TEP = NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0;   //timer3的CAPTURE0捕获任务
+                NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL0);                  //使能PPI0 （打开ppi0通道）
+                return NRF_TIMER_CC_CHANNEL0
 
 
-    //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx
+    //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx   //把绿色大巴rx（comms_uarte_rx_buffer）链接到RXD
     nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6);
+
+
+------------------
+
+功能：配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+
+全局变量：comms_uarte
+    .p_reg        = NRF_UARTE1,             
+    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
+
+数据流：comms_uarte_handler + 常量（len + state）-->  mcb[1] ，  0 -->  m_cb[1].p_context 
+数据流：nrfx_uarte_1_irq_handler --> irq_handlers[1]
+数据流：config --> 寄存器
+
+参数：comms_uarte, &m_uart0_drv_config, comms_uarte_handler                            
+nrfx_uarte_init( * p_instance, * p_config,  event_handler)
+ 
+    p_cb = &m_cb[1]; 
+ 
+    irq_handlers[2] = { nrfx_uarte_0_irq_handler, nrfx_uarte_1_irq_handler };
+
+
+    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[1]);       //关联UART的中断入口地址（忽略跳过，因nrfx_uarte_1_irq_handler自己在.s文件中有定义,不需要关联）
+       nrfx_prs_acquire(NRF_UARTE1, nrfx_uarte_1_irq_handler );  
+     
+
+    apply_config(p_instance, p_config);    //配置串口引脚和波特率
+
+    p_cb->handler   = event_handler;         //comms_uarte_handler
+    p_cb->p_context = p_config->p_context;   //0
+
+
+    //清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+    if (p_cb->handler)     
+       //interrupts_enable(p_instance, 6);    
+       //  interrupts_enable(comms_uarte, 6);        
+              p_reg->INTENSET.4,8,9,17,22 = 1,1,1,1,1;       //使能UARTE1的ENDRX等各个子中断
+              NVIC->IP[28]  =   6 << (8 - 3)  ;              //设置UARTE1的irq中断的优先级
+              NVIC->ISER[(28 >> 5)] = (1 << 28);             //使能UARTE1的irq中断（总中断）
+
+    //nrf_uarte_enable(p_instance->p_reg);  //使能 NRF_UARTE1
+       p_reg->ENABLE = 8;
+
+    p_cb->rx_buffer_length           = 0;
+    p_cb->rx_secondary_buffer_length = 0;
+    p_cb->tx_buffer_length           = 0;
+    p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
+
+
+----------
+
+
+
+功能：使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+
+参数：comms_uarte，6
+interrupts_enable( * p_instance,  interrupt_priority)
+
+    //nrf_uarte_int_enable( NRF_UARTE1, NRF_UARTE_INT_ENDRX_MASK |  NRF_UARTE_INT_ENDTX_MASK |   NRF_UARTE_INT_ERROR_MASK |
+                                        NRF_UARTE_INT_RXTO_MASK  |  NRF_UARTE_INT_TXSTOPPED_MASK);
+    //  nrf_uarte_int_enable( NRF_UARTE1, 1<<4 | 1<<8 | 1<<9 | 1<<17 | 1<<22);
+           p_reg->INTENSET.4,8,9,17,22 = 1,1,1,1,1;                   //使能UARTE1的ENDRX等各个子中断
+
+
+
+    //AAA = nrfx_get_irq_number( NRF_UARTE1 );
+    //  AAA = NRFX_IRQ_NUMBER_GET(NRF_UARTE1);
+    //    AAA = NRFX_PERIPHERAL_ID_GET(NRF_UARTE1);
+            AAA = NRF_UARTE1 >> 12                        //0x40028000 >> 12，取得UARTE1的irq编号
+
+    //NRFX_IRQ_PRIORITY_SET( NRF_UARTE1 >> 12 , 6 );
+    //  NVIC_SetPriority(NRF_UARTE1 >> 12 , 6);
+          NVIC->IP[28]  =   6 << (8 - 3)  ;        //设置UARTE1的irq中断的优先级
+
+    //NRFX_IRQ_ENABLE( 28 );
+    //  NVIC_EnableIRQ( 28 );
+           NVIC->ISER[(28 >> 5)] = (1 << 28);     //使能UARTE1的irq中断（总中断）
+
+
+----------
+
+功能：关联UART的中断入口地址  （忽略跳过，因nrfx_uarte_1_irq_handler自己在.s文件中有定义,不需要关联）
+参数： NRF_UARTE1,  nrfx_uarte_1_irq_handler  
+nrfx_prs_acquire( * p_base_addr,  irq_handler)  //忽略跳过 （ NRF_UARTE1 不需要 ）
+
+    //prs_box_t * p_box = prs_box_get(p_base_addr);
+         p_box =  NULL ；
+
+    if (p_box != NULL)   //no, 不需要执行下面的语句
+
+        if (p_box->acquired)
+            busy = true;
+        else                                                   
+            p_box->handler  = irq_handler;
+            p_box->acquired = true;      
+
+
+---------
+
+功能： 判断NRF_UARTE1  和 NRFX_PRS_BOX_0_ADDR 是否同一个地址
+参数：  NRF_UARTE1
+prs_box_t * prs_box_get(* p_base_addr)   //忽略跳过 （ NRF_UARTE1 不需要 ）
+ 
+    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
+    #define IS_PRS_BOX(n, NRF_UARTE1 )  ( NRF_UARTE1  == NRFX_PRS_BOX_##n##_ADDR)
+ 
+    //if (IS_PRS_BOX(0, p_base_addr)) 
+    if ( NRF_UARTE1  == NRFX_PRS_BOX_0_ADDR )      //no
+       return &m_prs_box_0;  
+
+    else   //yes 
+        return NULL;              
 
 
 ------------------
@@ -85,8 +203,7 @@ comms_uarte_init( uarte_instance, rx_pin)
     .instance_id      = NRFX_TIMER3_INST_IDX, 
     .cc_channel_count = TIMER3_CC_NUM,           
 
-
-功能：取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0
+功能：取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0, 返回NRF_TIMER_CC_CHANNEL0
 
 数据流:  NRF_TIMER_CC_CHANNEL0 --> (capture_channel) --> comms_uarte_local_ts_capture_channel  //0
 
@@ -123,7 +240,6 @@ timestamp_add_capture_event( trigger_event_addr)
 
 
     return capture_channel;    //NRF_TIMER_CC_CHANNEL0
-
 
 
 --------
@@ -174,124 +290,25 @@ timestamp_get_capture_compare_channel()
 
     return rvalue;
 
+  
 
 
 
-
-------------------
-
-参数：comms_uarte, &m_uart0_drv_config, comms_uarte_handler                            
-    .p_reg        = NRF_UARTE1,             
-    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
-
-数据流：comms_uarte_handler + 常量（len + state）-->  mcb[1] ，  0 -->  m_cb[1].p_context 
-数据流：nrfx_uarte_1_irq_handler --> irq_handlers[1]
-数据流：config --> 寄存器
-nrfx_uarte_init( * p_instance, * p_config,  event_handler)
- 
-    p_cb = &m_cb[p_instance->drv_inst_idx]; 
-
- 
-    irq_handlers[2] = { nrfx_uarte_0_irq_handler, nrfx_uarte_1_irq_handler };
+=================================== uarte === rx init===================================
 
 
-    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[1]);        //没有返回成功  （忽略跳过）
-       nrfx_prs_acquire(NRF_UARTE1, nrfx_uarte_1_irq_handler );  
-     
-
-    apply_config(p_instance, p_config);    //配置串口引脚和波特率
-
-    p_cb->handler   = event_handler;         //comms_uarte_handler
-    p_cb->p_context = p_config->p_context;   //0
-
-    if (p_cb->handler)     
-        interrupts_enable(p_instance, 6);    //清中断标志，开启中断和优先级，使能中断
-    
-
-    nrf_uarte_enable(p_instance->p_reg);  //使能 NRF_UARTE1
-
-    p_cb->rx_buffer_length           = 0;
-    p_cb->rx_secondary_buffer_length = 0;
-    p_cb->tx_buffer_length           = 0;
-    p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
-
-
-
-----------
-
-功能：关联UART的中断入口地址  （忽略跳过，因nrfx_uarte_1_irq_handler自己在.s文件中有定义）
-参数： NRF_UARTE1,  nrfx_uarte_1_irq_handler  
-nrfx_prs_acquire( * p_base_addr,  irq_handler)  //忽略跳过 （ NRF_UARTE1 不需要 ）
-
-    //prs_box_t * p_box = prs_box_get(p_base_addr);
-         p_box =  NULL ；
-
-    if (p_box != NULL)   //no, 不需要执行下面的语句
-
-        if (p_box->acquired)
-            busy = true;
-        else                                                   
-            p_box->handler  = irq_handler;
-            p_box->acquired = true;      
-
-
----------
-
-功能： 判断NRF_UARTE1  和 NRFX_PRS_BOX_0_ADDR 是否同一个地址
-参数：  NRF_UARTE1
-prs_box_t * prs_box_get(* p_base_addr)   //忽略跳过 （ NRF_UARTE1 不需要 ）
- 
-    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
-    #define IS_PRS_BOX(n, NRF_UARTE1 )  ( NRF_UARTE1  == NRFX_PRS_BOX_##n##_ADDR)
- 
-    //if (IS_PRS_BOX(0, p_base_addr)) 
-    if ( NRF_UARTE1  == NRFX_PRS_BOX_0_ADDR )      //no
-       return &m_prs_box_0;  
-
-    else   //yes 
-        return NULL;              
-
-
- 
-
--------------
-
-
-
-//功能：把rx_buffer连接到uarterx的dma，开启uarte rx    //绿色大巴rx 对接dma rx        // 把西安旅行社（mcb）的 绿色大巴rx（rx_buffer）跟RXD（公园）连接起来
-
-全局变量： comms_uarte                             
-    .p_reg        = NRF_UARTE1,             
-    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
-
-参数： comms_uarte, comms_uarte_rx_buffer, 6
-数据流： rx_buffer + len(=6) -->  m_cb[0]                        //绿色大巴rx 挂靠 西安旅行社
-数据流： rx_buffer  -->  RXD.PTR， 6 -->  RXD.MAXCNT             //绿色大巴rx 对接dma rx
-
-nrfx_uarte_rx(  * p_instance, * p_data,  length)    //注意，这个函数并不只是初始化才调用，在接收数据时会连续调用
-
-    
-    (见下面的uarte rx)
-
- 
-      
-
-
-=================================== uarte === rx ===============================
-
-
-（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer）  --  上海旅行社（m_rx_fifo）  --  黄色大巴rx（rx_buf） -- byte（游客家里）
+（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer） 
 
 flow：
 
-     main -- comms_uarte_init --  nrfx_uarte_init -- apply_config -- nrfx_uarte_rx
-
-     ses_startup_nrf52833.s -- UARTE1_IRQHandler -- nrfx_uarte_1_irq_handler -- nrfx_uarte_1_irq_handler --
+     main -- comms_uarte_init --  nrfx_uarte_init -- nrfx_uarte_rx
 
 
+数据流： comms_uarte_rx_buffer + len(=6) -->  m_cb[0]                        //绿色大巴rx 挂靠 西安旅行社
+数据流： comms_uarte_rx_buffer  -->  RXD.PTR， 6 -->  RXD.MAXCNT             //绿色大巴rx 对接dma rx
 
-======-------------------------------------
 
+-----------------------------------------------
 
 
 //功能：把rx_buffer连接到uarterx的dma，开启uarte rx    //绿色大巴rx 对接dma rx        // 把西安旅行社（mcb）的 绿色大巴rx（rx_buffer）跟RXD（公园）连接起来
@@ -300,10 +317,10 @@ flow：
     .p_reg        = NRF_UARTE1,             
     .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
 
-参数： comms_uarte, comms_uarte_rx_buffer, 6
-数据流： rx_buffer + len(=6) -->  m_cb[0]                        //绿色大巴rx 挂靠 西安旅行社
-数据流： rx_buffer  -->  RXD.PTR， 6 -->  RXD.MAXCNT             //绿色大巴rx 对接dma rx
+数据流： comms_uarte_rx_buffer + len(=6) -->  m_cb[0]                        //绿色大巴rx 挂靠 西安旅行社
+数据流： comms_uarte_rx_buffer  -->  RXD.PTR， 6 -->  RXD.MAXCNT             //绿色大巴rx 对接dma rx
 
+参数： comms_uarte, comms_uarte_rx_buffer, 6
 nrfx_uarte_rx(  * p_instance, * p_data,  length)    //注意，这个函数并不只是初始化才调用，在接收数据时会连续调用
 
     p_cb = &m_cb[1];
@@ -359,7 +376,19 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)    //注意，这个函数并�
 
 
 
-======-------------------------------------
+
+
+
+======================================== uarte === rx irq====================================
+
+
+flow：
+
+     ses_startup_nrf52833.s -- UARTE1_IRQHandler -- nrfx_uarte_1_irq_handler -- uarte_irq_handler --
+
+
+
+--------------------------------------------
 
 可看作硬件中断入口 （ 详见上面的flow ）
 
@@ -371,13 +400,14 @@ nrfx_uarte_1_irq_handler( )
 -----------
 
 
-//功能： 清rx中断标志UARTE0->EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度，再调用rx_done_event中断服务程序 
+//功能： 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度，再调用rx_done_event中断服务程序 
+
+数据流： UARTE1->RXD.AMOUNT  --> amount( 临时变量 )  
 
 参数： NRF_UARTE1,  &m_cb[1] 
-数据流： UARTE1->RXD.AMOUNT    -->amount( 临时变量 )  
 uarte_irq_handler(* p_uarte,  * p_cb)
 
-    //---检查uarte中断的错误标志---
+    //---检查 EVENT_ERROR 的中断---
     if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))     //UARTE0->EVENT_ERROR.0=1 , uarte接收错误
 
         //清零错误标志
@@ -396,11 +426,12 @@ uarte_irq_handler(* p_uarte,  * p_cb)
              comms_uarte_handler (&event, 0);       //转中断服务处理 （先忽略）
 
 
-    //---检查uarte中断的接收完成标志---
+    //---检查 EVENT_ENDRX 的中断---
+    // 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度，再调用rx_done_event中断服务程序
     else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
    
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);      //UARTE1->EVENT_ENDRX.0=0，清零接收完成标志
-        amount = nrf_uarte_rx_amount_get(p_uarte);                           //UARTE1->RXD.AMOUNT    -->amount( 临时变量 )            //公园里面的人数
+        amount = nrf_uarte_rx_amount_get(p_uarte);                  //UARTE1->RXD.AMOUNT  --> amount( 临时变量 )            //公园里面的人数
 
         if (amount == p_cb->rx_buffer_length)       //yes，如果接收的数量，跟dma设置的数量相同，则下面 （如不相同，则忽略）
         
@@ -421,12 +452,12 @@ uarte_irq_handler(* p_uarte,  * p_cb)
             else    //yes， 执行这里        
                 p_cb->rx_buffer_length = 0;     //清零
 
+                //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event，再调用comms_uarte_handler中断服务程序
                 //rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   
                      rx_done_event( p_cb, 1, comms_uarte_rx_buffer );   
 
 
-
-     //---检查uarte中断的接收超时标志---   （忽略）
+    //---检查 EVENT_RXTO 的中断---  （忽略）
     if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
  
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
@@ -442,14 +473,15 @@ uarte_irq_handler(* p_uarte,  * p_cb)
 
 -----------
 
-数据流：p_cb->p_rx_buffer -- event（临时变量）   //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event，在调用comms_uarte_handler中断服务程序
+数据流：p_cb->p_rx_buffer -- event（临时变量）   //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event，再调用comms_uarte_handler中断服务程序
 
+参数：m_cb[1], 1, comms_uarte_rx_buffer
 rx_done_event(  * p_cb,   bytes,   p_data)
  
     nrfx_uarte_event_t event;
 
     event.type             = NRFX_UARTE_EVT_RX_DONE;
-    event.data.rxtx.bytes  = bytes;    //len=6
+    event.data.rxtx.bytes  = bytes;     //len=6
     event.data.rxtx.p_data = p_data;    //p_cb->p_rx_buffer（comms_uarte_rx_buffer）  //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event
 
 
@@ -460,24 +492,29 @@ rx_done_event(  * p_cb,   bytes,   p_data)
 
 --------------------
 
-测试数据：05 6A 88 3C 1D 00
+功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
+      开启下一次接收
 
-数据流：6A, 88, 3C, 1D   -->  dst[0,1,2,3]  
+测试数据：05 6A 88 3C 1D 00   （只有长度和包尾，没有包头和校验码，或需优化改進）
+
+数据流：6A, 88, 3C, 1D   -->  basestation_ts[0,1,2,3]  -->  u32(basestation_ts)
 参数：event, p_cb->p_context
 comms_uarte_handler(  *p_event,  *p_context) 
 
     uint32_t basestation_ts;
-
     if(p_event->type == NRFX_UARTE_EVT_RX_DONE)   //uarte1 接收完毕
      
-        index = (comms_uarte_in_synch ? 0:1);   //如果comms_uarte_in_synch=1，则index的值为0
+        index = (comms_uarte_in_synch ? 0:1);   //如果comms_uarte_in_synch=1（应表示处于同步之中），则index的值为0
 
-        if(comms_uarte_rx_buffer[index+5] == 0x00)  //buf[5]=0,说明收到同步信号
+        if(comms_uarte_rx_buffer[index+5] == 0x00)  //buf[5]=0,说明收到同步信号 
+                                                    //已基本理解，buff数组定义的大小为7，buff[6]默认是0，第1次收到数据时，相当于不判断后面的00，直接就進入同步
         
             comms_uarte_in_synch = true;           //同步信号置1
 
-            //Grab basestation timestmap @ sample_time and roll forward by TIMESTAMP_SYNCH_BS_PERIOD to the correct time for our sample event
+
+            功能：从buff的6个字节中，取出中间4个字节(时间)，保存到basestation_ts中
             cobs_decode(comms_uarte_rx_buffer+index, 5, &basestation_ts);  //取得 basestation_ts[4] = { 6A, 88, 3C, 1D }
+
 
             //Process timestamp
             //timestamp_synch_recieved(basestation_ts, timestamp_read_capture(comms_uarte_local_ts_capture_channel), TIMESTAMP_SYNCH_SOURCE_UART);
@@ -506,125 +543,8 @@ comms_uarte_handler(  *p_event,  *p_context)
 
 ----------
 
-参数： basestation_ts, p_reg->CC[0], 0
-timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
-
-
-    //TRACE_WITH_TIME(TRACE_ESB, COMMS_ESB_SIU_SYNCH_VALUE, basestation_ts);
-    
-    if(source == TIMESTAMP_SYNCH_SOURCE_ESB)   //1，no         //忽略，跳过
-    
-        ......
-
-    else if(source == TIMESTAMP_SYNCH_SOURCE_UART)  //0, yes
-    
-        //Reset timestamp synch lost timer
-        timestamp_reset_synch_lost_timer();
-
-        //Ignore esb synch pulses if we are getting uart pulses
-        bool was_wireless = !timestamp_is_synch_wired();
-        timestamp_synch_esb_ignore_count = 16;
-        if(timestamp_synch_lost_found_callback != NULL && was_wireless)
-            timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
-        
-        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;
-    
-
-
-    //-1 accounts for the delay between the actual timer event and the PPI capture of the timer value
-    basestation_ts -= 1;
-
-    //Compute basestation/local offset
-    timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;
-
-
------
-
-timestamp_reset_synch_lost_timer()
-
-    timestamp_synch_received = true;
-
-    if(timestamp_synch_lost_found_callback != NULL)   //yes
-    
-        //Reset timer to 1/2s out
-        //timeout_gen->reset_timeout(timestamp_lost_compare_channel);
-           timeout_gen->reset_timeout(0);
-
-        if(timestamp_synch_lost)
-        
-            timestamp_synch_lost = false;
-
-            //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
-            //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);                              //参考debug07_rtc2.txt
-                   set_leds();                
-
-    
--------
-
-功能：设置RTC2的cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-
-参数：0
-rtc_timeout_gen::reset_timeout(  channel)
-
-   timeout_running[0] = true;
-    
-   //设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-   //nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + last_timeout_used[channel], true);
-      nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + 16384, 1);
-
-
-
--------本函数参考 debug07_rtc2.txt------------
-
-全局变量: rtc_timeout.timeout_rtc
-NRFX_RTC_INSTANCE(2)                                   
-                                                              
-    .p_reg            =  NRF_RTC2 ,             
-    .irq              =  RTC2_IRQn ,          
-    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
-    .cc_channel_count =  RTC2_CC_NUM,           //4
-
-
-功能：设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-
-参数： &timeout_rtc, 0, NRF_RTC2.COUNTER + 16384, 1
-nrfx_rtc_cc_set( *p_instance, channel,  val, enable_irq)
-
-    int_mask = RTC_CHANNEL_INT_MASK(channel);       // 1<<16  <<0
-    event    = RTC_CHANNEL_EVENT_ADDR(channel);     // &EVENTS_COMPARE[0] + 0*4   //已理解
-
-    //关闭EVENTS_COMPARE[0]的事件
-    nrf_rtc_event_disable( NRF_RTC2, int_mask);  //EVTENCLR = 1<<16  <<0        
-
-    //关闭EVENTS_COMPARE[0]的中断
-    nrf_rtc_int_disable( NRF_RTC2, int_mask);     //INTENCLR = 1<<16  <<0
-
-    val = RTC_WRAP(val);   // val &  FFFFFF         //已理解
-
-
-    //设置cc[0]
-    if (m_cb[1].reliable)  //0, no
-   
-        ......(忽略，参考)
-   
-    else  //yes
-    
-        //nrf_rtc_cc_set( NRF_RTC2, channel, val);
-            p_reg->CC[0] = val;   //NRF_RTC2->COUNTER + 16384
-    
-
-    if (enable_irq)  //1
-    
-        nrf_rtc_event_clear( NRF_RTC2, event);      //NRF_RTC2.EVENTS_COMPARE[0] = 0 ，清EVENTS_COMPARE[0]的事件标志
-        nrf_rtc_int_enable( NRF_RTC2, int_mask);    //INTENSET = 1<<16  <<0  , 使能EVENTS_COMPARE[0]的中断     
-
-    nrf_rtc_event_enable( NRF_RTC2,int_mask);       //EVTENSET = 1<<16  <<0 , 使能EVENTS_COMPARE[0]的事件  
-
-
-
-----------
-
-测试数据：05 6A 88 3C 1D 00
+功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
+测试数据：05 6A 88 3C 1D 00   （只有长度和包尾，没有包头和校验码，或需优化改進）
 功能：取得 basestation_ts[4] = { 6A, 88, 3C, 1D }   //0x1D3C886A
 
 参数：comms_uarte_rx_buffer+index, 5, &basestation_ts(输出参数)
@@ -639,9 +559,8 @@ cobs_decode( *ptr,  length,  *dst)
 
         //上面的测试数据，会执行5次， 05 6A 88 3C 1D
 	for (; ptr < end; copy--)   //第一次ptr指向05
-
         
-            if (copy != 0)   //no，第一次copy=0  
+            if (copy != 0)   //no，第1次copy=0  
             
                 *dst++ = *ptr++;  //第2，3,4,5 次取得数据， dst[0,1,2,3] = { 6A, 88, 3C, 1D }
             
@@ -659,7 +578,167 @@ cobs_decode( *ptr,  length,  *dst)
 
 
 
+----------
 
+功能：
+
+参数：basestation_ts, p_reg->CC[0], 0
+timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
+
+
+    //TRACE_WITH_TIME(TRACE_ESB, COMMS_ESB_SIU_SYNCH_VALUE, basestation_ts);
+    
+    if(source == TIMESTAMP_SYNCH_SOURCE_ESB)   //1，no         //忽略，跳过 （没有ESB源的调入）
+    
+        ......
+
+    else if(source == TIMESTAMP_SYNCH_SOURCE_UART)  //0, yes   （UART源）
+    
+
+        // 功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+           如果丢失同步信号，则小灯提示
+        timestamp_reset_synch_lost_timer();
+
+        //Ignore esb synch pulses if we are getting uart pulses
+        bool was_wireless = !timestamp_is_synch_wired();
+        timestamp_synch_esb_ignore_count = 16;
+
+
+        if(timestamp_synch_lost_found_callback != NULL && was_wireless)
+
+           //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
+           //  timestamp_synch_lost_found(!timestamp_synch_lost, true);           //参考debug07_rtc2.txt
+                 set_leds();                
+
+        
+        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    
+
+
+    //-1 accounts for the delay between the actual timer event and the PPI capture of the timer value
+    basestation_ts -= 1;
+
+    //Compute basestation/local offset
+    timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;
+
+
+-----
+
+功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+      如果丢失同步信号，则小灯提示
+timestamp_reset_synch_lost_timer()
+
+    timestamp_synch_received = true;
+
+    if(timestamp_synch_lost_found_callback != NULL)   //yes
+
+    
+        //Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+        //timeout_gen->reset_timeout(timestamp_lost_compare_channel);  //timestamp_lost_compare_channel=0  //参考debug07_rtc2.txt 
+        //  rtc_timeout->reset_timeout(0);
+               rtc_timeout_gen::reset_timeout(0);
+
+
+        if(timestamp_synch_lost)
+        
+            timestamp_synch_lost = false;
+
+            //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+            //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);    //参数忽略，无作用      //参考debug07_rtc2.txt
+                   set_leds();                
+
+    
+-------
+
+功能：设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+
+参数：0
+rtc_timeout_gen::reset_timeout(  channel)
+
+   timeout_running[0] = true;
+    
+   //设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+   //nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + last_timeout_used[channel], true);
+   //  nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + last_timeout_used[0], 1);                                    //last_timeout_used[0]=16384,   参考 debug07_rtc2.txt
+   //    nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + 16384, 1);                                                //nrfx_rtc_cc_set,              参考 debug07_rtc2.txt
+
+            p_reg->CC[0] = NRF_RTC2->COUNTER + 16384;      //reset设置RTC2的cc[0]门槛值 +16384(500ms);
+            nrf_rtc_event_clear( NRF_RTC2, event);         //NRF_RTC2.EVENTS_COMPARE[0] = 0 ，清EVENTS_COMPARE[0]的事件标志
+            nrf_rtc_int_enable( NRF_RTC2, int_mask);       //INTENSET = 1<<16  <<0  , 使能EVENTS_COMPARE[0]的中断    
+            nrf_rtc_event_enable( NRF_RTC2,int_mask);      //EVTENSET = 1<<16  <<0 , 使能EVENTS_COMPARE[0]的事件  
+
+
+
+
+
+
+--------------
+
+
+*//set_leds()
+
+   main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);  //STEADY, CYAN
+
+   main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);   //FADE , WHITE
+
+   main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)
+
+   main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //FADE,GREEN(255)
+
+
+   ......  (忽略跳过)
+
+
+    if(comms_esb_is_direct_connect_active())
+    
+        if(led_state != 0x01)
+        
+            led_state = 0x01; 
+            main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);    //STEADY, CYAN
+        
+    
+    else if(!usb_serial_state_port_open)
+
+            main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);    //FADE , WHITE
+       
+    
+    else if(data_mode_enabled == false)
+
+            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);      //FADE, BLUE(255)
+       
+    
+    else
+
+            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);    //FADE,GREEN(255)
+        
+    
+
+ 
+
+
+--------
+
+*//
+::set_basic(  op,   color)
+ 
+    switch(op)
+    
+        case LED_DRIVER_OFF:
+        default:
+            set_off();
+        break;
+
+        case LED_DRIVER_FADE:
+            set_fade(1000, 500, color, 0x00);
+        break;
+
+        case LED_DRIVER_FLASH:
+            set_flash(250, 250, color, 0x00);
+        break;
+
+        case LED_DRIVER_ON_STEADY:
+            set_on(color);
+        break;
+ 
 
 
 
@@ -681,7 +760,7 @@ cobs_decode( *ptr,  length,  *dst)
 
 
 
-==============================================参考==========================================================================
+=================================================参考========================================================
 
 
   
