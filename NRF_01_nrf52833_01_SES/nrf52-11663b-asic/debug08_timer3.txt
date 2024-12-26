@@ -385,7 +385,9 @@ sample_timer_event_handler( event_type,  *p_context)
 输出参数：current_timestamp, current_timestamp_offset
 timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timestamp_offset)
 
-      timestamp = timestamp_get_last_sample_event_timestamp() + timestamp_synch_offset;
+      //timestamp = timestamp_get_last_sample_event_timestamp() + timestamp_synch_offset;
+      //  timestamp = (last_sample_event_trigger_value + 1) + timestamp_synch_offset;
+             current_timestamp = (p_reg->CC[0] + 15984 + 1) + timestamp_synch_offset;
 
       if(!timestamp_synch_received)
           timestamp_offset = 0x00;
@@ -397,22 +399,6 @@ timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timest
           timestamp_offset = timestamp_synch_offset;
       
       timestamp_synch_received = false;
-
-
-----
-
-timestamp_get_last_sample_event_timestamp()
-
-    if(sample_event_compare_channel != 0xFF)   //Internal sampling  //0
-    
-        return last_sample_event_trigger_value + 1;    //+1 simulates the PPI capture latency  //p_reg->CC[0] + 15984
-
-    
-    else if(sample_event_timestamp_capture_channel != 0xFF)   //External sampling   //忽略    
-        return timestamp_read_capture(sample_event_timestamp_capture_channel);
-    
-
-    
 
 
 

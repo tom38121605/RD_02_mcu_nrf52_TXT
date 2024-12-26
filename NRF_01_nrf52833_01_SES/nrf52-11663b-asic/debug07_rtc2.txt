@@ -322,9 +322,10 @@ rtc_timeout_gen::rtc_timer_handler(  int_type)
     //Only call callback from either timer OR 
 
     //AAA = nrfx_atomic_flag_clear_fetch(&timeout_running[0]);
-          AAA = nrfx_atomic_u32_fetch_and( 1, 0);                //待理解，先跳过
+    //   AAA = nrfx_atomic_flag_clear_fetch(&1);
+          AAA = nrfx_atomic_u32_fetch_and( &1, 0);                //待理解，先跳过
 
-    if( AAA )
+    if( AAA )                                                     //或表示已发生sync信号丢失事件
      
         功能：关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
         nrfx_rtc_cc_disable(&timeout_rtc, int_type);   
@@ -338,11 +339,13 @@ rtc_timeout_gen::rtc_timer_handler(  int_type)
             //callback_funcs[0](callback_context[0]);
             //  timestamp_lost_timeout(0);             
 
-                 timestamp_synch_lost = true;
+                   timestamp_synch_lost = true;
 
-                //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
-                //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
+                   //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+                   //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
                       set_leds();
+
+
 
 
 -----

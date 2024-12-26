@@ -1,0 +1,191 @@
+
+timestamp_synch_received = true;
+timestamp_synch_lost = false;
+
+
+
+============================在uarte中收到sync信号===========================================
+
+功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
+      开启下一次接收
+
+测试数据：05 6A 88 3C 1D 00   （只有长度和包尾，没有包头和校验码，或需优化改進）
+
+数据流：6A, 88, 3C, 1D   -->  basestation_ts[0,1,2,3]  -->  u32(basestation_ts)
+参数：event, p_cb->p_context
+comms_uarte_handler(  *p_event,  *p_context) 
+
+    uint32_t basestation_ts;
+    if(p_event->type == NRFX_UARTE_EVT_RX_DONE)   //uarte1 接收完毕
+     
+        index = (comms_uarte_in_synch ? 0:1);   //如果comms_uarte_in_synch=1（应表示处于同步之中），则index的值为0
+
+        if(comms_uarte_rx_buffer[index+5] == 0x00)  //buf[5]=0,说明收到同步信号 
+                                                    //已基本理解，buff数组定义的大小为7，buff[6]默认是0，第1次收到数据时，相当于不判断后面的00，直接就進入同步
+        
+            comms_uarte_in_synch = true;           //同步信号置1
+
+
+            功能：从buff的6个字节中，取出中间4个字节(时间)，保存到basestation_ts中
+            cobs_decode(comms_uarte_rx_buffer+index, 5, &basestation_ts);  //取得 basestation_ts[4] = { 6A, 88, 3C, 1D }
+
+
+            //Process timestamp
+            //timestamp_synch_recieved(basestation_ts, timestamp_read_capture(comms_uarte_local_ts_capture_channel), TIMESTAMP_SYNCH_SOURCE_UART);
+            //  timestamp_synch_recieved(basestation_ts, timestamp_read_capture(NRF_TIMER_CC_CHANNEL0), 0);  //NRF_TIMER_CC_CHANNEL0=0
+                   timestamp_synch_recieved(basestation_ts, p_reg->CC[0], 0);   
+
+
+            //开启下一次接收 
+            nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6);   //把comms_uarte_rx_buffer连接到RXD，开启uarte rx 
+         
+        else
+
+            //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx         
+            nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 7);
+            comms_uarte_in_synch = false;
+        
+     
+    else if(p_event->type == NRFX_UARTE_EVT_ERROR)
+     
+        comms_uarte_error_count++;
+
+        //开启下一次接收
+        nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 6);
+ 
+
+
+----------
+
+----------
+
+功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断;
+      更新小灯状态为连通sync （绿灯呼吸）, 更新 timestamp_synch_offset
+
+参数：basestation_ts, p_reg->CC[0], 0
+timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
+
+
+    //TRACE_WITH_TIME(TRACE_ESB, COMMS_ESB_SIU_SYNCH_VALUE, basestation_ts);
+    
+    if(source == TIMESTAMP_SYNCH_SOURCE_ESB)   //1，no         //忽略，跳过 （没有ESB源的调入）
+    
+        ......
+
+    else if(source == TIMESTAMP_SYNCH_SOURCE_UART)  //0, yes   （UART源）
+    
+
+        // 功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+           更新小灯状态为连通sync （绿灯呼吸）
+        timestamp_reset_synch_lost_timer();
+
+
+        //或对无线那一路的sync信号，進行忽略操作      （待理解）
+        //was_wireless = !timestamp_is_synch_wired();
+            was_wireless = (timestamp_synch_esb_ignore_count == 0);   //如为0，则was_wireless=1
+
+        timestamp_synch_esb_ignore_count = 16;    //待理解
+
+
+        if(timestamp_synch_lost_found_callback != NULL && was_wireless)
+
+           //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);    //参数没有用的，忽略
+           //  timestamp_synch_lost_found();                                      //参考debug07_rtc2.txt
+                 set_leds();                
+
+        
+        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    //6*10*16 + 1 + (16-4)
+
+
+    basestation_ts -= 1;   //for ppi delay
+
+ 
+    //timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;   //待理解   
+       timestamp_synch_offset = (basestation_ts + tx_delay) - p_reg->CC[0];   
+
+
+
+
+
+
+
+============================在rtc2中检测丢失sync信号===========================================
+
+
+参数：0    //cc0
+rtc_timeout_gen::rtc_timer_handler(  int_type)
+ 
+    //Only call callback from either timer OR 
+
+    //AAA = nrfx_atomic_flag_clear_fetch(&timeout_running[0]);
+    //   AAA = nrfx_atomic_flag_clear_fetch(&1);
+          AAA = nrfx_atomic_u32_fetch_and( &1, 0);                //待理解，先跳过
+
+    if( AAA )                                                     //或表示已发生sync信号丢失事件
+     
+        功能：关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
+        nrfx_rtc_cc_disable(&timeout_rtc, int_type);   
+
+        if(callback_funcs[0] != NULL)   //yes，timestamp_lost_timeout
+         
+            timeout_running[0] = false;
+
+
+            //或丢失同步信号的处理（小灯提示）
+            //callback_funcs[0](callback_context[0]);
+            //  timestamp_lost_timeout(0);             
+
+                   timestamp_synch_lost = true;
+
+                   //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+                   //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);
+                      set_leds();
+
+
+
+
+
+============================在timer3中检测没有收到sync信号？===========================================
+
+
+
+输出参数：current_timestamp, current_timestamp_offset
+timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timestamp_offset)
+
+      //timestamp = timestamp_get_last_sample_event_timestamp() + timestamp_synch_offset;
+      //  timestamp = (last_sample_event_trigger_value + 1) + timestamp_synch_offset;
+             current_timestamp = (p_reg->CC[0] + 15984 + 1) + timestamp_synch_offset;
+
+      if(!timestamp_synch_received)
+          timestamp_offset = 0x00;
+
+      else if(timestamp_synch_offset == 0x00)
+          timestamp_offset = 0x01;
+
+      else
+          timestamp_offset = timestamp_synch_offset;
+      
+      timestamp_synch_received = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

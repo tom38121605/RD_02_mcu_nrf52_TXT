@@ -1,0 +1,271 @@
+
+
+===================================clock init=================================================
+
+
+flow:
+
+    main -- clocks_start -- nrf_drv_clock_init -- nrfx_clock_enable -- nrfx_power_clock_irq_init -- nrf_drv_clock_lfclk_request 
+
+
+数据流： clock_irq_handler --> m_clock_cb.event_handler 
+
+
+
+--------------------------- 
+
+main
+
+
+    // m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+       清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务，等待时钟稳定运行
+
+    clocks_start()；
+
+
+
+--------------------------------------
+
+
+
+//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+  清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务，等待时钟稳定运行
+
+clocks_start()
+
+
+    //m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+    nrf_drv_clock_init();
+
+    //清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务
+    nrf_drv_clock_lfclk_request(NULL);
+
+
+    //AAA = nrf_drv_clock_lfclk_is_running();
+    //  AAA = ((NRF_CLOCK->LFCLKSTAT &  CLOCK_LFCLKSTAT_STATE_Msk) >> CLOCK_LFCLKSTAT_STATE_Pos);
+        AAA = (NRF_CLOCK->LFCLKSTAT &  1<<16) >> 16;                                             //LFCLKSTAT运行状态标志
+
+    for(i=0; i<500 && !AAA; i++)  //等待时钟稳定运行
+       nrf_delay_ms(1);
+
+
+    //清hfcstart事件标志，使能 HFCLKSTARTED事件，启动HFCLKSTART任务
+    nrf_drv_clock_hfclk_request(NULL);
+
+
+    for(i=0; i<500 && !nrf_drv_clock_hfclk_is_running(); i++) 
+       nrf_delay_ms(1);
+
+
+
+------
+
+
+//清hfcstart事件标志，使能HFCLKSTARTED事件，启动HFCLKSTART任务
+nrf_drv_clock_hfclk_request( * p_handler_item)
+
+    if (m_clock_cb.hfclk_on)
+       ......
+    else    
+
+        if (m_clock_cb.hfclk_requests == 0)
+        
+            //hfclk_start();
+            //  nrfx_clock_hfclk_start();
+                  nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);               //清hfcstart事件标志
+                  nrf_clock_int_enable(NRF_CLOCK_INT_HF_STARTED_MASK);               //使能HFCLKSTARTED事件
+                  nrf_clock_task_trigger(NRF_CLOCK_TASK_HFCLKSTART);                 //启动HFCLKSTART任务
+        
+        ++(m_clock_cb.hfclk_requests);
+ 
+
+
+------
+
+//清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务
+
+参数：null
+nrf_drv_clock_lfclk_request( * p_handler_item)
+
+
+    if (m_clock_cb.lfclk_on)
+       ......
+    else
+
+        if (p_handler_item)  //no        
+            item_enqueue( &m_clock_cb.p_lf_head,  p_handler_item);
+        
+
+        if (m_clock_cb.lfclk_requests == 0)  //yes
+        
+            //清start事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务
+            //nrfx_clock_lfclk_start();
+               NRF_CLOCK + EVENTS_LFCLKSTARTED=0；                  //清lfcstart事件标志
+               NRF_CLOCK->INTENSET = 1<<1;                          //使能 LFCLKSTARTED事件 
+               NRF_CLOCK + TASKS_LFCLKSTART = 1；                   //启动LFCLKSTART任务
+
+        ++m_clock_cb.lfclk_requests;
+
+
+
+
+------
+
+//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+
+数据流： clock_irq_handler --> m_clock_cb.event_handler 
+nrf_drv_clock_init( )
+
+ 
+        m_clock_cb.p_hf_head      = NULL;
+        m_clock_cb.hfclk_requests = 0;
+        m_clock_cb.p_lf_head      = NULL;
+        m_clock_cb.lfclk_requests = 0;
+
+        //nrfx_clock_init(clock_irq_handler);
+           m_clock_cb.event_handler = event_handler;   //clock_irq_handler
+           m_clock_cb.module_initialized = true;
+
+
+        //设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
+        nrfx_clock_enable();
+           NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+           NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
+           NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC，内部32768
+
+        m_clock_cb.cal_state = CAL_STATE_IDLE;
+        m_clock_cb.module_initialized = true;
+    
+
+--------
+
+//设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
+
+nrfx_clock_enable( )
+
+    //设置clock的irq优先级，使能clock的irq
+    //nrfx_power_clock_irq_init();
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+        NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
+
+    //设置CLOCK的时钟源
+    //nrf_clock_lf_src_set(NRFX_CLOCK_CONFIG_LF_SRC);
+        NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC，32768
+
+
+    nrfx_clock_irq_enabled = true;
+
+
+--- 
+
+功能：设置clock的irq优先级，使能clock的irq
+
+nrfx_power_clock_irq_init( )
+
+
+    priority = NRFX_POWER_CONFIG_IRQ_PRIORITY;  //6
+
+
+    //AAA=NRFX_IRQ_IS_ENABLED(nrfx_get_irq_number(NRF_CLOCK));
+    //  AAA=NRFX_IRQ_IS_ENABLED( NRFX_IRQ_NUMBER_GET(NRF_CLOCK_BASE) );
+    //    AAA=NRFX_IRQ_IS_ENABLED( NRFX_PERIPHERAL_ID_GET(NRF_CLOCK_BASE) );
+            AAA=NRFX_IRQ_IS_ENABLED( 0x40000000 >> 12 );  //0x40000
+
+
+    if (!AAA)
+    
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+        NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
+    
+
+
+
+
+
+
+
+
+=========================clock irq===============================
+
+flow:
+
+   POWER_CLOCK_IRQHandler -- nrfx_power_clock_irq_handler -- nrfx_clock_irq_handler -- (m_clock_cb.event_handler) -- clock_irq_handler
+
+
+
+
+-------------------------------------------------
+
+
+可看作是硬件中断入口
+
+nrfx_clock_irq_handler( )
+
+    if (nrf_clock_event_check(NRF_CLOCK_EVENT_HFCLKSTARTED))
+    
+        nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);
+        NRFX_LOG_DEBUG("Event: %s.", EVT_TO_STR(NRF_CLOCK_EVENT_HFCLKSTARTED));
+        nrf_clock_int_disable(NRF_CLOCK_INT_HF_STARTED_MASK);
+
+
+        m_clock_cb.event_handler(NRFX_CLOCK_EVT_HFCLK_STARTED);
+
+
+    
+    if (nrf_clock_event_check(NRF_CLOCK_EVENT_LFCLKSTARTED))
+    
+        nrf_clock_event_clear(NRF_CLOCK_EVENT_LFCLKSTARTED);
+        NRFX_LOG_DEBUG("Event: %s.", EVT_TO_STR(NRF_CLOCK_EVENT_LFCLKSTARTED));
+        nrf_clock_int_disable(NRF_CLOCK_INT_LF_STARTED_MASK);
+
+        m_clock_cb.event_handler(NRFX_CLOCK_EVT_LFCLK_STARTED);
+    
+
+
+
+-------------------------
+
+
+static void clock_irq_handler(nrfx_clock_evt_type_t evt)
+{
+    if (evt == NRFX_CLOCK_EVT_HFCLK_STARTED)
+    {
+        m_clock_cb.hfclk_on = true;
+        clock_clk_started_notify(NRF_DRV_CLOCK_EVT_HFCLK_STARTED);
+    }
+    if (evt == NRFX_CLOCK_EVT_LFCLK_STARTED)
+    {
+        m_clock_cb.lfclk_on = true;
+        clock_clk_started_notify(NRF_DRV_CLOCK_EVT_LFCLK_STARTED);
+    }
+
+#if CALIBRATION_SUPPORT
+
+    if (evt == NRFX_CLOCK_EVT_CTTO)
+    {
+        nrf_drv_clock_hfclk_request(&m_clock_cb.cal_hfclk_started_handler_item);
+    }
+
+    if (evt == NRFX_CLOCK_EVT_CAL_DONE)
+    {
+        nrf_drv_clock_hfclk_release();
+        bool aborted = (m_clock_cb.cal_state == CAL_STATE_ABORT);
+        m_clock_cb.cal_state = CAL_STATE_IDLE;
+        if (m_clock_cb.cal_done_handler)
+        {
+            m_clock_cb.cal_done_handler(aborted ?
+                NRF_DRV_CLOCK_EVT_CAL_ABORTED : NRF_DRV_CLOCK_EVT_CAL_DONE);
+        }
+    }
+#endif // CALIBRATION_SUPPORT
+}
+
+
+
+
+
+
+
+
+
+

@@ -3,6 +3,7 @@
 
 
 
+
 ========================================= uarte ===init=====================================
 
 
@@ -13,11 +14,11 @@ flow:
 
      main -- comms_uarte_init -- (irq_handlers[1] = nrfx_uarte_1_irq_handler) -- (p_cb->handler = comms_uarte_handler)
 
-     main -- comms_uarte_init -- nrfx_uarte_init -- apply_config -- nrfx_uarte_rx
+     main -- comms_uarte_init -- nrfx_uarte_init -- apply_config -- nrfx_uarte_rx 
 
 
 
-数据流：comms_uarte_handler + 常量（len + state）-->  mcb
+comms_uarte_handler + 常量（len + state）-->  mcb[1] ，  0 -->  m_cb[1].p_context 
 数据流：nrfx_uarte_1_irq_handler --> irq_handlers[1]
 数据流：config --> 寄存器
 
@@ -378,13 +379,16 @@ nrfx_uarte_rx(  * p_instance, * p_data,  length)    //注意，这个函数并�
 
 
 
-
 ======================================== uarte === rx irq====================================
 
 
 flow：
 
-     ses_startup_nrf52833.s -- UARTE1_IRQHandler -- nrfx_uarte_1_irq_handler -- uarte_irq_handler --
+     ses_startup_nrf52833.s -- UARTE1_IRQHandler -- nrfx_uarte_1_irq_handler -- uarte_irq_handler -- rx_done_event -- (p_cb->handler) 
+     -- comms_uarte_handler -- cobs_decode -- timestamp_synch_recieved -- nrfx_uarte_rx
+
+     comms_uarte_handler -- timestamp_synch_recieved -- timestamp_reset_synch_lost_timer -- (timeout_gen->reset_timeout) -- rtc_timeout->reset_timeout
+     -- rtc_timeout_gen::reset_timeout -- nrfx_rtc_cc_set -- timestamp_synch_lost_found_callback -- timestamp_synch_lost_found -- set_leds
 
 
 
@@ -580,7 +584,8 @@ cobs_decode( *ptr,  length,  *dst)
 
 ----------
 
-功能：
+功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断;
+      更新小灯状态为连通sync （绿灯呼吸）, 更新 timestamp_synch_offset
 
 参数：basestation_ts, p_reg->CC[0], 0
 timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
@@ -596,35 +601,39 @@ timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
     
 
         // 功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-           如果丢失同步信号，则小灯提示
+           更新小灯状态为连通sync （绿灯呼吸）
         timestamp_reset_synch_lost_timer();
 
-        //Ignore esb synch pulses if we are getting uart pulses
-        bool was_wireless = !timestamp_is_synch_wired();
-        timestamp_synch_esb_ignore_count = 16;
+
+        //或对无线那一路的sync信号，進行忽略操作      （待理解）
+        //was_wireless = !timestamp_is_synch_wired();
+            was_wireless = (timestamp_synch_esb_ignore_count == 0);   //如为0，则was_wireless=1
+
+        timestamp_synch_esb_ignore_count = 16;    //待理解
 
 
         if(timestamp_synch_lost_found_callback != NULL && was_wireless)
 
-           //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
-           //  timestamp_synch_lost_found(!timestamp_synch_lost, true);           //参考debug07_rtc2.txt
+           //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);    //参数没有用的，忽略
+           //  timestamp_synch_lost_found();                                      //参考debug07_rtc2.txt
                  set_leds();                
 
         
-        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    
+        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    //6*10*16 + 1 + (16-4)
 
 
-    //-1 accounts for the delay between the actual timer event and the PPI capture of the timer value
-    basestation_ts -= 1;
+    basestation_ts -= 1;   //for ppi delay
 
-    //Compute basestation/local offset
-    timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;
+ 
+    //timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;   //待理解   
+       timestamp_synch_offset = (basestation_ts + tx_delay) - p_reg->CC[0];   
+
 
 
 -----
 
 功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-      如果丢失同步信号，则小灯提示
+      更新小灯状态为连通sync （绿灯呼吸）
 timestamp_reset_synch_lost_timer()
 
     timestamp_synch_received = true;
@@ -638,13 +647,14 @@ timestamp_reset_synch_lost_timer()
                rtc_timeout_gen::reset_timeout(0);
 
 
+        //已理解  （如在丢失信号的小灯状态，则更新到连接sync信号的小灯状态）
         if(timestamp_synch_lost)
         
             timestamp_synch_lost = false;
 
-            //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
-            //  timestamp_synch_lost_found( 0, timestamp_synch_esb_ignore_count > 0);    //参数忽略，无作用      //参考debug07_rtc2.txt
-                   set_leds();                
+            //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);     //参数忽略，无作用   
+            //  timestamp_synch_lost_found(  );                                                                     //参考debug07_rtc2.txt
+                   set_leds();              
 
     
 -------
@@ -669,6 +679,81 @@ rtc_timeout_gen::reset_timeout(  channel)
 
 
 
+--------------
+
+
+
+
+#define LED_COLOR_USB_CLOSED          RGB_WHITE
+#define LED_MODE_USB_CLOSED           LED_DRIVER_FADE
+
+#define LED_COLOR_USB_OPEN            RGB_BLUE(RGB_MAX_VALUE)
+#define LED_MODE_USB_OPEN             LED_DRIVER_FADE
+
+
+#define LED_COLOR_EN_SYNCH_LOST     RGB_BLUE(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_LOST      LED_DRIVER_FLASH
+
+#define LED_COLOR_EN_SYNCH_WIRED    RGB_GREEN(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_WIRED     LED_DRIVER_ON_STEADY
+
+#define LED_COLOR_EN_SYNCH_WIRELESS RGB_GREEN(RGB_MAX_VALUE)
+#define LED_MODE_EN_SYNCH_WIRELESS  LED_DRIVER_FADE
+
+
+
+set_leds()
+
+    if(!usb_serial_state_port_open)
+    
+        main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);          //FADE, WHITE   //cdc串口端口没有连接，白灯闪烁
+
+    
+    else if(usb_serial_state_port_open && data_mode == DATA_MODE_DISABLED)
+    
+        if(led_state != 0x03)
+        
+            led_state = 0x03;
+            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)  //如果打开串口但没有進入数据模式（或无sync信号），蓝灯呼吸
+
+        
+    else if(timestamp_is_synch_lost())    //判断是否需要sync信号，并判断是否有sync信号（timestamp_synch_lost=1）
+    
+        if(led_state != 0x04)
+        
+            led_state = 0x04;
+            main_led.set_basic(LED_MODE_EN_SYNCH_LOST, LED_COLOR_EN_SYNCH_LOST);   //FLASH, RGB_BLUE(255)   //如果没有sync信号，蓝灯快闪
+        
+    
+    else if(!timestamp_is_synch_wired())  //非timestamp_synch_esb_ignore_count > 0    （正常情况，应一直为0）
+    
+        if(led_state != 0x06)
+        
+            led_state = 0x06;
+
+            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //STEADY, RGB_GREEN(255)  //如果没有synch wired，绿灯常亮  （待理解）
+    
+    else
+    
+        if(led_state != 0x07)
+        
+            led_state = 0x07;
+            main_led.set_basic(LED_MODE_EN_SYNCH_WIRED, LED_COLOR_EN_SYNCH_WIRED);       //FADE,GREEN(255)   //数据模式（或且有sync信号），绿灯呼吸
+
+        
+    
+
+-----------
+
+timestamp_is_synch_lost()
+
+    #ifndef RUN_WITHOUT_SYNC
+        return timestamp_synch_lost;
+    #else
+        return false;
+    #endif
+
+
 
 
 --------------
@@ -676,16 +761,16 @@ rtc_timeout_gen::reset_timeout(  channel)
 
 *//set_leds()
 
-   main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);  //STEADY, CYAN
+   //main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);  //STEADY, CYAN
 
-   main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);   //FADE , WHITE
+   //main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);   //FADE , WHITE
 
-   main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)
+   //main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)
 
-   main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //FADE,GREEN(255)
+   //main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //FADE,GREEN(255)
 
 
-   ......  (忽略跳过)
+   ......  
 
 
     if(comms_esb_is_direct_connect_active())
@@ -693,22 +778,21 @@ rtc_timeout_gen::reset_timeout(  channel)
         if(led_state != 0x01)
         
             led_state = 0x01; 
-            main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);    //STEADY, CYAN
+            main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);    //STEADY, CYAN   //esb连接，青灯常亮  （待理解）
         
     
     else if(!usb_serial_state_port_open)
 
-            main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);    //FADE , WHITE
+            main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);    //FADE, WHITE   //cdc串口端口没有连接，白灯闪烁
        
     
     else if(data_mode_enabled == false)
 
-            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);      //FADE, BLUE(255)
+            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);      //FADE, BLUE(255)  //如果没有進入数据模式（或无sync信号），蓝灯呼吸
        
     
     else
-
-            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);    //FADE,GREEN(255)
+            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);    //FADE,GREEN(255)   //数据模式（或且有sync信号），绿灯呼吸
         
     
 

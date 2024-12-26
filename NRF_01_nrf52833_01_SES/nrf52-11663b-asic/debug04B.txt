@@ -1,0 +1,79 @@
+
+
+
+static nrf_drv_clock_cb_t m_clock_cb;
+
+#define NRFX_POWER_CONFIG_IRQ_PRIORITY 6
+
+
+#define NRF_CLOCK                   ((NRF_CLOCK_Type*)         NRF_CLOCK_BASE)
+
+
+#define NRFX_CLOCK_CONFIG_LF_SRC 0
+
+
+
+
+enum
+  NRF_CLOCK_EVENT_LFCLKSTARTED = offsetof(NRF_CLOCK_Type, EVENTS_LFCLKSTARTED),
+  NRF_CLOCK_TASK_LFCLKSTART = offsetof(NRF_CLOCK_Type, TASKS_LFCLKSTART)
+
+
+enum
+  NRF_CLOCK_INT_LF_STARTED_MASK = CLOCK_INTENSET_LFCLKSTARTED_Msk,      //1<<1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
