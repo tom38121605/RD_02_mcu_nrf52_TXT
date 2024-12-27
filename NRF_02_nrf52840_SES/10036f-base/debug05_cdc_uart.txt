@@ -1,5 +1,6 @@
-
+﻿
 注意1： 用sscom串口助手调试，需勾选 DTR
+usb_serial_write_now((uint8_t*)"abcde0000 ",10,0);
 usb_serial_write((uint8_t*)"12345abcde",10);
 nrf_delay_ms(100);
 

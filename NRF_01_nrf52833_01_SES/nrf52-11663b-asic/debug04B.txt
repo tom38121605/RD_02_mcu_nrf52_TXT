@@ -1,4 +1,26 @@
 
+struct nrf_drv_clock_handler_item_s
+{
+    nrf_drv_clock_handler_item_t * p_next;        ///< A pointer to the next handler that should be called when the clock is started.
+    nrf_drv_clock_event_handler_t  event_handler; ///< Function to be called when the clock is started.
+};
+
+
+typedef struct
+{
+    bool                                    module_initialized; /*< Indicate the state of module */
+    volatile bool                           hfclk_on;           /*< High-frequency clock state. */
+    volatile bool                           lfclk_on;           /*< Low-frequency clock state. */
+    volatile uint32_t                       hfclk_requests;     /*< High-frequency clock request counter. */
+    volatile nrf_drv_clock_handler_item_t * p_hf_head;
+    volatile uint32_t                       lfclk_requests;     /*< Low-frequency clock request counter. */
+    volatile nrf_drv_clock_handler_item_t * p_lf_head;
+ 
+    nrf_drv_clock_handler_item_t            cal_hfclk_started_handler_item;
+    nrf_drv_clock_event_handler_t           cal_done_handler;
+    volatile nrf_drv_clock_cal_state_t      cal_state;
+ 
+} nrf_drv_clock_cb_t;
 
 
 static nrf_drv_clock_cb_t m_clock_cb;

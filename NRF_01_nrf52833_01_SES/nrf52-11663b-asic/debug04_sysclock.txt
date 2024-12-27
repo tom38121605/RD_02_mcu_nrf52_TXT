@@ -20,7 +20,7 @@ main
     // m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
        清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务，等待时钟稳定运行
 
-    clocks_start()；
+    clocks_start()；   //或这里只初始化LFCLK
 
 
 
@@ -57,27 +57,34 @@ clocks_start()
        nrf_delay_ms(1);
 
 
-
 ------
 
+//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
 
-//清hfcstart事件标志，使能HFCLKSTARTED事件，启动HFCLKSTART任务
-nrf_drv_clock_hfclk_request( * p_handler_item)
+数据流： clock_irq_handler --> m_clock_cb.event_handler 
+nrf_drv_clock_init( )
 
-    if (m_clock_cb.hfclk_on)
-       ......
-    else    
-
-        if (m_clock_cb.hfclk_requests == 0)
-        
-            //hfclk_start();
-            //  nrfx_clock_hfclk_start();
-                  nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);               //清hfcstart事件标志
-                  nrf_clock_int_enable(NRF_CLOCK_INT_HF_STARTED_MASK);               //使能HFCLKSTARTED事件
-                  nrf_clock_task_trigger(NRF_CLOCK_TASK_HFCLKSTART);                 //启动HFCLKSTART任务
-        
-        ++(m_clock_cb.hfclk_requests);
  
+        m_clock_cb.p_hf_head      = NULL;
+        m_clock_cb.hfclk_requests = 0;
+        m_clock_cb.p_lf_head      = NULL;
+        m_clock_cb.lfclk_requests = 0;
+
+        //nrfx_clock_init(clock_irq_handler);
+           m_clock_cb.event_handler = event_handler;   //clock_irq_handler
+           m_clock_cb.module_initialized = true;
+
+
+        //设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
+        nrfx_clock_enable();
+           NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+           NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
+           NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC，内部RC振荡器32768
+
+        m_clock_cb.cal_state = CAL_STATE_IDLE;
+        m_clock_cb.module_initialized = true;
+    
+
 
 
 ------
@@ -106,36 +113,27 @@ nrf_drv_clock_lfclk_request( * p_handler_item)
 
         ++m_clock_cb.lfclk_requests;
 
-
-
-
 ------
 
-//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
 
-数据流： clock_irq_handler --> m_clock_cb.event_handler 
-nrf_drv_clock_init( )
+//清hfcstart事件标志，使能HFCLKSTARTED事件，启动HFCLKSTART任务
+nrf_drv_clock_hfclk_request( * p_handler_item)
 
+    if (m_clock_cb.hfclk_on)
+       ......
+    else    
+
+        if (m_clock_cb.hfclk_requests == 0)
+        
+            //hfclk_start();
+            //  nrfx_clock_hfclk_start();
+                  nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);               //清hfcstart事件标志
+                  nrf_clock_int_enable(NRF_CLOCK_INT_HF_STARTED_MASK);               //使能HFCLKSTARTED事件
+                  nrf_clock_task_trigger(NRF_CLOCK_TASK_HFCLKSTART);                 //启动HFCLKSTART任务
+        
+        ++(m_clock_cb.hfclk_requests);
  
-        m_clock_cb.p_hf_head      = NULL;
-        m_clock_cb.hfclk_requests = 0;
-        m_clock_cb.p_lf_head      = NULL;
-        m_clock_cb.lfclk_requests = 0;
 
-        //nrfx_clock_init(clock_irq_handler);
-           m_clock_cb.event_handler = event_handler;   //clock_irq_handler
-           m_clock_cb.module_initialized = true;
-
-
-        //设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
-        nrfx_clock_enable();
-           NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
-           NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
-           NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC，内部32768
-
-        m_clock_cb.cal_state = CAL_STATE_IDLE;
-        m_clock_cb.module_initialized = true;
-    
 
 --------
 
@@ -197,70 +195,100 @@ flow:
 -------------------------------------------------
 
 
-可看作是硬件中断入口
-
+//可看作是硬件中断入口
+//清HFCLKSTARTED事件标志,关闭HFCLKSTARTED中断, 转中断服务函数clock_irq_handler
 nrfx_clock_irq_handler( )
 
     if (nrf_clock_event_check(NRF_CLOCK_EVENT_HFCLKSTARTED))
     
-        nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);
-        NRFX_LOG_DEBUG("Event: %s.", EVT_TO_STR(NRF_CLOCK_EVENT_HFCLKSTARTED));
-        nrf_clock_int_disable(NRF_CLOCK_INT_HF_STARTED_MASK);
+        nrf_clock_event_clear(NRF_CLOCK_EVENT_HFCLKSTARTED);     //清HFCLKSTARTED事件标志
+        nrf_clock_int_disable(NRF_CLOCK_INT_HF_STARTED_MASK);    //关闭HFCLKSTARTED中断
 
-
-        m_clock_cb.event_handler(NRFX_CLOCK_EVT_HFCLK_STARTED);
-
+        //m_clock_cb.event_handler(NRFX_CLOCK_EVT_HFCLK_STARTED);  //中断服务函数
+            clock_irq_handler(NRFX_CLOCK_EVT_HFCLK_STARTED);
 
     
     if (nrf_clock_event_check(NRF_CLOCK_EVENT_LFCLKSTARTED))
     
-        nrf_clock_event_clear(NRF_CLOCK_EVENT_LFCLKSTARTED);
-        NRFX_LOG_DEBUG("Event: %s.", EVT_TO_STR(NRF_CLOCK_EVENT_LFCLKSTARTED));
-        nrf_clock_int_disable(NRF_CLOCK_INT_LF_STARTED_MASK);
+        nrf_clock_event_clear(NRF_CLOCK_EVENT_LFCLKSTARTED);     //清HFCLKSTARTED事件标志
+        nrf_clock_int_disable(NRF_CLOCK_INT_LF_STARTED_MASK);    //关闭HFCLKSTARTED中断
 
-        m_clock_cb.event_handler(NRFX_CLOCK_EVT_LFCLK_STARTED);
+        //m_clock_cb.event_handler(NRFX_CLOCK_EVT_LFCLK_STARTED);    //中断服务函数
+           clock_irq_handler(NRFX_CLOCK_EVT_LFCLK_STARTED);
     
 
 
 
 -------------------------
 
+参数：NRF_CLOCK_EVENT_LFCLKSTARTED
+clock_irq_handler( evt)
 
-static void clock_irq_handler(nrfx_clock_evt_type_t evt)
-{
     if (evt == NRFX_CLOCK_EVT_HFCLK_STARTED)
-    {
+    
         m_clock_cb.hfclk_on = true;
         clock_clk_started_notify(NRF_DRV_CLOCK_EVT_HFCLK_STARTED);
-    }
+    
     if (evt == NRFX_CLOCK_EVT_LFCLK_STARTED)
-    {
+    
         m_clock_cb.lfclk_on = true;
         clock_clk_started_notify(NRF_DRV_CLOCK_EVT_LFCLK_STARTED);
-    }
-
-#if CALIBRATION_SUPPORT
+    
 
     if (evt == NRFX_CLOCK_EVT_CTTO)
-    {
+    
         nrf_drv_clock_hfclk_request(&m_clock_cb.cal_hfclk_started_handler_item);
-    }
+    
 
     if (evt == NRFX_CLOCK_EVT_CAL_DONE)
-    {
+    
         nrf_drv_clock_hfclk_release();
         bool aborted = (m_clock_cb.cal_state == CAL_STATE_ABORT);
         m_clock_cb.cal_state = CAL_STATE_IDLE;
+
         if (m_clock_cb.cal_done_handler)
-        {
-            m_clock_cb.cal_done_handler(aborted ?
-                NRF_DRV_CLOCK_EVT_CAL_ABORTED : NRF_DRV_CLOCK_EVT_CAL_DONE);
-        }
-    }
-#endif // CALIBRATION_SUPPORT
-}
+        
+            m_clock_cb.cal_done_handler(aborted ? NRF_DRV_CLOCK_EVT_CAL_ABORTED : NRF_DRV_CLOCK_EVT_CAL_DONE);
+        
+    
+
+------------
+
+参数：NRF_DRV_CLOCK_EVT_LFCLK_STARTED
+clock_clk_started_notify(  evt_type)
+
+    nrf_drv_clock_handler_item_t **p_head;
+
+    if (evt_type == NRF_DRV_CLOCK_EVT_HFCLK_STARTED)    
+        p_head = &m_clock_cb.p_hf_head;
+    
+    else    
+        p_head = &m_clock_cb.p_lf_head;
+    
+
+    while (1)
+   
+        p_item = item_dequeue(p_head);
+
+        if (!p_item)
+        
+            break;
+        
+
+        p_item->event_handler(evt_type);
 
 
+---
+
+item_dequeue(  ** p_head)
+
+    p_item = *p_head;
+
+    if (p_item)
+    
+        *p_head = p_item->p_next;
+    
+    return p_item;
 
 
 

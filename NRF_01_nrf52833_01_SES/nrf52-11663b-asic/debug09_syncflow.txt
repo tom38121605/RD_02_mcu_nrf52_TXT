@@ -1,4 +1,30 @@
 
+小灯调试log：
+
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
+        main_led.event_queue_process();                      //--test
+        nrf_delay_ms(300);
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--test
+        main_led.event_queue_process();                           //--test
+
+
+
+cdcuart调试log：
+
+注意1： 用sscom串口助手调试，需勾选 DTR
+   usb_serial_write((uint8_t*)"12345abcde",10);
+   usb_serial_write_now((uint8_t*)"abcde0000 ",10,0);
+   nrf_delay_ms(100);
+
+
+关于while中nrf_delay_ms延时不准的问题的原因：
+   。是因为uart发送数据时，是累积到约128(OMMO_USB_SERIAL_MIN_PACKET_SIZE)个字节一起发送。
+   。二是等usb_serial_write_force=true再发送，可在定时器里面设置true，也可手动设置true 未选择任何文件
+
+
+
+----------------------------------------------------------------------------
+
 timestamp_synch_received = true;
 timestamp_synch_lost = false;
 

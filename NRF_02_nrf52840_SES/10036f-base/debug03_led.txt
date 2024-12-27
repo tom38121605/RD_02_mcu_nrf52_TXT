@@ -1,3 +1,11 @@
+﻿
+小灯调试log：
+
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
+        main_led.event_queue_process();                      //--test
+        nrf_delay_ms(300);
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--test
+        main_led.event_queue_process();                      //--test
 
 
 ============================led init===========================
