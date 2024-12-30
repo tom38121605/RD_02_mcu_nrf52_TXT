@@ -1,0 +1,49 @@
+
+
+
+nrfx_uarte_t comms_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
+#define OMMO_COMMS_UARTE_SYNCH_UART           NRFX_UARTE_INSTANCE(0)
+
+全局变量： comms_uarte   
+  NRFX_UARTE_INSTANCE(0)                        
+    .p_reg        = NRF_UARTE0,             
+    .drv_inst_idx = NRFX_UARTE0_INST_IDX   //0
+
+---
+
+nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+#define OMMO_TIMESTAMP_TIMER                   NRFX_TIMER_INSTANCE(3) 
+
+#define TIMER3_CC_NUM 6
+
+全局变量 NRFX_TIMER_INSTANCE(3)                                   
+                                                                 
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX,  //2
+    .cc_channel_count = TIMER3_CC_NUM,         //6
+
+
+nrf_timer_event_t compare_events[] = { NRF_TIMER_EVENT_COMPARE0, NRF_TIMER_EVENT_COMPARE1, NRF_TIMER_EVENT_COMPARE2, 
+                                       NRF_TIMER_EVENT_COMPARE3, NRF_TIMER_EVENT_COMPARE4, NRF_TIMER_EVENT_COMPARE5};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -59,7 +59,7 @@ comms_uarte_init( uarte_instance, rx_pin)
     m_uart0_drv_config.interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY;   //6
 
 
-    //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+    //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
     nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler);  //数据流：comms_uarte_handler -->  mcb[1]  
 
 
@@ -86,7 +86,7 @@ comms_uarte_init( uarte_instance, rx_pin)
 
 ------------------
 
-功能：配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE1的irq中断的优先级，使能UARTE1的irq中断（总中断）
+功能：配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
 
 全局变量：comms_uarte
     .p_reg        = NRF_UARTE1,             
@@ -217,18 +217,19 @@ timestamp_add_capture_event( trigger_event_addr)
         ppi_channel_timestamp_capture = 0;                    //分配一个空闲的PPI通道 NRF_PPI_CHANNEL0
 
 
-    //取得timer3的CAPTURE0事件地址，把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来
-    //nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel])));
+    //取得timer3的CAPTURE0事件地址
+    //DDD = nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel]);  
+    //  DDD = nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[0]))                   //NRF_TIMER_CC_CHANNEL0
+    //    DDD = nrfx_timer_task_address_get(&timer_timestamp,  NRF_TIMER_TASK_CAPTURE0 ))    
+    //      DDD = nrf_timer_task_address_get( NRF_TIMER3, NRF_TIMER_TASK_CAPTURE0);        
+              DDD = NRF_TIMER3 + NRF_TIMER_TASK_CAPTURE0;  
 
-       //DDD = nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[NRF_TIMER_CC_CHANNEL0]))  
-       //  DDD = nrfx_timer_task_address_get(&timer_timestamp,  NRF_TIMER_TASK_CAPTURE0 ))    
-       //     DDD = nrf_timer_task_address_get( NRF_TIMER3, NRF_TIMER_TASK_CAPTURE0);        
-                 DDD = NRF_TIMER3 + NRF_TIMER_TASK_CAPTURE0;  
- 
-       //把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来
-       //nrfx_ppi_channel_assign(NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX,  DDD  );
-       //  nrfx_ppi_channel_assign( NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX, NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0 );
-       //    nrf_ppi_channel_endpoint_setup(channel, eep, tep);
+
+    //把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来
+    //nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, DDD);
+    //   nrfx_ppi_channel_assign(NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX,  DDD  );
+    //     nrfx_ppi_channel_assign( NRF_PPI_CHANNEL0,  NRF_UARTE1.NRF_UARTE_EVENT_ENDRX, NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0 );
+    //       nrf_ppi_channel_endpoint_setup(channel, eep, tep);
                 NRF_PPI->CH[0].EEP = NRF_UARTE1.NRF_UARTE_EVENT_ENDRX;     //UARTE1的ENDRX事件
                 NRF_PPI->CH[0].TEP = NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0;   //timer3的CAPTURE0捕获任务
 
@@ -261,8 +262,6 @@ nrfx_ppi_channel_alloc(  * p_channel)
         BBB = mask & (1 <<channel) ;   //1<<0
 
         //CCC = !is_allocated_channel(channel);
-
-
         //  CCC = (m_channels_allocated & (1 << channel)) == 0;   //m_channels_allocated.0 =0 （尚未分配 NRF_PPI_CHANNEL0），固为true
               CCC = (0 & (1 << 0) == 0   //true
 

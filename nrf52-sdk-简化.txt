@@ -1,7 +1,7 @@
 ﻿
 
 
-D:\workspace-work\ommo_nrf-gauge
+1. D:\workspace-work\ommo_nrf-gauge
 
    //删除下面文件和目录    //300M + 10M    
    .git                            //300M
@@ -11,21 +11,22 @@ D:\workspace-work\ommo_nrf-gauge
    .gitignore
    ReadMe.md
    ReleaseNote.md
-   .gitignore
+   .gitmodules
    .clang-format
 
 
-D:\workspace-work\ommo_nrf-gauge\flash_files
+2. D:\workspace-work\ommo_nrf-gauge\flash_files
    
-   //保留下面文件和目录  （删除其它所有文件和目录）    //330M   -- 第一层清除
+   //保留下面文件  （删除其它所有文件和目录）    //330M   -- 第一层清除
    bootload.bat
    build.ini
    build.py
+   dst_check.py
    generate_protobuf_lib.bat
    program.bat
      
    
-D:\workspace-work\ommo_nrf-gauge\emUSBD_PRO_nRF52xxx_V3.64.0_USBD-00543_2ACA5E74_240311   
+3. D:\workspace-work\ommo_nrf-gauge\emUSBD_PRO_nRF52xxx_V3.64.0_USBD-00543_2ACA5E74_240311   
    
    //删除下面文件和目录     //18M
    Doc
@@ -34,7 +35,7 @@ D:\workspace-work\ommo_nrf-gauge\emUSBD_PRO_nRF52xxx_V3.64.0_USBD-00543_2ACA5E74
    License_USBD-00543.txt
    USBVAPI_documentation_html.zip
 
-D:\workspace-work\ommo_nrf-gauge\nanopb-0.4.6-windows-x86
+4. D:\workspace-work\ommo_nrf-gauge\nanopb-0.4.6-windows-x86
 
    //删除下面文件和目录  （所有目录都删除）   //28M
    .github
@@ -54,7 +55,7 @@ D:\workspace-work\ommo_nrf-gauge\nanopb-0.4.6-windows-x86
    LICENSE.txt
    README.md
    
-D:\workspace-work\ommo_nrf-08-10036f\10036f-50-frm-32-af-remark-nrf52-sdk-nouse-ok-k\nRF5_SDK_17.1.0_ddde560   
+5. D:\workspace-work\ommo_nrf-08-10036f\10036f-50-frm-32-af-remark-nrf52-sdk-nouse-ok-k\nRF5_SDK_17.1.0_ddde560   
    
    //删除下面文件和目录      //44M
    documentation
@@ -63,7 +64,7 @@ D:\workspace-work\ommo_nrf-08-10036f\10036f-50-frm-32-af-remark-nrf52-sdk-nouse-
    license.txt
    nRF_MDK_8_40_3_IAR_BSDLicense.msi
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components   
+6. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components   
    
    //删除下面文件和目录    //10M
    802_15_4
@@ -74,32 +75,32 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components
    nfc
    serialization
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\proprietary_rf   
+7. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\proprietary_rf   
    
    //删除下面文件和目录      //50M
    gzll
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\toolchain\cmsis 
+8. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\toolchain\cmsis 
    
    //删除下面文件和目录      //10M
    dsp
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\config 
+9. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\config 
    
    //删除下面文件和目录       //1M
    nrf52810
    nrf52811
    nrf52820
 
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples
+10. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples
    //保留下面文件和目录  （删除其它所有文件和目录）  //380M    -- 第一层清除
    ommo
 
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo
+11. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo
    //保留下面文件和目录  （删除其它所有文件和目录）    //50M   -- 第一层清除
    ommo_base_10036f
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx   
+12. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx   
    
    //删除下面文件和目录      //1M
    doc
@@ -110,7 +111,7 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx
    README.md
    
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk   
+13. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk   
    
    //删除下面文件和目录      //20M
 
@@ -250,7 +251,7 @@ D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\modules\nrfx\mdk
     system_nrf9160.h
 
    
-D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo\ommo_base_10036f\10036f_testblank\ses
+14. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\examples\ommo\ommo_base_10036f\10036f_testblank\ses
    //删除下面文件和目录      //50M     -- 第一层清除
    Output
 

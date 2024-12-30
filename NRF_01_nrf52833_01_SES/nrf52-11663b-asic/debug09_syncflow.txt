@@ -29,6 +29,13 @@ timestamp_synch_received = true;
 timestamp_synch_lost = false;
 
 
+sync信号的流程：
+
+
+
+
+
+
 
 ============================在uarte中收到sync信号===========================================
 
