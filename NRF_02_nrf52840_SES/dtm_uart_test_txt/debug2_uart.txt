@@ -69,7 +69,6 @@
 ===========================uart init===================================
 
 
-
 （公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer）  --  上海旅行社（m_rx_fifo）  --  黄色大巴rx（rx_buf） -- byte（游客家里）
 （游客家里）byte --上海旅行社（m_tx_fifo） --  黄色大巴tx（tx_buf） --  西安旅行社（mcb） --  绿色大巴tx（tx_buffer） -- TXD（公园） 
 
@@ -543,7 +542,9 @@ uart_event_handler( * p_event,  * p_context)
         case NRF_DRV_UART_EVT_TX_DONE:
 
             //如果还有发送的数据（ m_tx_fifo长度>0）
-            if (app_fifo_get(&m_tx_fifo, tx_buffer) == NRF_SUCCESS)      //黄色大巴tx中还有人没下车？ 本测试是no
+            AAA = app_fifo_get(&m_tx_fifo, tx_buffer) ; 
+
+            if ( AAA == NRF_SUCCESS)      //黄色大巴tx中还有人没下车？ 本测试是no
             
                  nrf_drv_uart_tx(&app_uart_inst, tx_buffer, 1);     //回去再发送    //继续把乘客导出到公园
             
@@ -554,6 +555,27 @@ uart_event_handler( * p_event,  * p_context)
                 //m_event_handler(&app_uart_event);
                      uart_error_handle(&app_uart_event);
         
+
+------
+
+ //把上海旅行社m_tx_fifo的游客（黄色大巴tx）转移到绿色大巴tx上（ tx_buffer）
+参数：m_tx_fifo,  tx_buffer
+app_fifo_get( * p_fifo,  * p_byte)
+
+    if (FIFO_LENGTH() != 0)
+    
+       // fifo_get(p_fifo, p_byte);..
+                    tx_buffer = m_tx_fifo ->p_buf[ *->read_pos ];
+   //把上海旅行社m_tx_fifo的游客（黄色大巴tx）转移到绿色大巴tx上（ tx_buffer）
+                    m_tx_fifo ->read_pos++;
+
+
+        return NRF_SUCCESS;    
+
+    return NRF_ERROR_NOT_FOUND;
+
+
+
 -----
 
 说明： 实际上没有对APP_UART_TX_EMPTY做任何处理
