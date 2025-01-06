@@ -1,0 +1,45 @@
+
+------ 10273发送sync信号的初始化流程：------
+
+01. 设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0
+02. 绑定回调函数 timestamp_timer_event_handler
+    m_cb[2].handler = timestamp_timer_event_handler
+03. 开启timer3
+04. 取得空闲的CC0通道，捕获定时器值到cc0并计算新的CC0值，使能 COMPARE[0] 中断，设置新的cc0值
+05. 绑定回调函数 sample_timer_event_handler
+    sample_event_callbacks[0] = sample_timer_event_handler 
+
+06. 定时触发了COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+07. 取得最新的采样cc值sample_event_trigger_value（+5328），循环计算新的采样cc值，直到delta值>0
+08. 清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置新cc[0]值
+09. 把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)
+10. 暂不开启uart的tx发送（会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务）
+11. 打开PPI1通道 
+
+21. 配置串口引脚p1.2和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE0的irq的优先级，使能UARTE0的irq总中断
+22. 使能 NRF_UARTE1
+23. 分配一个空闲的PPI通道 NRF_PPI_CHANNEL1，在ppi1的通道上，绑定timer3的CAPTURE0比较事件 和 UARTE0的STARTTX任务    
+24. 绑定时间邮戳回调函数comms_uarte_execute_timestamp_synch
+    timestamp_synch_execute_functions[0] = comms_uarte_execute_timestamp_synch
+
+25. uarte发送结束后触发ENDTX中断，清中断标志ENDTX，停止tx（TASK_STOPTX.1=1），清零 m_cb[0].tx_buffer_length
+26. 调用comms_uarte_handler，关闭ppi1通道
+
+
+
+------ 10273发送sync信号的执行流程：------
+
+01. 定时触发了COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+02. 取得最新的采样cc值sample_event_trigger_value（+5328），循环计算新的采样cc值，直到delta值>0
+03. 清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置新cc[0]值
+04. 把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)
+05. 打开PPI1通道 
+
+06. 第二次定时再次触发了COMPARE0比较事件中断，通过PP1自动触发了UARTE0的STARTTX任务，把sync信号的6个字节发送出去
+07. uarte发送结束后触发ENDTX中断，清中断标志ENDTX，停止tx（TASK_STOPTX.1=1），清零 m_cb[0].tx_buffer_length
+08. 关闭ppi1通道
+09. 再回到步骤01
+
+
+
+

@@ -2,11 +2,97 @@
 参考 ： 10036的dtm示例的debug2_uart.txt
 
 
+extern nrfx_uarte_t comms_uarte;          //--add 
+
+nrfx_uarte_tx(&comms_uarte, &itest, 1);
+while(nrfx_uarte_tx_in_progress(&comms_uarte));
+
+注释掉comms_uarte_execute_timestamp_synch整个函数
+
+------
+
+#include "led_driver.hpp"     //--add
+extern led_driver main_led;   //--add
+
+main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_BLUE(255));   //--test
+main_led.event_queue_process();                           //--test
+
+
+=================================== 关于PPI2的测试===============================
+
+说明1：关于PPI2， 在本程序中实际上是没有用的，注释下面的语句后，板子照样可以正常运行，得到了测试验证
+说明2：关于PPI2， 说明在发送串口log时，要把timer3的计数值清零
+
+
+comms_uarte_init()
+ 
+        ......
+
+    //--//Align UARTE clock with timestamp clock
+    //nrf_ppi_channel_t temp;
+    //APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&temp));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_assign(temp, nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDTX), timestamp_get_timer_clear_task()));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_enable(temp));
+    //uint8_t data = 0xFF;
+    //APP_ERROR_CHECK(nrfx_uarte_tx(&comms_uarte, &data, 1));
+    //while(nrfx_uarte_tx_in_progress(&comms_uarte));
+
+    ////Reset PPI
+    //APP_ERROR_CHECK(nrfx_ppi_channel_disable(temp));
+    //--APP_ERROR_CHECK(nrfx_ppi_channel_free(temp));
+
+
+
+=============================打印 uarte log的疑问============================================
+
+说明1：加入timestamp_init_with_internal_sample_event这一句后，下面的nrf_delay_ms(100)会卡住
+说明2：注释nrf_delay_ms(100)后，可打出log，但打一会儿就自动停下来
+
+分析：或是while和timer3中断同时打印uarte tx，导致卡住
+解决：只需注释掉comms_uarte_execute_timestamp_synch整个函数(定时发送synch信号)，其它地方都不需要注释
+
+-----
+
+主要是下面这句：
+    timestamp_init_with_internal_sample_event(2);
+       nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
+
+
+原因是下面这句：
+
+irq_handler(  * p_reg, * p_cb,  channel_count)
+
+     //p_cb->handler(event, p_cb->context);
+           timestamp_timer_event_handler(event, 0);      //COMPARE[0]中断服务函数
+
+
+原因是下面这句：
+
+timestamp_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
+
+    for( i = 0; i < timestamp_synch_execute_functions_num; i++)
+       //timestamp_synch_execute_functions[i](sample_event_trigger_value);
+          comms_uarte_execute_timestamp_synch( p_reg->CC[0] + 5328 + 5328 ）
+
+
+-----
+
+   while
+
+        nrf_delay_ms(100);
+
+        static uint8_t itest=0;
+        itest++;
+        nrfx_uarte_tx(&comms_uarte, &itest, 1);
+        while(nrfx_uarte_tx_in_progress(&comms_uarte));
+
+
 
 
 ========================================= uarte ===init=====================================
 
-//（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer） 
+游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） --  TXD (公园)
+
 
 flow:
 
@@ -19,8 +105,13 @@ flow:
 数据流：nrfx_uarte_0_irq_handler --> irq_handlers[0]
 数据流：config --> 寄存器
 
-数据流：NRF_PPI_CHANNEL0 --> ppi_channel_timestamp_capture （临时变量）
-数据流：1<<NRF_PPI_CHANNEL0  --> m_channels_allocated
+数据流：NRF_PPI_CHANNEL1 --> ppi_channel_timestamp_capture （临时变量）
+
+数据流：1<<NRF_PPI_CHANNEL1  --> m_channels_allocated
+数据流：1<<NRF_PPI_CHANNEL2  --> m_channels_allocated， 0<<NRF_PPI_CHANNEL2  --> m_channels_allocated
+
+数据流：comms_uarte_execute_timestamp_synch --> timestamp_synch_execute_functions[0]
+
 
 
 ----------------------------------
@@ -33,6 +124,14 @@ main
 
 ------------------
 
+功能：配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE0的irq的优先级，使能UARTE0的irq总中断，使能 NRF_UARTE1
+      设置UARTE0的TX的引脚为p1.2，初始为高电平，输出，强驱动
+      分配一个空闲的PPI通道 NRF_PPI_CHANNEL1，在ppi1的通道上，绑定timer3的CAPTURE0比较事件 和 UARTE0的STARTTX任务    
+      分配第二个空闲的PPI通道 PPI2, 在PPI2的通道上，绑定UARTE0的ENDTX事件和timer3的CLEAR任务,使能PPI2                
+      发送一个0xff字符，关闭PPI2通道
+      绑定时间邮戳回调函数comms_uarte_execute_timestamp_synch
+
+
 全局变量： comms_uarte   
   NRFX_UARTE_INSTANCE(0)                        
     .p_reg        = NRF_UARTE0,             
@@ -43,6 +142,10 @@ main
     .p_reg            = NRF_TIMER3,             
     .instance_id      = NRFX_TIMER3_INST_IDX,  //2
     .cc_channel_count = TIMER3_CC_NUM,         //6
+
+数据流：1<<NRF_PPI_CHANNEL1  --> m_channels_allocated
+数据流：1<<NRF_PPI_CHANNEL2  --> m_channels_allocated， 0<<NRF_PPI_CHANNEL2  --> m_channels_allocated
+数据流：comms_uarte_execute_timestamp_synch --> timestamp_synch_execute_functions[0]
 
 comms_uarte_init()
 
@@ -58,11 +161,11 @@ comms_uarte_init()
     m_uart0_drv_config.interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY;           //6
 
 
-    //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
+    //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，设置UARTE0的irq的优先级，使能UARTE0的irq总中断，使能 NRF_UARTE1
     nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler);
 
      
-    ------ set ppi0 ------
+    ------ set ppi1 ------
 
     //设置UARTE0的TX的引脚为p1.2，初始为高电平，输出，强驱动
     comms_uarte_set_tx_pin(OMMO_COMMS_UARTE_SYNCH_PIN);    //P1.2
@@ -71,9 +174,11 @@ comms_uarte_init()
        p_reg->PSEL.RXD = pselrxd;  //null
 
 
-    //分配一个空闲的PPI通道 NRF_PPI_CHANNEL0
+    //分配一个空闲的PPI通道 NRF_PPI_CHANNEL1
     //nrfx_ppi_channel_alloc(&comms_uarte_tx_ppi);'
-        comms_uarte_tx_ppi = NRF_PPI_CHANNEL0;
+        comms_uarte_tx_ppi = NRF_PPI_CHANNEL1;
+        m_channels_allocated |= (1 <<0);  //m_channels_allocated.0 =1，用标志变量记录已分配通道
+
 
     //取得timer3的COMPARE0事件地址
     //AAA = timestamp_get_sample_event_address();
@@ -86,19 +191,20 @@ comms_uarte_init()
     //BBB = nrfx_uarte_task_address_get(&comms_uarte, NRF_UARTE_TASK_STARTTX);
         BBB = NRF_UARTE0.NRF_UARTE_TASK_STARTTX;
 
-    //在PPI0的通道上，绑定timer3的CAPTURE0比较事件 和 UARTE0的STARTTX任务
+
+    //在ppi1的通道上，绑定timer3的CAPTURE0比较事件 和 UARTE0的STARTTX任务
     //nrfx_ppi_channel_assign( comms_uarte_tx_ppi, AAA, BBB );
-    //  nrfx_ppi_channel_assign( NRF_PPI_CHANNEL0, AAA, BBB );
-           NRF_PPI->CH[0].EEP = NRF_TIMER3 + NRF_TIMER_EVENT_COMPARE0;    //timer3的CAPTURE0比较事件
+    //  nrfx_ppi_channel_assign( NRF_PPI_CHANNEL1, AAA, BBB );
+           NRF_PPI->CH[0].EEP = NRF_TIMER3 + NRF_TIMER_EVENT_COMPARE0;    //timer3的COMPARE0比较事件
            NRF_PPI->CH[0].TEP = NRF_UARTE0.NRF_UARTE_TASK_STARTTX;        //UARTE0的STARTTX任务
 
 
-    ------ set ppi1 ------
+    ------ set PPI2 ------
 
-
-    //分配第二个空闲的PPI通道 NRF_PPI_CHANNEL1  （待验证）
+    //分配第二个空闲的PPI通道 NRF_PPI_CHANNEL2  （待验证）
     nrfx_ppi_channel_alloc(&temp);
-        temp = NRF_PPI_CHANNEL1;
+        temp = NRF_PPI_CHANNEL2;
+        m_channels_allocated |= (1 <<1);  //m_channels_allocated.1 =1，用标志变量记录已分配通道
 
    //取得uarte0的ENDTX事件地址
    //CCC = nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDTX);
@@ -108,145 +214,56 @@ comms_uarte_init()
    //DDD = timestamp_get_timer_clear_task();  
        DDD =NRF_TIMER3 + NRF_TIMER_TASK_CLEAR;
 
+    // 绑定UARTE0的ENDTX事件和timer3的CLEAR任务
     //nrfx_ppi_channel_assign( temp, CCC , DDD );
-       nrfx_ppi_channel_assign( NRF_PPI_CHANNEL1, CCC , DDD );
+       nrfx_ppi_channel_assign( NRF_PPI_CHANNEL2, CCC , DDD );
            NRF_PPI->CH[1].EEP = NRF_UARTE0.NRF_UARTE_EVENT_ENDTX;         //UARTE0的ENDTX事件 
            NRF_PPI->CH[1].TEP = NRF_TIMER3 + NRF_TIMER_TASK_CLEAR;        //timer3的CLEAR任务
 
-    //使能PPI1 
+    //使能PPI2 
     //nrfx_ppi_channel_enable(temp);
-       nrfx_ppi_channel_enable(NRF_PPI_CHANNEL1);
-           NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL1);        //使能PPI1 （打开ppi1通道）
+       nrfx_ppi_channel_enable(NRF_PPI_CHANNEL2);
+           NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL2;        //CHENSET.1 = 1,使能PPI2 （打开PPI2通道）
 
-
+    //发送一个0xff字符
     data = 0xFF;
-
-    //nrfx_uarte_tx(&comms_uarte, &data, 1);
+    //nrfx_uarte_tx(&comms_uarte, &data, 1);                      //把字符发送出去
         nrfx_uarte_tx_with_hold( comms_uarte, data, 1, false);
-
-    //while(nrfx_uarte_tx_in_progress(&comms_uarte)) ;
-       while(m_cb[0].tx_buffer_length != 0) ;
- 
+    //while(nrfx_uarte_tx_in_progress(&comms_uarte)) ;             //等待，直到发送完成 （dma自动发送完成后，在中断中会清零len）
+       while(m_cb[0].tx_buffer_length != 0) 
 
 
+    //关闭PPI2通道
+    //nrfx_ppi_channel_disable(temp);
+    //   nrf_ppi_channel_disable(NRF_PPI_CHANNEL2);
+    //     NRF_PPI->CHENCLR = PPI_CHENCLR_CH0_Clear << NRF_PPI_CHANNEL2;  
+              NRF_PPI->CHENCLR = 1 << 1;                                 //CHENCLR.1 = 1, 关闭PPI2通道
 
 
-    //Reset PPI
-    nrfx_ppi_channel_disable(temp);
-    nrfx_ppi_channel_free(temp);
+    //nrfx_ppi_channel_free(temp);
 
-    //Set ourself up to execute timestamp synch's
-    timestamp_add_synch_execute_function(comms_uarte_execute_timestamp_synch);
+        //nrf_ppi_channel_disable(NRF_PPI_CHANNEL2);
+           NRF_PPI->CHENCLR = 1 << 1;                                             //CHENCLR.1 = 1, 关闭PPI2通道
 
-
-
------
-
----参考---
-
-功能：连接到uart的tx dma， 开启uart的tx发送
-全局变量：app_uart_inst
-       .inst_idx =APP_UART_DRIVER_INSTANCE，//0          
-       .uarte.p_reg         =  NRF_UARTE0
-       .uarte.drv_inst_idx =  NRFX_UARTE0_INST_IDX   //0
-
-参数：  app_uart_inst->uarte,  tx_buffer,  1,  false
-数据流： tx_buffer + len -- mcb 
-数据流2： tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT    //相当于dma的地址连接
-nrfx_uarte_tx_with_hold(  * p_instance, *p_data,  length,  hold_xfer)
- 
-    p_cb = &m_cb[0];
-
-    //if (!nrfx_is_in_ram(p_data))       //easy，跳过   （见其他参考）
-        return err_code;
-
-    //if (nrfx_uarte_tx_in_progress(p_instance))      //如果还有数据未发送完  （正在发送）
-         if(!( m_cb[0].tx_buffer_length != 0) )                  
-             return err_code;
-   
-    p_cb->tx_buffer_length = 1;                 //len  --  mcb[0]
-    p_cb->p_tx_buffer      = tx_buffer;        // tx_buffer -- mcb[0]
-
-    //清下面的两个中断标志 ENDTX 和 TXSTOPPED
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
-
-    //nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, p_cb->tx_buffer_length );    //绿色大巴tx（tx_buffer）连接到TXD
-        p_reg->TXD.PTR    =  tx_buffer;
-        p_reg->TXD.MAXCNT = p_cb->tx_buffer_length;   //1
-
-    if(!hold_xfer)              //yes     //hold_xfer是参数传入false （忽略）
-
-        nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
-             p_reg->TASKS_STARTTX =1;        //开启uart tx发送
+        //channel_allocated_clr(NRF_PPI_CHANNEL2);
+        //  m_channels_allocated &= ~nrfx_ppi_channel_to_mask(NRF_PPI_CHANNEL2);
+              m_channels_allocated &= ~(1<<1);                                     //m_channels_allocated.1=0
 
 
-    if (p_cb->handler == NULL)   //no  ，忽略  （下面或是查询方式）
-         。。。
-
-
-
--------
-
-全局变量： comms_uarte   
-  NRFX_UARTE_INSTANCE(0)                        
-    .p_reg        = NRF_UARTE0,             
-    .drv_inst_idx = NRFX_UARTE0_INST_IDX   //0
-
-参数：comms_uarte, data, 1, false
-nrfx_uarte_tx_with_hold( * p_instance, *p_data, length, hold_xfer)
-
-
-    p_cb->tx_buffer_length = length;
-    p_cb->p_tx_buffer      = p_data;     //data
-
-
-    //清下面的两个中断标志 ENDTX 和 TXSTOPPED
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
-
-
-    nrf_uarte_tx_buffer_set(p_instance->p_reg, p_cb->p_tx_buffer, p_cb->tx_buffer_length);
-    if(!hold_xfer) nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
-
-    if (p_cb->handler == NULL)
-    {
-        bool endtx;
-        bool txstopped;
-        do
-        {
-            endtx     = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDTX);
-            txstopped = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED);
-        }
-        while ((!endtx) && (!txstopped));
-
-        if (txstopped)
-        {
-            err_code = NRFX_ERROR_FORBIDDEN;
-        }
-        else
-        {
-            // Transmitter has to be stopped by triggering the STOPTX task to achieve
-            // the lowest possible level of the UARTE power consumption.
-            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STOPTX);
-
-            while (!nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_TXSTOPPED))
-            {}
-        }
-        p_cb->tx_buffer_length = 0;
-    }
-
-    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
-    return err_code;
-}
+    //绑定时间邮戳回调函数comms_uarte_execute_timestamp_synch
+    //数据流：comms_uarte_execute_timestamp_synch --> timestamp_synch_execute_functions[0]
+    //timestamp_add_synch_execute_function(comms_uarte_execute_timestamp_synch);
+        timestamp_synch_execute_functions[timestamp_synch_execute_functions_num] = comms_uarte_execute_timestamp_synch;  //0
+        timestamp_synch_execute_functions_num++;   //1
 
 
 --------
 
-功能：  分配一个空闲的PPI通道 NRF_PPI_CHANNEL0
-数据流：NRF_PPI_CHANNEL0 --> ppi_channel_timestamp_capture （临时变量）
-数据流：1<<NRF_PPI_CHANNEL0  --> m_channels_allocated
-参数： ppi_channel_timestamp_capture
+功能：  分配一个空闲的PPI通道 NRF_PPI_CHANNEL1
+数据流：NRF_PPI_CHANNEL1 --> ppi_channel_timestamp_capture （临时变量）
+数据流：1<<NRF_PPI_CHANNEL1  --> m_channels_allocated
+
+参数： ppi_channel_timestamp_capture        //NRF_PPI_CHANNEL1=0
 nrfx_ppi_channel_alloc(  * p_channel)    
 
     nrf_ppi_channel_t channel;
@@ -254,12 +271,12 @@ nrfx_ppi_channel_alloc(  * p_channel)
 
     mask = NRFX_PPI_PROG_APP_CHANNELS_MASK;  //FFFFF
 
-    for ( channel = NRF_PPI_CHANNEL0;  mask != 0;  channel++ )     //NRF_PPI_CHANNEL0=0
+    for ( channel = NRF_PPI_CHANNEL1;  mask != 0;  channel++ )     //NRF_PPI_CHANNEL1=0
  
         BBB = mask & (1 <<channel) ;   //1<<0
 
         //CCC = !is_allocated_channel(channel);
-        //  CCC = (m_channels_allocated & (1 << channel)) == 0;   //m_channels_allocated.0 =0 （尚未分配 NRF_PPI_CHANNEL0），固为true
+        //  CCC = (m_channels_allocated & (1 << channel)) == 0;   //m_channels_allocated.0 =0 （尚未分配 NRF_PPI_CHANNEL1），固为true
               CCC = (0 & (1 << 0) == 0   //true
 
         if (  BBB && CCC  ) //yes
@@ -267,7 +284,7 @@ nrfx_ppi_channel_alloc(  * p_channel)
             //channel_allocated_set(channel);
                m_channels_allocated |= (1 <<0);  //m_channels_allocated.0 =1，用标志变量记录已分配通道
 
-            *p_channel = channel; // ppi_channel_timestamp_capture = NRF_PPI_CHANNEL0
+            *p_channel = channel; // ppi_channel_timestamp_capture = NRF_PPI_CHANNEL1
 
             break;    //如果找到了空闲通道，则退出for循环
 
@@ -277,7 +294,7 @@ nrfx_ppi_channel_alloc(  * p_channel)
 
 ----
 
-功能：配置串口引脚和波特率，清中断标志，使能UARTE0的ENDRX等各个子中断，使能UARTE0的irq和优先级中断（总中断），使能 NRF_UARTE0
+功能：配置串口引脚和波特率，清中断标志，使能UARTE0的ENDRX等各个子中断，设置UARTE0的irq的优先级，使能UARTE0的irq总中断，使能 NRF_UARTE0
 
 数据流：comms_uarte_handler --> m_cb,   0 -->  m_cb[1].p_context 
 数据流：nrfx_uarte_0_irq_handler --> irq_handlers[0]
@@ -303,7 +320,7 @@ nrfx_uarte_init( *p_instance,  * p_config,  event_handler)
     p_cb->p_context = p_config->p_context;  //0
 
 
-    //清中断标志，使能UARTE0的ENDRX等各个子中断，设置UARTE0的irq中断的优先级，使能UARTE0的irq中断（总中断）  //待验证
+    //清中断标志，使能UARTE0的ENDRX等各个子中断，设置UARTE0的irq的优先级，使能UARTE0的irq总中断 
     if (p_cb->handler)
     
         //interrupts_enable(p_instance, 6);
@@ -385,7 +402,102 @@ comms_uarte_set_tx_pin(pin)
 
 
 
-=================================== uarte === tx irq===================================
+========================================= uarte ===tx=====================================
+
+游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） --  TXD (公园)
+
+flow:
+
+    main -- comms_uarte_init -- nrfx_uarte_tx -- nrfx_uarte_tx_with_hold -- nrf_uarte_tx_buffer_set -- 
+
+
+数据流：data + len  -- m_cb[0]                                        //游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） 
+数据流：data  -->  TXD.PTR， 1  -->  TXD.MAXCNT                       //绿大巴tx(data) -- TXD (公园)    (相当于dma的地址连接)
+
+
+-----------------------------------
+
+
+全局变量： comms_uarte   
+  NRFX_UARTE_INSTANCE(0)                        
+    .p_reg        = NRF_UARTE0,             
+    .drv_inst_idx = NRFX_UARTE0_INST_IDX   //0
+
+全局变量 NRFX_TIMER_INSTANCE(3)                                   
+                                                                 
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX,  //2
+    .cc_channel_count = TIMER3_CC_NUM,         //6
+
+comms_uarte_init()
+
+   ......
+
+    data = 0xFF;
+
+    //把data连接到uart的tx dma， 开启uart的tx发送
+    //nrfx_uarte_tx(&comms_uarte, &data, 1);
+        nrfx_uarte_tx_with_hold( comms_uarte, data, 1, false);
+
+
+    //等待，直到发送完成 （dma自动发送完成后，在中断中会清零len）
+    //while(nrfx_uarte_tx_in_progress(&comms_uarte)) ;
+       while(m_cb[0].tx_buffer_length != 0) ;
+ 
+   ......
+
+
+
+
+---------
+
+
+功能：把data连接到uart的tx dma， 开启uart的tx发送
+
+全局变量： comms_uarte   
+  NRFX_UARTE_INSTANCE(0)                        
+    .p_reg        = NRF_UARTE0,             
+    .drv_inst_idx = NRFX_UARTE0_INST_IDX   //0
+
+数据流：data + len  -- m_cb[0]                                        //游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） 
+数据流：data  -->  TXD.PTR， 1  -->  TXD.MAXCNT                       //绿大巴tx(data) -- TXD (公园)    (相当于dma的地址连接)
+
+参数：comms_uarte, data, 1, false
+nrfx_uarte_tx_with_hold( * p_instance, *p_data, length, hold_xfer)
+
+
+    p_cb = &m_cb[0];
+
+    p_cb->tx_buffer_length = length;     //len  --  mcb[0]
+    p_cb->p_tx_buffer      = p_data;     //data  --  mcb[0]
+
+
+    //清下面的两个中断标志 ENDTX 和 TXSTOPPED
+    nrf_uarte_event_clear( NRF_UARTE0, NRF_UARTE_EVENT_ENDTX);
+    nrf_uarte_event_clear( NRF_UARTE0, NRF_UARTE_EVENT_TXSTOPPED);
+
+
+    //把data连接到uart的tx dma
+    nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, p_cb->tx_buffer_length); //绿色大巴tx（tx_buffer）连接到TXD
+        p_reg->TXD.PTR    =  p_cb->p_tx_buffer;
+        p_reg->TXD.MAXCNT = p_cb->tx_buffer_length;   //1
+
+
+    if(!hold_xfer)              //yes     //hold_xfer是参数传入false  
+
+        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
+             p_reg->TASKS_STARTTX =1;        //开启uart tx发送
+
+
+    if (p_cb->handler == NULL)   //no  ，忽略  （下面或是查询方式）  //comms_uarte_handler
+         。。。
+
+
+
+
+
+
+==================================== uarte === tx irq===================================
 
 flow: 
 
@@ -395,58 +507,90 @@ flow:
 
 -----------------------------------------------------
 
-  static void comms_uarte_handler(nrfx_uarte_event_t const *p_event, void *p_context)
-{
-    //Add PPI calls are one shot
-    APP_ERROR_CHECK(nrfx_ppi_channel_disable(comms_uarte_tx_ppi));
-}
-
-
-
-
-
-
-
-
-=================================== uarte === rx init===================================
-
-
-//（公园）RXD -- 西安旅行社（mcb） --  绿色大巴rx（rx_buffer） 
-
-//flow：
-
-     main -- comms_uarte_init --  nrfx_uarte_init -- nrfx_uarte_rx
-
-
-//数据流： comms_uarte_rx_buffer + len(=6) -->  m_cb[0]                        //绿色大巴rx 挂靠 西安旅行社
-//数据流： comms_uarte_rx_buffer  -->  RXD.PTR， 6 -->  RXD.MAXCNT             //绿色大巴rx 对接dma rx
-
-
-
-
-
-======================================== uarte === rx irq====================================
-
-
-//flow：
-
-     ses_startup_nrf52833.s -- UARTE1_IRQHandler -- nrfx_uarte_1_irq_handler -- uarte_irq_handler -- rx_done_event -- (p_cb->handler) 
-     -- comms_uarte_handler -- cobs_decode -- timestamp_synch_recieved -- nrfx_uarte_rx
-
-     comms_uarte_handler -- timestamp_synch_recieved -- timestamp_reset_synch_lost_timer -- (timeout_gen->reset_timeout) -- rtc_timeout->reset_timeout
-     -- rtc_timeout_gen::reset_timeout -- nrfx_rtc_cc_set -- timestamp_synch_lost_found_callback -- timestamp_synch_lost_found -- set_leds
-
-
-
---------------------------------------------
-
 可看作硬件中断入口 （ 详见上面的flow ）
 
-nrfx_uarte_1_irq_handler( )
+nrfx_uarte_0_irq_handler( )
 
-    uarte_irq_handler(NRF_UARTE1, &m_cb[NRFX_UARTE1_INST_IDX]);
+    //uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+        uarte_irq_handler(NRF_UARTE0, &m_cb[0]);
 
 
+-----------
+
+功能： 检查有中断标志ENDTX，清中断标志ENDTX，停止tx（TASK_STOPTX.1=1），清零 m_cb[0].tx_buffer_length，调用comms_uarte_handler，关闭ppi1通道
+
+参数： NRF_UARTE0,  &m_cb[0] 
+uarte_irq_handler( *p_uarte,  * p_cb)
+
+    //---检查uarte中断的错误标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))
+    
+        nrfx_uarte_event_t event;
+
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
+
+        event.type                   = NRFX_UARTE_EVT_ERROR;
+        event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
+        event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
+        event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
+
+        p_cb->rx_buffer_length = 0;
+        p_cb->rx_secondary_buffer_length = 0;
+
+        //关闭ppi1通道
+        //p_cb->handler(&event, p_cb->p_context);  
+        //  comms_uarte_handler(&event, p_cb->p_context);  
+        //    nrfx_ppi_channel_disable(comms_uarte_tx_ppi);  //NRF_PPI_CHANNEL1
+        //      nrf_ppi_channel_disable(NRF_PPI_CHANNEL1);
+                  NRF_PPI->CHENCLR = PPI_CHENCLR_CH0_Clear <<  NRF_PPI_CHANNEL1;    //1<<0
+    
+
+    //---检查uarte中断的发送完成标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
+    
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);   //清标志
+
+        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);   // UARTE0->TASK_STOPTX.1=1， 停止tx
+
+        if (p_cb->tx_buffer_length != 0)     
+
+            //清零 m_cb[0].tx_buffer_length ，调用comms_uarte_handler，关闭ppi1通道
+            //tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));   
+                tx_done_event(p_cb,  UARTE0->TXD.AMOUNT );        //  1  
+        
+    
+    //---检查uarte中断的发送停止标志---
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))   
+          （先忽略，easy）
+
+
+------------------------
+
+功能： 清零 m_cb[0].tx_buffer_length ，调用comms_uarte_handler 关闭ppi1通道
+
+参数： p_cb,  1
+tx_done_event( * p_cb,   bytes)
+
+    event.type             = NRFX_UARTE_EVT_TX_DONE;
+    event.data.rxtx.bytes  = bytes;                       //1
+    event.data.rxtx.p_data = p_cb->p_tx_buffer;   
+
+    p_cb->tx_buffer_length = 0;   //刚发送之前是1，现在置0
+
+    //关闭ppi1通道
+    //p_cb->handler(&event, p_cb->p_context);     
+        comms_uarte_handler(&event, 0);     
+
+
+
+----------
+
+//关闭ppi1通道
+comms_uarte_handler( *p_event,  *p_context)
+
+    //nrfx_ppi_channel_disable(comms_uarte_tx_ppi);  //NRF_PPI_CHANNEL1
+    //  nrf_ppi_channel_disable(NRF_PPI_CHANNEL1);
+          NRF_PPI->CHENCLR = PPI_CHENCLR_CH0_Clear <<  NRF_PPI_CHANNEL1;    //1<<0
 
 
 

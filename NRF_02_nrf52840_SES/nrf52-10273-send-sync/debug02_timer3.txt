@@ -1,0 +1,589 @@
+
+
+timer3的时钟源是HFCLK16M, 预分频是0，则： f = 16M / 2^0 = 16M
+
+
+=================================== 关于PPI GROUP0和PPI0的测试===============================
+
+
+说明1：关于PPI GROUP0和PPI0， 在本程序中实际上是没有用的，注释下面的语句后，板子照样可以正常运行，得到了测试验证
+
+timestamp_init_with_internal_sample_event( isr_priority)
+
+        ......
+
+    //--//Allocate group for capture disables
+    //APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
+    //APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
+
+    ////Setup PPI for disabling timestamp capture on sample timer evt
+    //APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, 
+      timestamp_get_sample_event_address(), nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
+    //--APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
+
+
+timestamp_timer_event_handler(  event_type, * p_context)
+
+        ......
+
+        //for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
+        //    sample_event_callbacks[i](event_type, p_context);
+
+
+
+
+=================================== timer3 ===init===============================
+ 
+
+//flow:
+ 
+     main -- timestamp_init_with_internal_sample_event -- nrfx_timer_init -- ((m_cb[2].handler=timestamp_timer_event_handler) -- nrfx_timer_enable 
+     -- nrfx_timer_capture -- nrfx_timer_compare -- nrfx_ppi_group_alloc -- nrfx_ppi_group_enable -- nrfx_ppi_channel_alloc -- nrfx_ppi_channel_assign
+     -- nrfx_ppi_channel_enable
+
+
+数据流：timestamp_timer_event_handler --> m_cb[2].handler
+数据流：                         0    --> m_cb[2].context
+
+数据流： sample_timer_event_handler --> sample_event_callbacks[0]
+
+
+
+----------------------------------
+
+main
+
+     
+    //设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+      取得空闲的CC0通道，捕获定时器值到cc0并计算新的CC0值，使能 COMPARE[0] 中断，设置新的cc0值。
+      分配一个空闲的ppi group0，并打开它 ，
+      分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0
+    timestamp_init_with_internal_sample_event(2);    //优先级2
+
+
+    //数据流： sample_timer_event_handler --> sample_event_callbacks[0]
+    //timestamp_add_sample_event_callback(sample_timer_event_handler); 
+        sample_event_callbacks[0] = sample_timer_event_handler;  
+        sample_event_callbacks_num++;                                    //本程序中只有1个 event callback
+
+
+
+--------------
+
+
+功能：设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+      取得空闲的CC0通道，捕获定时器值到cc0并计算新的CC0值，使能 COMPARE[0] 子中断，设置新的cc0值。
+      分配一个空闲的ppi group0，并使能打开它 ，
+      再分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0
+
+
+全局变量：timer_timestamp
+
+     NRFX_TIMER_INSTANCE(3)                                   
+                                                                
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX,   //2
+    .cc_channel_count = TIMER3_CC_NUM,          //6
+
+
+参数：2
+timestamp_init_with_internal_sample_event( isr_priority)
+
+
+    //timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+        .frequency          = NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,     //0
+        .mode               = NRFX_TIMER_DEFAULT_CONFIG_MODE,          //0         
+        .bit_width          = NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,     //3  （对应32位）
+        .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,  //6                  
+        .p_context          = NULL   
+
+    timer_cfg.interrupt_priority = isr_priority;  //2
+
+    //设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0
+    nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler);
+
+
+    //开启timer3
+    //nrfx_timer_enable(&timer_timestamp);
+        //nrf_timer_task_trigger(NRF_TIMER3, NRF_TIMER_TASK_START);          //开启timer3
+            p_reg + START = 1;
+
+        m_cb[2].state = NRFX_DRV_STATE_POWERED_ON; 
+
+
+    //sample_event_compare_channel = timestamp_get_capture_compare_channel();  
+       sample_event_compare_channel = 0 ;   //NRF_TIMER_CC_CHANNEL0            //取得当前空闲的CC通道  (已理解：没有根据timer3去找cc通道-- 只有timer3用到这个函数)
+
+    //nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);      
+       //nrf_timer_task_trigger( NRF_TIMER3, nrf_timer_capture_task_get(0) );
+           NRF_TIMER3 + TASKS_CAPTURE[0]  =1;                                 //启动CAPTURE[0]任务，把定时器的计数值，捕获到cc寄存器中
+
+       //rf_timer_cc_read( NRF_TIMER3, 0);         //忽略，没有使用
+           p_reg->CC[0];                           //取得CC值
+
+    //捕获定时器计数器值到CC0，并计算新的sample_event_trigger_value （用于设置将来的cc0值）
+    //sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
+    //  sample_event_trigger_value = nrf_timer_cc_read( NRF_TIMER3, 0 ) + 5328;
+           sample_event_trigger_value = p_reg->CC[0] + 5328;
+
+
+    //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
+    //nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
+    //  nrfx_timer_compare(&timer_timestamp, 0, sample_event_trigger_value, true);
+           *(NRF_TIMER3 + EVENTS_COMPARE[0])=0;                     //清除COMPARE[0]子事件标志  
+           p_reg->INTENSET = 1<<16;                                 //使能 COMPARE[0]子事件的中断 
+           p_reg->CC[0] = cc_value;                                 //设置cc值，p_reg->CC[0]+5328
+
+
+    //分配一个空闲的ppi group channel0    （似乎没有用到，没有连接具体的PPI通道 -- 待验证）
+    //nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);  
+       ppi_group_disable_timestamp_capture = NRF_PPI_CHANNEL_GROUP0;  //0
+
+    //打开 ppi group0 
+    //nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture);
+    //  nrf_ppi_group_enable(NRF_PPI_CHANNEL_GROUP0);
+          NRF_PPI->TASKS_CHG[0].EN = 1;  //使能ppi group channel0   //打开 ppi group0
+
+
+    //分配一个空闲的ppi channel0
+    nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);  // 分配一个空闲的PPI通道 NRF_PPI_CHANNEL0
+       ppi_channel_disable_timestamp_capture = NRF_PPI_CHANNEL0;     // 0
+
+    //给PPI0分配事件和任务 (把关闭group0的任务DIS分配给PPI1)
+    //nrfx_ppi_channel_assign( NRF_PPI_CHANNEL1, timestamp_get_sample_event_address(), nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture));
+    //   nrfx_ppi_channel_assign( NRF_PPI_CHANNEL0, NRF_TIMER3+NRF_TIMER_EVENT_COMPARE0 , &NRF_PPI->TASKS_CHG[0].DIS );
+    //      nrf_ppi_channel_endpoint_setup( NRF_PPI_CHANNEL0, eep, tep);
+              NRF_PPI->CH[0].EEP = NRF_TIMER3+NRF_TIMER_EVENT_COMPARE0;     //TIMER3的COMPARE0事件
+              NRF_PPI->CH[0].TEP = &NRF_PPI->TASKS_CHG[0].DIS;              //PPI组 GROUP0的 DIS任务
+
+    //使能PPI0 （打开ppi0通道）
+    //nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture);
+    //   nrfx_ppi_channel_enable(NRF_PPI_CHANNEL0);
+            nrf_ppi_channel_enable(NRF_PPI_CHANNEL0);
+                NRF_PPI->CHENSET = 1<< NRF_PPI_CHANNEL0);  //使能PPI0
+
+    timestamp_synch_init(isr_priority);  //这里为空函数，忽略跳过
+
+    initialized = true;
+
+
+
+
+----------
+
+
+功能：设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0
+
+数据流：timestamp_timer_event_handler --> m_cb[2].handler
+数据流：                         0    --> m_cb[2].context
+
+参数：timer_timestamp, &timer_cfg, timestamp_timer_event_handler
+nrfx_timer_init( * const  p_instance,  * p_config,  timer_event_handler)
+
+    p_cb = &m_cb[2];
+
+    p_cb->handler = timer_event_handler;   //timestamp_timer_event_handler
+    p_cb->context = p_config->p_context;   //0
+
+
+    //清除6个EVENTS_COMPARE事件标志
+    for (i = 0; i < p_instance->cc_channel_count; ++i)  //6
+    
+        //nrf_timer_event_clear(NRF_TIMER3, nrf_timer_compare_event_get(i));
+        //  nrf_timer_event_clear(NRF_TIMER3, NRFX_OFFSETOF(NRF_TIMER_Type, EVENTS_COMPARE[i]) );
+               *(NRF_TIMER3 +  EVENTS_COMPARE[i]) = 0;
+
+
+    NRFX_IRQ_PRIORITY_SET( nrfx_get_irq_number(NRF_TIMER3), 2);  //设置timer3的irq总中断优先级
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_TIMER3));            //使能timer3的irq总中断
+    //nrf_timer_mode_set( NRF_TIMER3, p_config->mode);            //设置为timer为定时器模式
+    //  nrf_timer_mode_set( NRF_TIMER3, 0);
+    //    p_reg->MODE = (p_reg->MODE & ~TIMER_MODE_MODE_Msk) | ((mode << TIMER_MODE_MODE_Pos) & TIMER_MODE_MODE_Msk);
+             p_reg->MODE = 0<<3;   //0, 设置为timer为定时器模式
+
+
+
+    //nrf_timer_bit_width_set( (NRF_TIMER3, 3);      //设置timer3的bitwidth为32位
+    //   p_reg->BITMODE = (p_reg->BITMODE & ~TIMER_BITMODE_BITMODE_Msk) | ((bit_width << TIMER_BITMODE_BITMODE_Pos) & TIMER_BITMODE_BITMODE_Msk);
+    //     p_reg->BITMODE = (p_reg->BITMODE & ~3) | (( 3 << 0) & 3);
+              p_reg->BITMODE = 3;   //32位
+
+    //nrf_timer_frequency_set( NRF_TIMER3, 0);   //设置timer3的预分频为0
+    //  p_reg->PRESCALER = (p_reg->PRESCALER & ~TIMER_PRESCALER_PRESCALER_Msk) | ((frequency << TIMER_PRESCALER_PRESCALER_Pos) & TIMER_PRESCALER_PRESCALER_Msk);
+           p_reg->PRESCALER =  0 << 0;          //设置timer3的预分频为0
+
+
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+
+
+
+
+
+
+========================================== timer3 ===irq=========================================
+
+
+flow:
+
+     ses_startup_nrf52833.s -- TIMER3_IRQHandler  -- nrfx_timer_3_irq_handler -- irq_handler -- (m_cb[2].handler) 
+     -- timestamp_timer_event_handler -- comms_uarte_execute_timestamp_synch -- sample_timer_event_handler 
+
+
+数据流：comms_uarte_tx_buffer + len  -- m_cb[0]                                        //游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） 
+数据流：comms_uarte_tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT                       //绿大巴tx(data) -- TXD (公园)    (相当于dma的地址连接)
+
+
+
+-----------------------------------------------------------------------
+
+
+可看作是硬件中断入口
+
+全局变量：timer_timestamp                               
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX,     //3
+    .cc_channel_count = TIMER3_CC_NUM,            //6
+
+nrfx_timer_3_irq_handler( )
+
+    //irq_handler(NRF_TIMER3, &m_cb[2],  NRF_TIMER_CC_CHANNEL_COUNT(3));    
+    //  irq_handler(NRF_TIMER3, &m_cb[2],  TIMER3_CC_NUM）;    
+           irq_handler( NRF_TIMER3,  &m_cb[2], 6 );    
+
+ 
+
+----------------
+
+
+功能：判断cc0触发了COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+          取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+          清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
+          把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)
+          暂不开启uart的tx发送（会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
+          打开通道组GROUP0
+
+
+参数：NRF_TIMER3,  &m_cb[2],   6
+irq_handler(  * p_reg, * p_cb,  channel_count)
+
+    for (i = 0; i < channel_count; ++i)  //6
+    
+        // event = nrf_timer_compare_event_get(i);   
+            event =NRFX_OFFSETOF( NRF_TIMER_Type,  EVENTS_COMPARE[i] );  
+
+        //int_mask = nrf_timer_compare_int_get(i);
+        //  int_mask =  NRF_TIMER_INT_COMPARE0_MASK << i;
+                int_mask =  1<< 6 << i;
+
+
+        //AAA = nrf_timer_event_check(p_reg, event);
+           AAA = NRF_TIMER3 + EVENTS_COMPARE[i];            //COMPARE[0]子事件标志
+
+        //BBB = nrf_timer_int_enable_check(p_reg, int_mask);
+           BBB = NRF_TIMER3->INTENSET  & 1<< 6 << i;        //使能了COMPARE[0]中断
+
+        if ( AAA && BBB )                                     //如果有COMPARE[0]事件标志，并且使能了COMPARE[0]中断
+        
+            //nrf_timer_event_clear(p_reg, event);
+                 NRF_TIMER3 + EVENTS_COMPARE[i] =0 ;          //清除COMPARE[0]事件标志            
+
+
+            //取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+              清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
+              把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
+            （会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
+              打开通道组GROUP0
+
+            //p_cb->handler(event, p_cb->context);
+                timestamp_timer_event_handler(event, 0);      //COMPARE[0]中断服务函数
+        
+
+----------
+
+
+//取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+  清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
+  把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
+（会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
+  打开通道组GROUP0
+
+参数：NRF_TIMER_EVENT_COMPARE0，0
+timestamp_timer_event_handler( event_type,  * p_context)
+
+    if(event_type == compare_events[0])       //yes,  NRF_TIMER_EVENT_COMPARE0
+
+        last_sample_event_trigger_value = sample_event_trigger_value;   //p_reg->CC[0] + 5328
+
+        //循环计算，直到delta值>0   （待理解）
+        do
+        {
+            timestamp_synch_count++;
+            sample_event_trigger_value += 5328;
+        }
+
+        //AAA = calculate_wrapped_delta(nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel) + 100, sample_event_trigger_value, UINT32_MAX) ;
+           AAA = calculate_wrapped_delta( p_reg->CC[0]  + 100,  sample_event_trigger_value, FFFFffff) ;
+       while( AAA > 0);
+
+
+         //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
+        //nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
+            nrfx_timer_compare(&timer_timestamp, 0, p_reg->CC[0]+5328 + 0, true);     //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
+
+
+        //把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去 （每3个cc0中断即每1毫秒发送1次)
+        if(timestamp_synch_count >= OMMO_TIMESTAMP_SYNCH_PERIOD)     //3     
+   
+            timestamp_synch_count -= OMMO_TIMESTAMP_SYNCH_PERIOD;
+
+
+            //Send timestamp uart on next sample event (using the timestamp trigger value in the future)
+
+            for(  i = 0; i < timestamp_synch_execute_functions_num; i++)
+
+                //把时间的4个字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，
+                  暂不开启uart的tx发送（会由下一次的COMPARE0事件触发PPI1的STARTTX任务），打开PPI1通道 
+                //timestamp_synch_execute_functions[i](sample_event_trigger_value);        //i=0                   
+                   comms_uarte_execute_timestamp_synch( p_reg->CC[0] + 5328 + 5328 ）
+
+
+        //打开通道组GROUP0
+        for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
+
+            //sample_event_callbacks[i](event_type, p_context);               
+            //  sample_timer_event_handler(NRF_TIMER_EVENT_COMPARE0, 0);                //i=0
+                   NRF_PPI->TASKS_CHG[0].EN = 1;                                        //打开通道组GROUP0
+
+
+-----
+
+功能：把把定时器的计数值，捕获到cc0寄存器中，读取cc0值
+
+参数： &timer_timestamp, 0 
+nrfx_timer_capture( * const p_instance,  cc_channel) 
+
+    //nrf_timer_task_trigger( NRF_TIMER3,  nrf_timer_capture_task_get(0));
+        NRF_TIMER3 + TASKS_CAPTURE[0] =1; //启动CAPTURE[0]任务，把定时器的计数值，捕获到cc寄存器中
+
+    return nrf_timer_cc_read( NRF_TIMER3, cc_channel);   //p_reg->CC[0];    //取得CC值
+ 
+
+
+------
+
+功能：打开或关闭 COMPARE[0]中断，设置cc值
+
+参数：timer_timestamp, 0, p_reg->CC[0]+15984, true
+nrfx_timer_compare( *p_instance, cc_channel, cc_value, enable_int)
+
+   //timer_int = nrf_timer_compare_int_get(cc_channel);
+        timer_int = NRF_TIMER_INT_COMPARE0_MASK << 0);   //1<<16
+
+    if (enable_int)  //yes
+     
+        nrf_timer_event_clear(p_instance->p_reg, nrf_timer_compare_event_get(cc_channel));   //清除 COMPARE[0]事件标志
+
+        nrf_timer_int_enable(p_instance->p_reg, timer_int);
+            p_reg->INTENET= 1<<16;                                 //打开 COMPARE[0]子中断
+
+    else
+        //nrf_timer_int_disable(p_instance->p_reg, timer_int);
+            p_reg->INTENCLR = 1<<16;                                 //关闭 COMPARE[0]中断
+
+    //nrf_timer_cc_write(p_instance->p_reg, cc_channel, cc_value);
+       p_reg->CC[0] = cc_value;  //p_reg->CC[0]+15984
+
+
+
+----
+
+功能：打开通道组GROUP0
+参数：NRF_TIMER_EVENT_COMPARE0，0                        //参数没有用到
+sample_timer_event_handler( event_type,  * p_context)
+
+    //取得最新的采样时间邮戳
+    //next_sample_timestamp = timestamp_get_last_sample_event_timestamp();
+       next_sample_timestamp = last_sample_event_trigger_value + 1;         //p_reg->CC[0] + 5328 +1   (没有用到这个变量，忽略)
+
+
+    //timestamp_reenable_disabled_captures();
+    //  nrf_ppi_group_enable(ppi_group_disable_timestamp_capture);    //NRF_PPI_CHANNEL_GROUP0
+           NRF_PPI->TASKS_CHG[0].EN = 1;                              //打开通道组GROUP0
+ 
+
+---
+
+//取得最新的采样时间邮戳
+timestamp_get_last_sample_event_timestamp()
+
+    if(sample_event_compare_channel != 0xFF)                   //yes, NRF_TIMER_CC_CHANNEL0   (内部时钟采样)
+    
+        return last_sample_event_trigger_value + 1;            //+1 是补偿PPI捕捉延迟
+    
+    else if(sample_event_timestamp_capture_channel != 0xFF)    // 外部时钟采样， 没有用到，忽略
+
+        ......
+
+
+---------
+
+功能：把时间的4个字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，暂不开启uart的tx发送（会由下一次的COMPARE0事件触发PPI1的STARTTX任务），打开PPI1通道 
+
+参数：p_reg->CC[0] + 5328 + 5328 
+comms_uarte_execute_timestamp_synch(  sample_event_value )
+
+    //把时间的4个字节放入到txbuf[1-3],把长度5放入到txbuf[0]，把最后一个字赋值0x00
+    cobs_encode_post0(  &sample_event_value, 4,  comms_uarte_tx_buffer );
+
+
+    //把comms_uarte_tx_buffer连接到uart的tx dma， 暂不开启uart的tx发送
+    nrfx_uarte_tx_with_hold(&comms_uarte, comms_uarte_tx_buffer, 6, true);
+
+
+    //打开PPI1通道  (PPI1通道，已确认)
+    //nrfx_ppi_channel_enable(comms_uarte_tx_ppi); 
+    //  nrf_ppi_channel_enable( NRF_PPI_CHANNEL1 );
+          NRF_PPI->CHENSET = PPI_CHENSET_CH0_Set << 1;    //1<<1
+
+
+
+---------
+
+
+功能：把comms_uarte_tx_buffer连接到uart的tx dma， 暂不开启uart的tx发送
+
+全局变量： comms_uarte   
+  NRFX_UARTE_INSTANCE(0)                        
+    .p_reg        = NRF_UARTE0,             
+    .drv_inst_idx = NRFX_UARTE0_INST_IDX   //0
+
+数据流：comms_uarte_tx_buffer + len  -- m_cb[0]                                        //游客(0xff) -- 西安旅行社(m_cb) -- 绿色大巴tx（data） 
+数据流：comms_uarte_tx_buffer  -->  TXD.PTR， 1  -->  TXD.MAXCNT                       //绿大巴tx(data) -- TXD (公园)    (相当于dma的地址连接)
+
+参数：comms_uarte, comms_uarte_tx_buffer, 6, true
+nrfx_uarte_tx_with_hold( * p_instance, *p_data, length, hold_xfer)
+
+    p_cb = &m_cb[0];
+
+    p_cb->tx_buffer_length = length;     //len  --  mcb[0]
+    p_cb->p_tx_buffer      = p_data;     //data  --  mcb[0]
+
+
+    //清下面的两个中断标志 ENDTX 和 TXSTOPPED
+    nrf_uarte_event_clear( NRF_UARTE0, NRF_UARTE_EVENT_ENDTX);
+    nrf_uarte_event_clear( NRF_UARTE0, NRF_UARTE_EVENT_TXSTOPPED);
+
+    //把comms_uarte_tx_buffer连接到uart的tx dma
+    nrf_uarte_tx_buffer_set( NRF_UARTE0, p_cb->p_tx_buffer, p_cb->tx_buffer_length); //绿色大巴tx（tx_buffer）连接到TXD
+        p_reg->TXD.PTR    =  p_cb->p_tx_buffer;
+        p_reg->TXD.MAXCNT = p_cb->tx_buffer_length;   //1
+
+
+    if(!hold_xfer)              //no     //hold_xfer是参数传入false （忽略下面）
+
+        //nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTTX);
+             p_reg->TASKS_STARTTX =1;        //开启uart tx发送
+
+
+    if (p_cb->handler == NULL)   //no  ，忽略  （下面或是查询方式）    //comms_uarte_handler
+         。。。
+
+
+---
+
+功能： 把时间的4个字节放入到txbuf[1-3],把长度5放入到txbuf[0]，把最后一个字赋值0x00
+
+参数：sample_event_value, 4,  comms_uarte_tx_buffer
+cobs_encode_post0(  *ptr,  length,  *dst)
+ 
+    //把时间的4个字节放入到txbuf[1-3],把长度5放入到txbuf[0]
+    cobs_len = cobs_encode(ptr, length, dst);
+
+    //把最后一个字赋值0x00
+    dst[cobs_len] = 0x00;
+ 
+
+----
+
+功能：把时间的4个字节放入到txbuf[1-3],把长度5放入到txbuf[0]
+测试数据：05 6A 88 3C 1D 00  
+
+参数：sample_event_value, 4,  comms_uarte_tx_buffer
+cobs_encode(  *ptr,  length,   *dst)
+ 
+	start = dst;           //comms_uarte_tx_buffer
+
+        end = ptr + length;    //sample_event_value + 4
+
+
+	//StartBlock();                //下面2个变量用来计算长度并把长度保存到dst的第一个字节中，code可理解为len
+           code_ptr = dst++; 
+           code = 1;    
+
+
+	while (ptr < end)
+        
+            //--if (code != 0xFF)
+            
+                c = *ptr++;
+
+                if (c != 0)               //本人觉得不需要判断c=0
+                
+                        *dst++ = c;
+                        code++;
+                        continue;
+
+     
+             //--下面是遇到c=0，则重新计数   //本人觉得不需要判断c=0 
+
+            //FinishBlock();
+               *code_ptr = code;
+
+            //StartBlock();
+               code_ptr = dst++; 
+               code = 1;    
+
+
+	//FinishBlock();
+           *code_ptr = code;
+
+	return  dst - start;
+ 
+
+
+-----
+
+//待理解，先忽略跳过
+
+参数：p_reg->CC[0] + 100, sample_event_trigger_value, FFFFffff
+calculate_wrapped_delta(  first,  second,  period)
+
+      delta =  first - second;
+
+      if( delta < - (period>>1) )
+          delta += period;
+
+      if( delta >  (period>>1) )
+          delta -= period;
+    
+      return  delta;
+
+    
+
+----------------------参考888------------------------------------------------
+
+
+
+
+..................
+
+
+
+
+
+
+
+
+
