@@ -31,6 +31,7 @@ main
     ......
 
 
+    //设置cc[0]延时门槛值(定时500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
     timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found, &rtc_timeout);
 
 
@@ -135,6 +136,8 @@ nrfx_rtc_init( *p_instance,  * p_config,  handler,  p_context)
 
 =======--------------------------------
 
+功能： 设置cc[0]延时门槛值(定时500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+
 全局变量: rtc_timeout.timeout_rtc
 NRFX_RTC_INSTANCE(2)                                   
                                                               
@@ -238,6 +241,7 @@ nrfx_rtc_cc_set( *p_instance, channel,  val, enable_irq)
 
 
 
+
 ============================================= RTC2 ===irq=============================================
 
 flow:
@@ -264,7 +268,7 @@ nrfx_rtc_2_irq_handler( )
 irq_handler( * p_reg, instance_id, channel_count)
 
 
-    //-------检查及处理COMPARE事件-----------
+    //-------检查及处理COMPARE事件-----use------
 
     int_mask = NRF_RTC_INT_COMPARE0_MASK;        //1<<16
 
@@ -316,6 +320,8 @@ irq_handler( * p_reg, instance_id, channel_count)
 
 -------
 
+功能：進入RTC2的cc0中断，关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
+      设置丢失信号标志timestamp_synch_lost为ture，更新小灯状态为蓝色快闪（失去sync信号）
 参数：0    //cc0
 rtc_timeout_gen::rtc_timer_handler(  int_type)
  
@@ -327,7 +333,7 @@ rtc_timeout_gen::rtc_timer_handler(  int_type)
 
     if( AAA )                                                     //或表示已发生sync信号丢失事件
      
-        功能：关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
+        //关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
         nrfx_rtc_cc_disable(&timeout_rtc, int_type);   
 
         if(callback_funcs[0] != NULL)   //yes，timestamp_lost_timeout

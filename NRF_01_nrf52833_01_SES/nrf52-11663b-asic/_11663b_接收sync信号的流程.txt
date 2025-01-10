@@ -1,35 +1,66 @@
 
-小灯调试log：
-
-        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
-        main_led.event_queue_process();                      //--test
-        nrf_delay_ms(300);
-        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--test
-        main_led.event_queue_process();                           //--test
+------ 标志的说明 ------
 
 
+1.关于comms_uarte_in_synch：    easy    (作用：滚动数据包直到收到结束符00)
 
-cdcuart调试log：
-
-注意1： 用sscom串口助手调试，需勾选 DTR
-   usb_serial_write((uint8_t*)"12345abcde",10);
-   usb_serial_write_now((uint8_t*)"abcde0000 ",10,0);
-   nrf_delay_ms(100);
+       在uarte的中断里面设置：
+       。已收到同步信号时，设置为true
+       。收到的不是同步信号时，设置为false
 
 
-关于while中nrf_delay_ms延时不准的问题的原因：
-   。是因为uart发送数据时，是累积到约128(OMMO_USB_SERIAL_MIN_PACKET_SIZE)个字节一起发送。
-   。二是等usb_serial_write_force=true再发送，可在定时器里面设置true，也可手动设置true 未选择任何文件
+2. 关于timestamp_synch_received：   不easy    (作用：用于设置timestamp_offset的值 -- 待理解)
+
+   。在uarte的中断里面收到同步信号时，设置为true
+   。在T3的中断里面使用，使用完毕后设置为false
+
+
+3. 关于timestamp_synch_lost：     easy        (作用：用于小灯显示，和判断asic的数据是否发出到pc)
+
+   。在uarte的中断里面收到同步信号时，设置为false
+   。在RTC2的CC0中断，设置为true
 
 
 
-----------------------------------------------------------------------------
-
-timestamp_synch_received = true;
-timestamp_synch_lost = false;
 
 
-sync信号的流程：
+------ 11663b接收sync信号的初始化流程：------
+
+
+01. 配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
+02. 取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX事件 和 timer3的CAPTURE0任务关联起来，使能PPI0
+03. 把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx 
+
+04. 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度和数据指针，再调用rx_done_event中断服务程序
+05. 对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
+06. 重新设置RTC2的cc[0]门槛值 (COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，  (RTC2定时500ms，用于检测sync信号丢失)
+    更新小灯状态为连通sync(绿灯呼吸),设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
+
+
+11. 设置RTC2的优先级和分频系数，使能RTC2的irq，启动 RTC2
+12. 设置RTC2的cc[0]延时门槛值(定时500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+
+13. 進入RTC2的cc0中断，关闭COMPARE[0]的事件和中断，清COMPARE[0]的事件标志
+14. 设置丢失信号标志timestamp_synch_lost为ture，更新小灯状态为蓝色快闪（失去sync信号）
+
+
+21. 设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+22. 取得空闲的CC0通道，捕获定时器值到cc0, 取得cc0值并计算新的cc0值，使能 COMPARE[0] 中断，设置新的cc0值。
+23. 分配一个空闲的ppi group0并打开它 
+24. 再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
+
+
+
+
+------ 11663b接收sync信号的执行流程：------
+
+1. uarte收到sync信号
+2. 对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中 
+3. uarte接收完毕sync信号，产生ENDRX中断，自动触发t3的capture0任务
+4. 重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，  (RTC2定时500ms，用于检测sync信号丢失)
+   更新小灯状态为连通sync(绿灯呼吸),设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
+
+
 
 
 
@@ -38,6 +69,7 @@ sync信号的流程：
 
 
 ============================在uarte中收到sync信号===========================================
+
 
 功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
       开启下一次接收
@@ -90,9 +122,7 @@ comms_uarte_handler(  *p_event,  *p_context)
 
 ----------
 
-----------
-
-功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断;
+功能：设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断;
       更新小灯状态为连通sync （绿灯呼吸）, 更新 timestamp_synch_offset
 
 参数：basestation_ts, p_reg->CC[0], 0
@@ -135,7 +165,6 @@ timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
  
     //timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;   //待理解   
        timestamp_synch_offset = (basestation_ts + tx_delay) - p_reg->CC[0];   
-
 
 
 
@@ -199,6 +228,18 @@ timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timest
           timestamp_offset = timestamp_synch_offset;
       
       timestamp_synch_received = false;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

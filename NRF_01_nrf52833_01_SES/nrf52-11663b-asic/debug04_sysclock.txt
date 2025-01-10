@@ -17,9 +17,6 @@ flow:
 main
 
 
-    // m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
-       清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务，等待时钟稳定运行
-
     clocks_start()；   //或这里只初始化LFCLK
 
 
@@ -28,13 +25,13 @@ main
 
 
 
-//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+//m_clock_cb结构体赋值，设置clock的irq优先级6，使能clock的irq，设置CLOCK的时钟源LFRC(内部RC振荡器32768)
   清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务，等待时钟稳定运行
 
 clocks_start()
 
 
-    //m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+    //m_clock_cb结构体赋值，设置clock的irq优先级6，使能clock的irq，设置CLOCK的时钟源LFRC(内部RC振荡器32768)
     nrf_drv_clock_init();
 
     //清lfcstart事件标志，使能 LFCLKSTARTED事件，启动LFCLKSTART任务
@@ -45,7 +42,7 @@ clocks_start()
     //  AAA = ((NRF_CLOCK->LFCLKSTAT &  CLOCK_LFCLKSTAT_STATE_Msk) >> CLOCK_LFCLKSTAT_STATE_Pos);
         AAA = (NRF_CLOCK->LFCLKSTAT &  1<<16) >> 16;                                             //LFCLKSTAT运行状态标志
 
-    for(i=0; i<500 && !AAA; i++)  //等待时钟稳定运行
+    for(i=0; i<500 && !AAA; i++)  //等待lfclk时钟稳定运行
        nrf_delay_ms(1);
 
 
@@ -53,13 +50,13 @@ clocks_start()
     nrf_drv_clock_hfclk_request(NULL);
 
 
-    for(i=0; i<500 && !nrf_drv_clock_hfclk_is_running(); i++) 
+    for(i=0; i<500 && !nrf_drv_clock_hfclk_is_running(); i++)   //等待hfclk时钟稳定运行
        nrf_delay_ms(1);
 
 
 ------
 
-//m_clock_cb结构体赋值，设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源LFRC
+//m_clock_cb结构体赋值，设置clock的irq优先级6，使能clock的irq，设置CLOCK的时钟源LFRC(内部RC振荡器32768)
 
 数据流： clock_irq_handler --> m_clock_cb.event_handler 
 nrf_drv_clock_init( )
@@ -77,9 +74,9 @@ nrf_drv_clock_init( )
 
         //设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
         nrfx_clock_enable();
-           NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+           NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级6
            NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
-           NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC，内部RC振荡器32768
+           NRF_CLOCK->LFCLKSRC = 0;                         //时钟源LFRC(内部RC振荡器32768)
 
         m_clock_cb.cal_state = CAL_STATE_IDLE;
         m_clock_cb.module_initialized = true;
@@ -137,13 +134,13 @@ nrf_drv_clock_hfclk_request( * p_handler_item)
 
 --------
 
-//设置clock的irq优先级，使能clock的irq，设置CLOCK的时钟源
+//设置clock的irq优先级6，使能clock的irq，设置CLOCK的时钟源
 
 nrfx_clock_enable( )
 
     //设置clock的irq优先级，使能clock的irq
     //nrfx_power_clock_irq_init();
-        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级6
         NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
 
     //设置CLOCK的时钟源
@@ -156,7 +153,7 @@ nrfx_clock_enable( )
 
 --- 
 
-功能：设置clock的irq优先级，使能clock的irq
+功能：设置clock的irq优先级6，使能clock的irq
 
 nrfx_power_clock_irq_init( )
 
@@ -172,7 +169,7 @@ nrfx_power_clock_irq_init( )
 
     if (!AAA)
     
-        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_CLOCK), priority);    //设置clock的irq优先级6
         NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_CLOCK));                    //使能clock的irq
     
 

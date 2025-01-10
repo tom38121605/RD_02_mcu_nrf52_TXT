@@ -1,0 +1,124 @@
+
+小灯调试log：
+
+#include "led_driver.hpp"     //--add
+extern led_driver main_led;   //--add
+
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_WHITE);  //--test
+        main_led.event_queue_process();                      //--test
+        nrf_delay_ms(300);
+        main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));  //--test
+        main_led.event_queue_process();                           //--test
+
+
+
+cdcuart调试log：
+
+注意1： 用sscom串口助手调试，需勾选 DTR
+   usb_serial_write((uint8_t*)"12345abcde",10);
+   usb_serial_write_now((uint8_t*)"abcde0000 ",10,0);
+   nrf_delay_ms(100);
+
+
+关于while中nrf_delay_ms延时不准的问题的原因：
+   。是因为uart发送数据时，是累积到约128(OMMO_USB_SERIAL_MIN_PACKET_SIZE)个字节一起发送。
+   。二是等usb_serial_write_force=true再发送，可在定时器里面设置true，也可手动设置true 未选择任何文件
+
+
+
+
+
+----------------------PPI编号-----------------------------
+
+//sample_trigger_ppi  //nouse
+
+PPI0： ppi_channel_timestamp_capture 
+PPI1： ppi_channel_disable_timestamp_capture   
+PPI2:  ppi_channel_button_pressed               
+PPI3:  ppi_channel               
+                        
+
+GROUP0:  ppi_group_disable_timestamp_capture 
+GROUP1:  ppi_group_sample_start_spi
+
+
+nrfx_ppi_channel_include_in_group
+
+
+
+
+------------------- 忽略的功能 -------------------------
+
+1. 可以注释下面的语句,去掉watchdog功能
+
+    //Initialize WDT    
+    //nrf_wdt_behaviour_set(NRF_WDT_BEHAVIOUR_PAUSE_SLEEP_HALT);
+    //nrf_wdt_reload_value_set(32768); //1 second
+    //nrf_wdt_reload_request_enable(NRF_WDT_RR0);
+    //nrf_wdt_task_trigger(NRF_WDT_TASK_START);
+
+    while(true)
+    
+        ////Feed the watchdog
+        //nrf_wdt_reload_request_set(NRF_WDT_RR0);
+
+
+2. 可以注释下面的语句 （不会影响到sync和delay）
+
+   //--__WFE();
+
+
+3. 可忽略PPI0   （测试cnctestapp可以正常通讯和显示数据）        //待验证
+
+   uarte1的ENDRX事件  -->   T3.CAPTURE0                           （没有用到该功能？）
+
+    //--comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));
+
+
+4. 可注释下面这句 （ppi group0）
+
+   void timestamp_reenable_disabled_captures()
+      //--nrf_ppi_group_enable(ppi_group_disable_timestamp_capture);
+
+
+
+
+------------------- 用到的功能 -------------------------
+
+
+//5. 真正用到的PPI？:                     (真正用到的功能)
+
+
+6. 下面的不能注释，注释后会闪红灯 （RTC1）  //由crash_reboot_check函数产生的红灯闪烁
+    app_timer_init();
+
+6. 下面的不能注释，注释后在cnctestapp上open后，蓝灯不能转变为绿灯  （RTC2）
+    timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found, &rtc_timeout);
+
+6. 下面的不能注释，注释后在cnctestapp上open后，蓝灯可以转变为绿灯。但不能显示数值，只显示NaN  （TIMER3）
+    timestamp_init_with_internal_sample_event(3);
+
+
+7. 4个字节的时间变量，是低字节在前面：
+
+   6A 88 3C 1D  -->  0x1D3C886A
+
+
+8. 下面的不能注释，注释后在cnctestapp上open后，蓝灯可以转变为绿灯。但不能显示数值，只显示NaN  （TIMER3初始化函数）
+
+    //Allocate group for capture disables
+    APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
+    APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
+
+    //Setup PPI for disabling timestamp capture on sample timer evt
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(),  
+                    nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
+    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
+
+
+
+
+
+
+

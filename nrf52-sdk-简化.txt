@@ -17,7 +17,7 @@
 
 2. D:\workspace-work\ommo_nrf-gauge\flash_files
    
-   //保留下面文件  （删除其它所有文件和目录）    //330M   -- 第一层清除
+   //保留下面文件  （所有目录都删除）    //330M   -- 第一层清除
    bootload.bat
    build.ini
    build.py

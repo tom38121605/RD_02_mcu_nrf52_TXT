@@ -1,7 +1,7 @@
 
 参考 ： 10036的dtm示例的debug2_uart.txt
 
-
+测试数据：05 6A 88 3C 1D 00  
 
 
 ========================================= uarte ===init=====================================
@@ -18,7 +18,7 @@ flow:
 
 
 
-comms_uarte_handler + 常量（len + state）-->  mcb[1] ，  0 -->  m_cb[1].p_context 
+数据流：comms_uarte_handler + 常量（len + state）-->  mcb[1] ，  0 -->  m_cb[1].p_context 
 数据流：nrfx_uarte_1_irq_handler --> irq_handlers[1]
 数据流：config --> 寄存器
 
@@ -34,7 +34,9 @@ main
 ------------------
 
 
-功能：取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0
+功能：配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
+      取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX事件 和 timer3的CAPTURE0任务关联起来 ，使能PPI0
+      把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx 
 
 全局变量：comms_uarte_synch_uarte，comms_uarte相同
 NRFX_UARTE_INSTANCE(1)                              
@@ -62,10 +64,9 @@ comms_uarte_init( uarte_instance, rx_pin)
     //配置串口引脚和波特率，清中断标志，使能UARTE1的ENDRX等各个子中断，使能UARTE1的irq和优先级中断（总中断），使能 NRF_UARTE1
     nrfx_uarte_init(&comms_uarte, &m_uart0_drv_config, comms_uarte_handler);  //数据流：comms_uarte_handler -->  mcb[1]  
 
-
-    //设置PPI，以便在CC0的样本读取事件中捕获时间戳   
-    //在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0 
-    //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));   //待理解，先跳过
+ 
+    //在PPI0上把uarte1的ENDRX事件 和 timer3的CAPTURE0任务关联起来 ，使能PPI0 
+    //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));  
 
          //UARTE1.NRF_UARTE_EVENT_ENDRX事件地址
          //AAA = nrf_uarte_event_address_get( comms_uarte, NRF_UARTE_EVENT_ENDRX);
@@ -73,11 +74,20 @@ comms_uarte_init( uarte_instance, rx_pin)
                  AAA = p_reg +  NRF_UARTE_EVENT_ENDRX;                                        //UARTE1.NRF_UARTE_EVENT_ENDRX事件地址
 
          //取得timer3的空闲比较通道cc0，取得空闲的PPI通道0，在PPI0上把uarte1的ENDRX中断 和 timer3的CAPTURE0事件关联起来 ，使能PPI0, 返回NRF_TIMER_CC_CHANNEL0
-         //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(AAA);             
+         //comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(AAA);   
+
+                capture_channel = NRF_TIMER_CC_CHANNEL0;
+
+                ppi_channel_timestamp_capture = NRF_PPI_CHANNEL0;
+          
                 NRF_PPI->CH[0].EEP = NRF_UARTE1.NRF_UARTE_EVENT_ENDRX;     //UARTE1的ENDRX事件
                 NRF_PPI->CH[0].TEP = NRF_TIMER3.NRF_TIMER_TASK_CAPTURE0;   //timer3的CAPTURE0捕获任务
                 NRF_PPI->CHENSET = 1 << NRF_PPI_CHANNEL0);                  //使能PPI0 （打开ppi0通道）
+
                 return NRF_TIMER_CC_CHANNEL0
+
+
+
 
 
     //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx   //把绿色大巴rx（comms_uarte_rx_buffer）链接到RXD
@@ -393,17 +403,24 @@ flow：
 
 --------------------------------------------
 
+全局变量： comms_uarte                             
+    .p_reg        = NRF_UARTE1,             
+    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
+
 可看作硬件中断入口 （ 详见上面的flow ）
 
 nrfx_uarte_1_irq_handler( )
 
-    uarte_irq_handler(NRF_UARTE1, &m_cb[NRFX_UARTE1_INST_IDX]);
+    uarte_irq_handler(NRF_UARTE1, &m_cb[1]);
 
 
 -----------
 
 
-//功能： 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度，再调用rx_done_event中断服务程序 
+功能： 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度和数据指针，再调用rx_done_event中断服务程序 
+       对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
+       重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，更新小灯状态为连通sync(绿灯呼吸),
+       设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
 
 数据流： UARTE1->RXD.AMOUNT  --> amount( 临时变量 )  
 
@@ -430,7 +447,7 @@ uarte_irq_handler(* p_uarte,  * p_cb)
 
 
     //---检查 EVENT_ENDRX 的中断---
-    // 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度，再调用rx_done_event中断服务程序
+    // 清零接收完成标志EVENT_ENDRX=0，清零 m_cb[0].rx_buffer_length， 取出接收到的数据长度和数据指针，再调用rx_done_event中断服务程序
     else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
    
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);      //UARTE1->EVENT_ENDRX.0=0，清零接收完成标志
@@ -456,6 +473,9 @@ uarte_irq_handler(* p_uarte,  * p_cb)
                 p_cb->rx_buffer_length = 0;     //清零
 
                 //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event，再调用comms_uarte_handler中断服务程序
+                  对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
+                  重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，更新小灯状态为连通sync(绿灯呼吸),
+                  设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
                 //rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   
                      rx_done_event( p_cb, 1, comms_uarte_rx_buffer );   
 
@@ -476,6 +496,10 @@ uarte_irq_handler(* p_uarte,  * p_cb)
 
 -----------
 
+功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
+      重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，更新小灯状态为连通sync(绿灯呼吸),
+      设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
+
 数据流：p_cb->p_rx_buffer -- event（临时变量）   //把西安旅行社（mcb）绿色大巴rx中的人装入出租车event，再调用comms_uarte_handler中断服务程序
 
 参数：m_cb[1], 1, comms_uarte_rx_buffer
@@ -489,14 +513,17 @@ rx_done_event(  * p_cb,   bytes,   p_data)
 
 
     //p_cb->handler(&event, p_cb->p_context);
+
+        //对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
         comms_uarte_handler( &event, 0);
 
  
 
 --------------------
 
-功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
-      开启下一次接收
+功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中,开启下一次接收
+      重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，更新小灯状态为连通sync(绿灯呼吸),
+      设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
 
 测试数据：05 6A 88 3C 1D 00   （只有长度和包尾，没有包头和校验码，或需优化改進）
 
@@ -512,14 +539,15 @@ comms_uarte_handler(  *p_event,  *p_context)
         if(comms_uarte_rx_buffer[index+5] == 0x00)  //buf[5]=0,说明收到同步信号 
                                                     //已基本理解，buff数组定义的大小为7，buff[6]默认是0，第1次收到数据时，相当于不判断后面的00，直接就進入同步
         
-            comms_uarte_in_synch = true;           //同步信号置1
+            comms_uarte_in_synch = true;            //同步信号置1
 
 
-            功能：从buff的6个字节中，取出中间4个字节(时间)，保存到basestation_ts中
+            //从buff的6个字节中，取出中间4个字节(时间)，保存到basestation_ts中
             cobs_decode(comms_uarte_rx_buffer+index, 5, &basestation_ts);  //取得 basestation_ts[4] = { 6A, 88, 3C, 1D }
 
 
-            //Process timestamp
+            //重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断，更新小灯状态为连通sync(绿灯呼吸),
+              设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset      
             //timestamp_synch_recieved(basestation_ts, timestamp_read_capture(comms_uarte_local_ts_capture_channel), TIMESTAMP_SYNCH_SOURCE_UART);
             //  timestamp_synch_recieved(basestation_ts, timestamp_read_capture(NRF_TIMER_CC_CHANNEL0), 0);  //NRF_TIMER_CC_CHANNEL0=0
                    timestamp_synch_recieved(basestation_ts, p_reg->CC[0], 0);   
@@ -530,7 +558,7 @@ comms_uarte_handler(  *p_event,  *p_context)
          
         else
 
-            //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收6个byte 开启uarte rx         
+            //把comms_uarte_rx_buffer连接到RXD，dma一次最大可接收7个byte(这里设7是为了滚动数据包，已理解)，开启uarte rx         
             nrfx_uarte_rx(&comms_uarte, comms_uarte_rx_buffer, 7);
             comms_uarte_in_synch = false;
         
@@ -547,6 +575,7 @@ comms_uarte_handler(  *p_event,  *p_context)
 ----------
 
 功能：对此basestation接收到的6个字节進行处理，把中间4个字节(时间)保存到basestation_ts中
+
 测试数据：05 6A 88 3C 1D 00   （只有长度和包尾，没有包头和校验码，或需优化改進）
 功能：取得 basestation_ts[4] = { 6A, 88, 3C, 1D }   //0x1D3C886A
 
@@ -583,8 +612,8 @@ cobs_decode( *ptr,  length,  *dst)
 
 ----------
 
-功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断;
-      更新小灯状态为连通sync （绿灯呼吸）, 更新 timestamp_synch_offset
+功能：重新设置RTC2的cc[0]门槛值 (COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断; 更新小灯状态为连通sync （绿灯呼吸）,
+      设置timestamp_synch_received = true，timestamp_synch_lost = false，更新 timestamp_synch_offset
 
 参数：basestation_ts, p_reg->CC[0], 0
 timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
@@ -592,15 +621,15 @@ timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
 
     //TRACE_WITH_TIME(TRACE_ESB, COMMS_ESB_SIU_SYNCH_VALUE, basestation_ts);
     
-    if(source == TIMESTAMP_SYNCH_SOURCE_ESB)   //1，no         //忽略，跳过 （没有ESB源的调入）
+    if(source == TIMESTAMP_SYNCH_SOURCE_ESB)   //1，no         //忽略，跳过 （没有ESB源的调入） //ESB就是无线
     
         ......
 
     else if(source == TIMESTAMP_SYNCH_SOURCE_UART)  //0, yes   （UART源）
     
 
-        // 功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-           更新小灯状态为连通sync （绿灯呼吸）
+        // 重新设置RTC2的cc[0]门槛值(COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+           更新小灯状态为连通sync （绿灯呼吸），设置timestamp_synch_received = true，timestamp_synch_lost = false
         timestamp_reset_synch_lost_timer();
 
 
@@ -618,7 +647,7 @@ timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
                  set_leds();                
 
         
-        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    //6*10*16 + 1 + (16-4)
+        tx_delay = TIMESTAMP_SYNCH_UART_TX_DELAY;    //6*10*16 + 1 + (16-4) = 973
 
 
     basestation_ts -= 1;   //for ppi delay
@@ -631,8 +660,8 @@ timestamp_synch_recieved(  basestation_ts,  local_event_ts,  source)
 
 -----
 
-功能：Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
-      更新小灯状态为连通sync （绿灯呼吸）
+功能：重新设置RTC2的cc[0]门槛值 (COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断, 更新小灯状态为连通sync （绿灯呼吸）
+      设置timestamp_synch_received = true，timestamp_synch_lost = false
 timestamp_reset_synch_lost_timer()
 
     timestamp_synch_received = true;
@@ -640,7 +669,7 @@ timestamp_reset_synch_lost_timer()
     if(timestamp_synch_lost_found_callback != NULL)   //yes
 
     
-        //Reset 设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+        //重新设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
         //timeout_gen->reset_timeout(timestamp_lost_compare_channel);  //timestamp_lost_compare_channel=0  //参考debug07_rtc2.txt 
         //  rtc_timeout->reset_timeout(0);
                rtc_timeout_gen::reset_timeout(0);
@@ -658,14 +687,14 @@ timestamp_reset_synch_lost_timer()
     
 -------
 
-功能：设置RTC2的cc[0]门槛值 +16384(500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+功能：设置RTC2的cc[0]门槛值 (COUNTER+16384=500ms) ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
 
 参数：0
 rtc_timeout_gen::reset_timeout(  channel)
 
    timeout_running[0] = true;
     
-   //设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
+   //重新设置cc[0]门槛值 ，清COMPARE[0]的事件标志，使能COMPARE[0]的事件和中断
    //nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + last_timeout_used[channel], true);
    //  nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + last_timeout_used[0], 1);                                    //last_timeout_used[0]=16384,   参考 debug07_rtc2.txt
    //    nrfx_rtc_cc_set(&timeout_rtc, 0, NRF_RTC2->COUNTER + 16384, 1);                                                //nrfx_rtc_cc_set,              参考 debug07_rtc2.txt
@@ -954,48 +983,7 @@ void task_loop_timer_function()
 }
 
 
------------
-
-set_leds()
- 
-
-    if(!usb_serial_state_port_open)
-     
-        main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);     //白灯呼吸。usb串口关闭
-     
-    else if(usb_serial_state_port_open && data_mode == DATA_MODE_DISABLED) 
-     
-        if(led_state != 0x03)
-         
-            led_state = 0x03;
-            main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);    //蓝灯呼吸。usb串口打开，未进入DATA_MODE
-         
-    
-    else if(timestamp_is_synch_lost())
-     
-        if(led_state != 0x04)
-         
-            led_state = 0x04;
-            main_led.set_basic(LED_MODE_EN_SYNCH_LOST, LED_COLOR_EN_SYNCH_LOST);  //蓝灯快闪， 无同步信号
-         
-     
-    else if(!timestamp_is_synch_wired())
-     
-        if(led_state != 0x06)
-         
-            led_state = 0x06;
- 
-            main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS); //绿灯呼吸，或无线同步信号
-     
-    else
-    
-        if(led_state != 0x07)
-         
-            led_state = 0x07;
-            main_led.set_basic(LED_MODE_EN_SYNCH_WIRED, LED_COLOR_EN_SYNCH_WIRED);   // 绿灯常亮，有同步信号，正常通讯
-         
-     
----------
+------
 
 timestamp_is_synch_wired()
 

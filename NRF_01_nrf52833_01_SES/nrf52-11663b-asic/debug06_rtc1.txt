@@ -22,13 +22,12 @@ flow:
 main
      
 
-    //设置RTC1的频率32768和中断优先级，使能RTC1中断，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
     app_timer_init();
 
 
 ------------------
 
-功能：设置RTC1的频率32768和中断优先级，使能RTC1的irq，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
+功能：设置RTC1的频率32768和中断优先级6，使能RTC1的irq，使能溢出事件和中断，使能COMPARE[1]的事件和中断，设置cc[1]值
 
 数据流：m_req_fifo_data -- m_req_fifo(m_req_fifo_inst)
 app_timer_init( )
@@ -52,7 +51,7 @@ app_timer_init( )
 
     //drv_rtc_init(&m_rtc_inst, &config, rtc_irq);    
         NRF_RTC1->PRESCALER = 0;                   //设置RTC1的频率为32768 
-        NVIC->IP[(17)] =  6 << (8  - 3);           //设置RTC1 的中断优先级 为6
+        NVIC->IP[(17)] =  6 << (8  - 3);           //设置RTC1 的中断优先级为6
         NVIC->ISER[0] = 1 << 17 ;                  // 使能RTC1 的irq
 
  

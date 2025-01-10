@@ -1,0 +1,166 @@
+
+
+
+
+==============================task_loop_timer=====init==========待理解====================
+
+说明：跟rtc1有关
+
+
+main
+
+
+     app_timer_create(&task_loop_timer_id, APP_TIMER_MODE_REPEATED, task_loop_timer_handler)) ; 
+     app_timer_start(task_loop_timer_id, APP_TIMER_TICKS(100), NULL)) ;   //100 * 32768/1000
+
+
+
+-----------
+
+数据流： task_loop_timer_handler --> task_loop_timer_id.handler
+参数：task_loop_timer_id, APP_TIMER_MODE_REPEATED, task_loop_timer_handler
+app_timer_create( * p_timer_id,  mode, timeout_handler)
+ 
+
+    p_t = p_timer_id;
+
+    p_t->end_val = APP_TIMER_IDLE_VAL;
+    p_t->handler = timeout_handler;                                        //task_loop_timer_handler
+    p_t->repeat_period = (mode == APP_TIMER_MODE_REPEATED) ? 1 : 0;   //1
+
+
+
+------
+
+参数：task_loop_timer_id, 32768/10, NULL
+app_timer_start( * p_timer,  timeout_ticks, * p_context)
+
+    p_t = p_timer;
+
+
+    //if (APP_TIMER_IS_IDLE(p_t))
+      if (timer->end_val == APP_TIMER_IDLE_VAL)    //yes
+
+        //p_t->end_val = get_now() + timeout_ticks;
+            p_t->end_val = RTC1->COUNTER + 32768/10;
+
+
+        cont = true;
+    
+    else
+
+        cont = false;
+
+ 
+    if (!cont)
+    
+        return NRF_SUCCESS;
+   
+
+    p_t->p_context = p_context;   //0
+
+    if (p_t->repeat_period)
+    
+        p_t->repeat_period = timeout_ticks;   //32768/10
+      
+
+    return timer_req_schedule(TIMER_REQ_START, p_t);  //TIMER_REQ_START=0
+
+
+---
+
+功能：？
+
+参数：TIMER_REQ_START ，task_loop_timer_id
+timer_req_schedule(  type,  * p_timer)
+ 
+    nrf_atfifo_item_put_t     fifo_ctx;
+
+
+    p_req = nrf_atfifo_item_alloc(m_req_fifo, &fifo_ctx);
+ 
+    if (p_req)
+   
+        p_req->type    = type;
+        p_req->p_timer = p_timer;
+
+        if (nrf_atfifo_item_put(m_req_fifo, &fifo_ctx))
+         
+            timer_request_proc_trigger();
+         
+        else
+        
+            NRF_LOG_WARNING("Scheduling interrupted another scheduling.");
+        
+
+
+
+---
+
+功能：取得RTC1->COUNTER
+
+get_now()
+
+    now = m_base_counter + drv_rtc_counter_get(&m_rtc_inst);   //rtc1
+
+    if (now < m_stamp64)  
+        now += (DRV_RTC_MAX_CNT + 1);      //FFF FFF + 1
+
+    return now;
+
+
+
+==============================task_loop_timer=====run==============================
+
+
+
+
+
+--------------------------------------------
+
+ task_loop_timer_handler( * p_context)
+ 
+    task_loop_timer_execute = true;
+ 
+
+
+----------------
+
+main
+
+    while(true)
+    
+
+        if(task_loop_timer_execute)  
+
+            //如果10秒没有收到sync信号，则关闭数据模式，快闪蓝灯
+            //task_loop_timer_function();
+               data_mode = DATA_MODE_DISABLED;    //关闭数据模式
+               set_leds();                        //小灯失连sync信号，快闪蓝灯
+
+
+----
+
+功能：如果10秒没有收到sync信号，则关闭数据模式，快闪蓝灯
+
+task_loop_timer_function()
+
+    task_loop_timer_execute = false;
+
+    //如果10秒没有收到sync信号，则关闭数据模式，快闪蓝灯
+    if(timestamp_is_synch_lost())
+    
+        basestation_lost_count++;
+
+        if(basestation_lost_count > BASESTATION_LOST_TIMEOUT && data_mode == DATA_MODE_WIRELESS)
+        
+            disable_data_mode(true);              //关闭数据模式
+            set_leds();                           //小灯失连sync信号，快闪蓝灯
+    
+    else
+    
+        basestation_lost_count = 0;
+    
+
+
+

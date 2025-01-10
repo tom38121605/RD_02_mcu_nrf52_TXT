@@ -55,7 +55,10 @@ adc_cartes_init( sample_set_ready_callback_function,  hot_plug_cb,   *rtc_timeou
 
         senors_twi_basic_instance[0]->acquire_i2c(&senors_twi_basic_config[i]);
 
+
+
  
+
 ------
 
 功能：I2C0初始化
