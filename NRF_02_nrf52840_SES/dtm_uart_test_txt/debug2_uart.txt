@@ -262,14 +262,14 @@ nrfx_uarte_init( *p_instance,  *p_config,  event_handler)
 Êı¾İÁ÷£º nrfx_uarte_0_irq_handler  --> m_prs_box_4.handler
 nrfx_prs_acquire( * p_base_addr,  irq_handler) 
 
-    //prs_box_t * p_box = prs_box_get(p_base_addr);
+    //p_box = prs_box_get(p_base_addr);
          p_box =  m_prs_box_4£» 
              .handler = NULL 
              .acquired = false 
 
     if (p_box != NULL)
 
-        if (p_box->acquired)
+        if (p_box->acquired)        //no
             busy = true;
         else                                                   //yes
             p_box->handler  = irq_handler;

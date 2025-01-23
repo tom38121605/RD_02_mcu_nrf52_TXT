@@ -7,12 +7,14 @@
    .git                            //300M
    key_vault
    latest_firmware 
+   stm32_common
 
+   .clang-format
    .gitignore
+   .gitmodules
    ReadMe.md
    ReleaseNote.md
-   .gitmodules
-   .clang-format
+
 
 
 2. D:\workspace-work\ommo_nrf-gauge\flash_files
@@ -55,6 +57,7 @@
    LICENSE.txt
    README.md
    
+
 5. D:\workspace-work\ommo_nrf-08-10036f\10036f-50-frm-32-af-remark-nrf52-sdk-nouse-ok-k\nRF5_SDK_17.1.0_ddde560   
    
    //删除下面文件和目录      //44M
@@ -106,6 +109,7 @@
    doc
    helpers
    templates
+
    CHANGELOG.md
    LICENSE
    README.md

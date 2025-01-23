@@ -1,0 +1,144 @@
+
+
+void gpio_init( void )
+{
+
+//----------------- test IO------------------------------------
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,3), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,3));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,30), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,30));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,0), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,0));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,19), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,19));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,2), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,2));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,27), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,27));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,4), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,4));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,10), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,10));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,8), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,8));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,7), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,7));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,9), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,9));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,1), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,1));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,13), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,13));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,3), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,3));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,7), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,7));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,4), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,4));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(1,0), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(1,0));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,18), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,18));
+
+    nrf_gpio_pin_write(NRF_GPIO_PIN_MAP(0,15), 0);
+    nrf_gpio_cfg_output(NRF_GPIO_PIN_MAP(0,15));
+
+//-----------------test IO---------end-------------------------
+
+
+#ifdef OMMO_LED_ENABLE
+    nrf_gpio_pin_write(OMMO_LED_ENABLE, 1);
+    nrf_gpio_cfg_output(OMMO_LED_ENABLE);
+#endif
+
+    #ifdef OMMO_CHRG_CHARGE_PIN
+    nrf_gpio_cfg_input(OMMO_CHRG_CHARGE_PIN, NRF_GPIO_PIN_PULLUP);
+    #endif
+
+    #ifdef OMMO_CHARGE_ISET2 //Set to ISET
+    nrf_gpio_pin_write(OMMO_CHARGE_ISET2, 0);
+    nrf_gpio_cfg_output(OMMO_CHARGE_ISET2);
+    #endif
+
+    #ifdef OMMO_POWER_ON_PIN
+    nrf_gpio_pin_write(OMMO_POWER_ON_PIN, 1);
+    nrf_gpio_cfg_output(OMMO_POWER_ON_PIN);
+    #endif
+
+    #ifdef OMMO_SENSOR_ON_PIN
+    nrf_gpio_pin_write(OMMO_SENSOR_ON_PIN, 1);
+    nrf_gpio_cfg_output(OMMO_SENSOR_ON_PIN);
+    nrf_delay_ms(10);
+    #endif
+
+    #ifdef OMMO_BUTTON_PIN
+    nrf_gpio_cfg_input(OMMO_BUTTON_PIN, NRF_GPIO_PIN_PULLUP);
+    #endif
+
+    #ifdef OMMO_DEBUG_TX
+    nrf_gpio_pin_write(OMMO_DEBUG_TX, 0);
+    nrf_gpio_cfg_output(OMMO_DEBUG_TX);
+    #endif
+    
+#ifdef OMMO_PINS_TO_GROUND
+    const uint32_t pins[OMMO_PINS_TO_GROUND_NUM] = OMMO_PINS_TO_GROUND;
+    for(uint8_t i = 0; i < OMMO_PINS_TO_GROUND_NUM; i++)
+    {
+      nrf_gpio_pin_clear(pins[i]);
+      nrf_gpio_cfg(pins[i], NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_PULLDOWN, NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
+    }
+#endif
+
+#ifdef OMMO_SYNCH_DRIVE_EN_IN
+    nrf_gpio_pin_write(OMMO_SYNCH_DRIVE_EN, 0);
+    nrf_gpio_cfg_output(OMMO_SYNCH_DRIVE_EN);
+#elif defined OMMO_SYNCH_DRIVE_EN_OUT
+    nrf_gpio_pin_write(OMMO_SYNCH_DRIVE_EN, 1);
+    nrf_gpio_cfg_output(OMMO_SYNCH_DRIVE_EN);
+#endif
+}
+
+
+static void init_spi(uint8_t spi_channel)
+{
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+#ifdef OMMO_SENSOR_MEMSIC_MMC5983_8MHZ_SPI
+    spi_config.frequency = NRF_SPIM_FREQ_8M;
+#else
+    spi_config.frequency = NRF_SPIM_FREQ_2M;
+#endif
+    spi_config.mode = NRF_SPIM_MODE_3;
+    spi_config.irq_priority = OMMO_SENSOR_SPI_IRQ_PRIORITY;
+    spi_config.miso_pin = spi_miso_pins[spi_channel];
+    spi_config.mosi_pin = spi_mosi_pins[spi_channel];
+    spi_config.sck_pin  = spi_sck_pins[spi_channel];
+    OMMO_APP_ERROR_CHECK(nrfx_spim_init(&spi_peripheral[spi_channel], &spi_config, spi_event_handler, (void *)(uint32_t)spi_channel), 
+                         STRING("SPI initialization failure"), L(spi_channel), 0); //Enable SPI bus
+    nrf_spim_disable(spi_peripheral[spi_channel].p_reg); //Enable right before transfer, prevents PPI from sending old data on the bus
+    
+    //Configure output pins for high strength drive
+    nrf_gpio_pin_set(spi_sck_pins[spi_channel]);
+    nrf_gpio_pin_clear(spi_mosi_pins[spi_channel]);
+    nrf_gpio_cfg(spi_mosi_pins[spi_channel], NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+    nrf_gpio_cfg(spi_sck_pins[spi_channel], NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+
+}

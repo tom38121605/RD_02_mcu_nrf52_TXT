@@ -1,0 +1,103 @@
+
+P0.14  --  LED_R   K
+P0.12  --  LED_G   K
+P0.17  --  LED_B   K
+
+P0.26  --  MI0  K
+P0.27  --  MI1  K
+P0.13  --  MI2  K
+
+P0.11  --  MO0  K      或 SCL (24C16)
+P0.04  --  MO1  K
+P0.19  --  MO2  K
+
+P1.08  --  CLK0  K
+P0.07  --  CLK1  K
+P0.02  --  CLK2  K
+
+P0.06  --  CS0  K     或 SDA (24C16)
+P0.05  --  CS1  K
+P1.09  --  CS2  K
+P0.00  --  CS3  K
+P0.08  --  CS4  K
+
+P0.26  --  UARTE DATA       //repeat MI0    //注释后该UARTE1也可以正常运行，忽略跳过
+P0.23  --  UARTE UNUSED     //null
+
+P1.02  --  UARTE SYNCH  K
+
+
+//Unused pins
+
+P0.15  --  SCL  K
+P1.00  --  SDA  K
+
+P1.07  --  DBG_RX  K
+P0.10  --  DBG_IO  K
+
+P0.18  --  GPOUT  K
+
+
+-------
+
+P0.09  --  BUTTON  K
+
+P0.03  --  ADC_CC1  K
+P0.29  --  ADC_CC2  K
+
+P1.03  --  CHARGE STAT  K
+P0.30  --  ADC_V  K
+P1.01  --  BUS_OE_UC  K
+P1.04  --  POWER_ON  K
+P0.22  --  ISET2  K
+
+
+
+
+
+
+======================================org================================================
+
+
+#define OMMO_LED_RED                      NRF_GPIO_PIN_MAP(0,14)
+#define OMMO_LED_GREEN                    NRF_GPIO_PIN_MAP(0,12)
+#define OMMO_LED_BLUE                     NRF_GPIO_PIN_MAP(0,17)
+
+#define OMMO_SENSOR_SPI_MISO_PINS     {NRF_GPIO_PIN_MAP(0,26),NRF_GPIO_PIN_MAP(0,27),NRF_GPIO_PIN_MAP(0,13)}
+#define OMMO_SENSOR_SPI_MOSI_PINS     {NRF_GPIO_PIN_MAP(0,11),NRF_GPIO_PIN_MAP(0,4),NRF_GPIO_PIN_MAP(0,19)}
+#define OMMO_SENSOR_SPI_SCK_PINS      {NRF_GPIO_PIN_MAP(1,8),NRF_GPIO_PIN_MAP(0,7),NRF_GPIO_PIN_MAP(0,2)}
+
+#define OMMO_SENSOR_SPI_SS_PINS   {NRF_GPIO_PIN_MAP(0,6), NRF_GPIO_PIN_MAP(0,5), NRF_GPIO_PIN_MAP(1,9), NRF_GPIO_PIN_MAP(0,0), NRF_GPIO_PIN_MAP(0,8)} //MAG1, MAG2, IMU
+
+#define OMMOCOMM_UARTE_DATA_PIN       NRF_GPIO_PIN_MAP(0,26)
+#define OMMOCOMM_UARTE_UNUSED_PIN     NRF_GPIO_PIN_MAP(0,23)
+
+
+#define OMMO_COMMS_UARTE_SYNCH_PIN            NRF_GPIO_PIN_MAP(1,2) 
+
+
+
+//Unused pins
+
+#define OMMO_FUEL_SCL       NRF_GPIO_PIN_MAP(0,15) 
+#define OMMO_FUEL_SDA       NRF_GPIO_PIN_MAP(1,0) 
+#define OMMO_FUEL_GPOUT     NRF_GPIO_PIN_MAP(0,18) 
+
+#define OMMO_DEBUG_RX       NRF_GPIO_PIN_MAP(1,7) 
+#define OMMO_DEBUG_IO       NRF_GPIO_PIN_MAP(0,10) 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

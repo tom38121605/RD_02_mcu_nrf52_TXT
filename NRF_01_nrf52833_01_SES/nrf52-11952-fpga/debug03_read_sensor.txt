@@ -1,0 +1,260 @@
+
+
+
+sensors_state_change()
+
+    uint8_t cs_line, spi_channel;
+
+    bool wait_for_callback = false;
+
+    while(!wait_for_callback)
+    
+        switch(current_state)
+        
+            case SETUP_MAG_START_SAMPLE:
+                。。。。。。
+
+            case WAITING_FOR_MAG_START_SAMPLE_COMPLETION:
+                 。。。。。。
+
+
+            case SETUP_NEXT_MAG_DATA_READ:
+
+                current_state_index++;
+
+                if(current_state_index < num_ss_pins_with_mag)
+                 
+
+                    sensors_switch_ss(ss_pins_with_mag[current_state_index]);
+
+                    for(spi_channel = 0; spi_channel < OMMO_SENSOR_NUM_SPI_CHANNELS; spi_channel++)   // 3
+                    
+                        //Start the SPI mag data read on busses with mags
+                        if(MAG_PRESENT(spi_channel,ss_pins_with_mag[current_state_index]))
+                            sensors_start_spi_sensor_data_read(spi_channel, ss_map[spi_channel][ss_pins_with_mag[current_state_index]]);    //here
+                    
+
+                  //Wait for data read to finish
+                  current_state = WAITING_FOR_MAG_DATA_READ_COMPLETION;
+                  wait_for_callback = true;
+
+
+  
+
+-------------------
+
+
+
+
+typedef struct
+{
+    uint8_t const * p_tx_buffer;  
+    size_t          tx_length;    
+    uint8_t       * p_rx_buffer;  
+    size_t          rx_length;    
+} nrfx_spim_xfer_desc_t;
+
+
+参数：spi_channel, ss_map[spi_channel] [ss_pins_with_mag[current_state_index] ] ,0
+
+sensors_start_spi_sensor_data_read( spi_channel,  ic_data_index,  flags)
+
+    xfer.p_tx_buffer = ic_data[ic_data_index].read_command[0].data_read_tx,     
+          
+    xfer.tx_length = ic_data[ic_data_index].read_command[0].data_read_tx_len,  
+                               
+    xfer.p_rx_buffer = m_spi_rx_buf[spi_channel],              
+                   
+    xfer.rx_length = ic_data[ic_data_index].read_command[0].data_read_rx_len),                                 
+
+
+
+    spi_xfer_done[spi_channel] = false;
+
+    nrf_spim_enable(spi_peripheral[spi_channel].p_reg);
+
+    nrfx_spim_xfer(&spi_peripheral[spi_channel], &xfer, flags);
+
+
+ 
+---
+
+参数： spi_peripheral[spi_channel], &xfer, 0
+nrfx_spim_xfer( * p_instance,  * p_xfer_desc, flags)
+ 
+    p_cb = &m_cb[p_instance->drv_inst_idx];
+
+
+    if (p_cb->transfer_in_progress)   //no （待验证）
+        return err_code;
+    
+    else   //yes（待验证）
+    
+        if (p_cb->handler && !(flags & (NRFX_SPIM_FLAG_REPEATED_XFER | NRFX_SPIM_FLAG_NO_XFER_EVT_HANDLER)))
+        
+            p_cb->transfer_in_progress = true;
+ 
+
+    p_cb->evt.xfer_desc = *p_xfer_desc;
+
+
+    if (p_cb->ss_active_high) 
+        nrf_gpio_pin_set(p_cb->ss_pin);
+
+
+    spim_xfer(p_instance->p_reg, p_cb,  p_xfer_desc, flags);
+ 
+
+
+------
+
+spim_xfer(  p_spim, * p_cb, * p_xfer_desc, flags)
+
+
+    //nrf_spim_tx_buffer_set(p_spim, p_xfer_desc->p_tx_buffer, p_xfer_desc->tx_length);
+       p_reg->TXD.PTR    = (uint32_t)p_buffer;
+       p_reg->TXD.MAXCNT = length;
+
+    //nrf_spim_rx_buffer_set(p_spim, p_xfer_desc->p_rx_buffer, p_xfer_desc->rx_length);
+       p_reg->RXD.PTR    = (uint32_t)p_buffer;
+       p_reg->RXD.MAXCNT = length;
+
+    nrf_spim_event_clear(p_spim, NRF_SPIM_EVENT_END);
+
+    spim_list_enable_handle(p_spim, flags);
+
+    if (!(flags & NRFX_SPIM_FLAG_HOLD_XFER))   //yes,  待验证
+    
+        nrf_spim_task_trigger(p_spim, NRF_SPIM_TASK_START);
+    
+
+
+    if (!p_cb->handler)    //no,  待验证
+
+    
+        while (!nrf_spim_event_check(p_spim, NRF_SPIM_EVENT_END)){}
+
+        if (p_cb->ss_pin != NRFX_SPIM_PIN_NOT_USED)
+ 
+                if (p_cb->ss_active_high)
+                
+                    nrf_gpio_pin_clear(p_cb->ss_pin);
+                
+                else
+                 
+                    nrf_gpio_pin_set(p_cb->ss_pin);
+ 
+    
+    else    //yes,  待验证
+    
+        spim_int_enable(p_spim, !(flags & NRFX_SPIM_FLAG_NO_XFER_EVT_HANDLER));
+ 
+ 
+
+----------------
+
+//通过dma spi 发送数据
+__STATIC_INLINE void nrf_spim_tx_buffer_set(NRF_SPIM_Type * p_reg,
+                                            uint8_t const * p_buffer,
+                                            size_t          length)
+{
+    p_reg->TXD.PTR    = (uint32_t)p_buffer;
+    p_reg->TXD.MAXCNT = length;
+}
+
+
+//通过dma spi 读取数据
+__STATIC_INLINE void nrf_spim_rx_buffer_set(NRF_SPIM_Type * p_reg,
+                                            uint8_t * p_buffer,
+                                            size_t    length)
+{
+    p_reg->RXD.PTR    = (uint32_t)p_buffer;
+    p_reg->RXD.MAXCNT = length;
+}
+
+
+
+===============================================参考================================================================
+
+
+uint8_t output_data_1[OMMO_SENSOR_MAX_PACKET_LENGTH];
+uint8_t output_data_2[OMMO_SENSOR_MAX_PACKET_LENGTH];
+uint8_t output_data_3[OMMO_SENSOR_MAX_PACKET_LENGTH];
+
+            case WAITING_FOR_I2C_DATA_READ_COMPLETION:
+            {
+                //Save temp data      
+                ic_data_dictionary_entry *ic_data_ptr = (ic_data_dictionary_entry*)&ic_data[i2c_ic_dictionary_index[i2c_current_state_index]];
+                uint8_t read_command_index = i2c_ic_read_command_index[i2c_current_state_index];
+                uint8_t len = ic_data_ptr->read_command[read_command_index].data_length;
+                uint8_t input_offset = ic_data_ptr->read_command[read_command_index].data_offset;
+                uint8_t output_index = i2c_data_output_index[i2c_current_state_index] + ic_data_ptr->read_command[read_command_index].data_output_index_offset;
+                memcpy(output_data_1 + output_index, m_spi_rx_buf[0]+input_offset, len);
+                memcpy(output_data_2 + output_index, m_spi_rx_buf[0]+input_offset, len);
+                memcpy(output_data_3 + output_index, m_spi_rx_buf[0]+input_offset, len);
+
+
+static void sensors_start_spi_sensor_data_read(uint8_t spi_channel, uint8_t ic_data_index, uint32_t flags)
+{
+    nrfx_spim_xfer_desc_t xfer = NRFX_SPIM_XFER_TRX(ic_data[ic_data_index].read_command[0].data_read_tx,
+                                                    ic_data[ic_data_index].read_command[0].data_read_tx_len,
+                                                    m_spi_rx_buf[spi_channel],
+                                                    ic_data[ic_data_index].read_command[0].data_read_rx_len);
+
+    spi_xfer_done[spi_channel] = false;
+    nrf_spim_enable(spi_peripheral[spi_channel].p_reg);
+    APP_ERROR_CHECK(nrfx_spim_xfer(&spi_peripheral[spi_channel], &xfer, flags));
+}
+
+
+
+void sample_set_ready(uint8_t *data, uint16_t data_size, uint32_t timestamp, uint32_t timestamp_offset)
+{
+uint8_t id;
+
+
+    //Wait until we are enabled and have synch
+    if(data_mode == DATA_MODE_DISABLED || timestamp_is_synch_lost())
+        return;
+
+    //This is only used for hot plug-in events
+    id = packet_id;
+    if (data_mode == DATA_MODE_WIRELESS && sensors_hot_plug_event_check())
+    {
+        if (hot_plug_pkt_counter++ >= HOT_PLUG_PKT_INTVL)
+        {
+            // carry the hot_plug event bit
+            id |= HOT_PLUG_EVENT_BIT;
+            hot_plug_pkt_counter = 0;
+        }
+    }
+ 
+
+    if(data_mode == DATA_MODE_USB)
+    {
+        //Calculate decoded packet size
+        size_t packet_size = 1 + 4 + data_size;
+ 
+
+        //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via USB
+        uint32_t code = usb_serial_write_data_packet_vargs(packet_size,
+            (uint32_t)1, &id,
+            (uint32_t)4, &timestamp,
+ 
+            (uint32_t)data_size, data,
+            (uint32_t)0);
+
+        if(code == NRF_ERROR_BUSY)
+            skipped_tx_count++;
+        else
+            OMMO_APP_ERROR_CHECK(code, STRING("USB data transfer error"), 0);
+    }
+
+
+    //Update count
+    tx_count++;
+}
+
+
+
+

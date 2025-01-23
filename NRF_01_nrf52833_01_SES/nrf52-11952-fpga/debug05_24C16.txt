@@ -1,0 +1,994 @@
+24c16寻址举例： （这里器件地址为7位）
+
+   i2c_driver->read_data(slave_addr, addr&0xFF, data, num_bytes, 0x00, true)
+
+   slave_addr： 器件地址 0x50 + 数据地址的高3位 
+   addr&0xFF：  数据地址的低7位 
+   data：       存放读取数据的变量 
+   num_bytes：  数据长度
+   0x00：       flag 
+   true：       blocking
+
+
+
+24C16 读写测试： 在24c16的最后一页做读写测试
+uint32_t device_info_read_media_buffer_from_port(uint8_t port, DeviceInfoField proto_type, uint8_t *media_buffer, uint16_t media_buffer_length, uint16_t *media_buffer_bytes_read)
+
+   //--test
+   device_info_reader_m24c16_test_eeprom(i2c_driver);  //24c16 writeread test ok
+
+
+
+用 device_info_reader_m24c16_write_pages 写入eeprom的标志
+
+
+
+======================== 读取24c16数据的流程： (数据流函数外变量或参数为优先) ======================== 
+
+
+读取24c16数据的流程： (数据流函数外变量或参数为优先)
+
+
+0. device_info_reader_m24c16_read_terminated_data // 可在调用它的地方打log，测试*read_length 和单个*buffer
+
+   数据流: reg00+    -->  *buffer指针   （函数外参数变量）
+   数据流: 读取数量  -->  *read_length  （函数外参数变量）
+
+   从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+
+
+1. device_info_reader_m24c16_read_terminated_data   // 可在调用它的地方打log，测试*media_buffer_bytes_read 和单个*media_buffer
+
+   数据流: *buffer指针    -->  *media_buffer             （函数外参数变量）
+   数据流: *read_length   -->  *media_buffer_bytes_read  （函数外参数变量）
+
+   步骤0+
+   直到遇到结束标志
+
+
+2. device_info_read_media_buffer_from_port   // 可在调用它的地方打log，测试 media_buffer[3072+]  //待理解：单步调试023b的长度只显示前4个字节
+
+   数据流: *media_buffer指针          -->  media_buffer[3072+]      （函数外局部变量）  
+   数据流: *media_buffer_bytes_read   -->  media_buffer_bytes_read  （函数外局部变量）  
+
+   释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+
+   步骤1+
+
+   释放I2C
+
+
+3. device_info_read_proto_buffer_from_port   // 可在调用它的地方打log，测试 buffer[3072]  
+
+   数据流: media_buffer[3072+]      -->   buffer[3072]     （函数外局部变量）
+   数据流: media_buffer_bytes_read  -->   buffer_length    （函数外局部变量）
+
+   步骤2+
+   把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+
+
+4. device_info_allocate_and_read_from_port
+
+   数据流:buffer  -->  usb uart DMA.OUT   （待理解）
+
+   步骤3+
+   ？待理解，或是把读到的eeprom数据，经加工后，发送到PC
+
+
+
+
+================================read 24c16=============================================
+
+
+flow：
+
+     usb uart dma中断 -- usb_serial_packet_received -- process_packet_received -- sensors_process_packet_received -- sensors_scan_bus_generate_data_descriptor
+
+    sensors_scan_bus_generate_data_descriptor-- device_info_is_media_present  -- acquire_i2c -- acquire_i2c_without_stopping_state_machine    
+      -- (senors_twi_basic_instance->acquire_i2c) -- twi_basic::acquire_i2c -- device_info_reader_m24c16_is_present
+
+    sensors_scan_bus_generate_data_descriptor -- device_info_allocate_and_read_from_port -- device_info_read_proto_buffer_from_port -- device_info_read_media_buffer_from_port
+      --device_info_reader_m24c16_read_terminated_data -- device_info_reader_m24c16_read -- device_info_decode_media_buffer_to_proto_buffer -- cobs_decode_crc
+
+
+数据流：senors_twi_basic_instance --> i2c_driver （局部变量）
+
+数据流：24C16.reg00-reg16  --> read_buffer 局部变量
+
+数据流：24C16.reg00-regx  --> media_buffer    临时变量
+数据流：media_buffer --> proto_buffer  --> buffer 临时变量
+
+
+------------------------------------------------
+
+//应是从usb uart中断中调用
+
+usb_serial_packet_received( data[],  length)
+ 
+    switch(data[0])
+    
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+
+            if(data_mode != DATA_MODE_DISABLED)
+             
+                usb_serial_send_ack(OMMO_ACK_INVALID_MODE);
+             
+            else if(length != 2)
+             
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+            
+            else
+             
+                //Try to start state machine
+                sensors_set_mag_temp_set_count();
+                uint32_t rvalue = sensors_start_state_machine();
+
+                if(rvalue == NRF_SUCCESS)
+                 
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                 
+
+                //Return success/failure
+                usb_serial_send_ack(convert_nrf_error_code_to_ommo_ack_code(rvalue));
+                set_leds();
+             
+            return;
+
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+
+            if(length != 2)
+            
+                usb_serial_send_ack(OMMO_ACK_INVALID_DATA);
+             
+            else
+             
+                usb_serial_send_ack(comms_esb_set_synch_rx_channel(data[1]));
+             
+            return;
+     
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, packet_response_buffer, PACKET_RESPONSE_BUFFER_SIZE);    //here
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(packet_response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    usb_serial_send_command_packet(packet_response_buffer, response_length);
+ 
+
+
+--------
+
+process_packet_received( data[], packet_size,  response_buffer[], response_buffer_size)
+ 
+    response_length = 0;
+
+    switch(data[0])
+    
+        case OMMO_COMMAND_DATA_DISABLE:
+            if(data_mode == DATA_MODE_DISABLED)
+             
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+             
+            else if(packet_size != 1)            
+
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);           
+
+            else            
+
+                disable_data_mode(false);
+                set_leds();
+
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_SUCCESS);
+
+
+    if(response_length == 0) //Try general processor
+        response_length = general_process_packet_received(data, packet_size, response_buffer, response_buffer_size);
+ 
+
+    if(response_length == 0) //Let sensors take a crack at the packet
+        response_length = sensors_process_packet_received(data, packet_size, response_buffer, response_buffer_size);      //here
+ 
+    return response_length;
+ 
+
+
+-----------------
+
+sensors_process_packet_received(  data[], data_length,  response_buffer[],  response_buffer_size)
+
+
+    if(data[0] == OMMO_COMMAND_SET_MAG_CAL_MODE)
+       。。。。。。
+
+    else if(data[0] == OMMO_COMMAND_ONBOARD_SENSOR_ENABLE)
+       。。。。。。
+
+
+
+    else if(data[0] == OMMO_COMMAND_GET_PACKET_DESCRIPTOR)
+    
+        if(current_state != STATE_MACHINE_STOPPED && current_state != IDLE_HOT_PLUG_CHECK)
+        
+            return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+        
+        else
+        
+            return sensors_scan_bus_generate_data_descriptor(response_buffer, response_buffer_size);    //hrer
+        
+
+    
+    else if(data[0] == OMMO_COMMAND_MMC_SELF_TEST)
+       。。。。。。
+
+    else if(data[0] == OMMO_COMMAND_SENSOR_DISABLE)
+       。。。。。。
+
+
+    else if(data[0] == OMMO_COMMAND_READ_SENSOR_DATA)
+       。。。。。。
+
+    else if(data[0] == OMMO_COMMAND_PROCESS_FLASHSTREAM)
+       。。。。。。
+
+
+    //See if device info processor can process it
+    return device_info_process_packet_received(data, data_length, response_buffer, response_buffer_size, mag_calibration_mode);
+ 
+
+
+---------
+
+(从本函数开始读取eeprom的标志)
+
+功能：释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      把24C16的reg00后面的16个字节读取到局部变量read_buffer，返回1  （待理解：为什么要读取到局部变量 答：这里只是看I2C连接是否正常，数据不需要使用）
+      释放I2C
+
+      释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance读到
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+      把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+      ？待理解，或是把读到的eeprom数据，经加工后，发送到PC
+
+sensors_scan_bus_generate_data_descriptor(  packet_id_request_buffer[],  buffer_size)
+
+        ......
+
+        //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+          把24C16的reg00后面的16个字节读取到局部变量read_buffer，返回1  （待理解：为什么要读取到局部变量 答：这里只是看I2C连接是否正常，数据不需要使用）
+          释放I2C
+        device_info_media_present = device_info_is_media_present(2);       //here
+
+
+        if(device_info_media_present)  //1, yes
+        
+            //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance读到
+              从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+              释放I2C
+              把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+              ？待理解，或是把读到的eeprom数据，经加工后，发送到PC
+            AAA = device_info_allocate_and_read_from_port(2,  &dgdp.devices[0].device_info, DEVICE_INFO_FIELD_PERM );  //127
+            if( AAA == NRF_SUCCESS)
+            
+                device_present = true;
+
+                //同上，换了一个eeprom的位置的标志
+                device_info_allocate_and_read_from_port(2, &dgdp.devices[0].device_info_user, DEVICE_INFO_FIELD_USER);  //255
+
+                if(dgdp.devices[current_device].device_info_user == NULL)
+                
+                    //如没有eeprom的标志数据，返回err
+                    if(device_info_allocate_and_create_user(&dgdp.devices[current_device].device_info_user) != NRF_SUCCESS)
+                        return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_NO_MEM);   //here 
+
+
+---------- 
+
+功能：释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance读到
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+      把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+      ？待理解，或是把读到的eeprom数据，经加工后，发送到PC
+
+数据流：buffer  -->  usb uart DMA.OUT   （待理解）
+
+参数：2,  &dgdp.devices[0].device_info, 127
+device_info_allocate_and_read_from_port(  port,   **proto,  proto_type)
+ 
+    uint8_t buffer[3072];    //c00
+    uint16_t buffer_length;
+
+    //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+      把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+    error_code = device_info_read_proto_buffer_from_port(port, proto_type, buffer, 3072, &buffer_length);
+
+    if(error_code == NRF_SUCCESS) 
+        error_code = device_info_allocate_and_decode_proto_buffer(proto_type, proto, buffer, buffer_length);   // 待理解，或是把读到的eeprom数据，经加工后，发送到PC
+
+    return error_code;
+ 
+
+
+
+---------
+
+功能：释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+      把eeprom中读取的数据media_buffer，转存到proto_buffer中，判断crc是否为0，去掉proto_buffer[0]的字节
+
+数据流：24C16.reg00-regx  --> media_buffer    临时变量
+数据流：media_buffer --> proto_buffer  --> buffer 临时变量
+
+参数：2, 127, buffer, 3072, &buffer_length    //buffer 和 buffen_length是输出参数
+device_info_read_proto_buffer_from_port( port,  proto_type,   *proto_buffer,  proto_buffer_length,   *proto_buffer_bytes_written)
+
+    //uint8_t media_buffer[COBS_CRC_POST0_MAX_LEN(proto_buffer_length) + 2];
+    //  uint8_t media_buffer[COBS_MAX_LEN(proto_buffer_length) +2 + 2];
+    //   uint8_t media_buffer[ ( 3072+1 + 3072/256) +2 + 2];
+          uint8_t media_buffer[ ( 3072+1 + 12) +2 + 2];  //3072 + 17
+
+
+    uint16_t media_buffer_bytes_read;
+
+    //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+    //error_code = device_info_read_media_buffer_from_port(port, proto_type, media_buffer, sizeof(media_buffer), &media_buffer_bytes_read);  
+         error_code = device_info_read_media_buffer_from_port(2, proto_type, media_buffer, 3072+17, &media_buffer_bytes_read);  //数据流：24C16.reg00-regx  --> media_buffer 
+
+    //把eeprom中读取的数据media_buffer，转存到proto_buffer中
+      判断crc是否为0，去掉proto_buffer[0]的字节
+    //device_info_decode_media_buffer_to_proto_buffer(proto_type, media_buffer, media_buffer_bytes_read, proto_buffer, proto_buffer_length, proto_buffer_bytes_written);
+       device_info_decode_media_buffer_to_proto_buffer(127, media_buffer, media_buffer_bytes_read, proto_buffer, 3072, buffer_length );
+
+--------------
+
+功能：释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      从reg00读取eeprom数据，每次读取16个字节,并存到输出media_buffer的相应位置,直到遇到结束标志
+      释放I2C
+
+数据流：24C16.reg00-regx  --> media_buffer
+
+参数：2, 127, media_buffer, 3072 +17, &media_buffer_bytes_read    //其中media_buffer和media_buffer_bytes_read 是输出参数
+device_info_read_media_buffer_from_port(  port,  proto_type,  *media_buffer,  media_buffer_length,  *media_buffer_bytes_read)
+
+      twi_basic *i2c_driver;
+
+      //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+      acquire_i2c(2, &i2c_driver, IC_BUS_LOCATION_I2C_MOSI_CS0);
+      
+      switch(proto_type)  //127
+                
+          case DEVICE_INFO_FIELD_PERM:   //127, yes
+
+              //从reg00读取eeprom数据，每次读取16个字节,并存到输出buffer的相应位置,直到遇到结束标志
+              //device_info_reader_m24c16_read_terminated_data(i2c_driver, M24C16_PERM_ADDR, media_buffer, media_buffer_length, media_buffer_bytes_read);
+                 device_info_reader_m24c16_read_terminated_data(i2c_driver, 0, media_buffer, 3072 +17, media_buffer_bytes_read);
+
+
+          case DEVICE_INFO_FIELD_USER:
+              。。。。。。
+
+          case DEVICE_INFO_FIELD_MANUFACTURING:
+              。。。。。。
+
+      //释放I2C
+      release_i2c(port, &i2c_driver);
+
+
+------------
+
+功能：从reg00读取eeprom数据，每次读取16个字节,并存到输出buffer的相应位置,直到遇到结束标志
+
+参数：i2c_driver, 0, media_buffer, 3072 +17, media_buffer_bytes_read    //其中media_buffer和media_buffer_bytes_read 是输出参数
+device_info_reader_m24c16_read_terminated_data(  *i2c_driver,  addr,  *buffer,  buffer_length,  *read_length)
+ 
+    uint8_t last_byte = 0x80;
+    uint8_t last_last_byte = 0x80;
+
+    *read_length = 0x00;
+
+    //从reg00读取eeprom数据，每次读取16个字节,并存到输出buffer的相应位置,再逐一检查这16个字节有没有00和ff来判断是否结束读取
+    while( ( *read_length+16) <= buffer_length )  //3089
+    
+        //从reg00读取eeprom数据，每次读取16个字节,并存到输出buffer的相应位置
+        device_info_reader_m24c16_read(i2c_driver, addr, buffer+(*read_length), 16);
+        addr += 16;
+
+        //逐一检查这16个字节有没有00和ff来判断是否结束读取
+        for(uint8_t i=0; i<16; i++, (*read_length)++)
+        
+            //3种结束方式
+            //结束方式一：第一个字节时 0xFF或0x00   //空eeprom
+            //结束方式二：0x00 0x00
+            //结束方式三：0x00 0xFF !0x0A  //0x00是最后的一个字节
+
+
+            current_byte = buffer[(*read_length)];
+
+            if((*read_length) == 0x00 && (current_byte == 0xFF || current_byte == 0x00)) //Empty eeprom //结束方式一
+                return NRF_SUCCESS; 
+            
+            if( last_byte == 0x00 && current_byte == 0x00)   //Normal terminator   //结束方式二
+             
+                (*read_length)++;       //Include current_byte
+                return NRF_SUCCESS;
+             
+
+            if( last_last_byte == 0x00 && last_byte == 0xFF && current_byte != 0x0A) //Bug fix terminator   //结束方式三
+            
+                buffer[*read_length - 1] = 0x00;    //Change last byte to 0x00 to create 0x00 0x00 terminator
+                                                    //Current byte is not included
+                return NRF_SUCCESS;
+             
+
+            last_last_byte = last_byte;
+            last_byte = current_byte;
+        
+     
+---------
+
+功能：把eeprom中读取的数据media_buffer，转存到proto_buffer中
+      判断crc是否为0，去掉proto_buffer[0]的字节
+
+参数：127, media_buffer, media_buffer_bytes_read, proto_buffer, 3072, buffer_length  //其中proto_buffer 和 buffer_length是输出参数
+device_info_decode_media_buffer_to_proto_buffer( proto_type, *media_buffer, media_buffer_length, *proto_buffer, proto_buffer_length, *proto_buffer_bytes_written)
+ 
+    size_t media_bytes_used;
+    size_t proto_buffer_used;
+    uint8_t crc;
+    
+    //把eeprom中读取的数据media_buffer，转存到proto_buffer中
+    AAA  = cobs_decode_crc(media_buffer, media_buffer_length, proto_buffer, 3072, &crc, &media_bytes_used, &proto_buffer_used);
+    if(!AAA)
+        return NRF_ERROR_NO_MEM;
+
+    *proto_buffer_bytes_written = proto_buffer_used;
+
+    //判断crc是否为0
+    if(crc != 0x00)
+        return NRF_ERROR_INVALID_DATA;
+
+    //判断proto_buffer[0]，如果下面3个条件，只要有一个满足，则数据有效
+    if( !((proto_type == DEVICE_INFO_FIELD_PERM && proto_buffer[0] == DEVICE_INFO_PERM_PROTOBUF) ||
+          (proto_type == DEVICE_INFO_FIELD_USER && proto_buffer[0] == DEVICE_INFO_USER_PROTOBUF) ||
+          (proto_type == DEVICE_INFO_FIELD_MANUFACTURING && proto_buffer[0] == DEVICE_INFO_MANUFACTURING_PROTOBUF)) )
+
+        return NRF_ERROR_INVALID_DATA;
+
+    //去掉proto_buffer[0]的字节
+    memcpy(proto_buffer, proto_buffer+1, *proto_buffer_bytes_written);  
+    (*proto_buffer_bytes_written)--;
+
+ 
+
+---------
+
+功能：把eeprom中读取的数据media_buffer，转存到proto_buffer中
+
+数据流：media_buffer --> proto_buffer
+
+参数：media_buffer, media_buffer_length, proto_buffer, 3072, &crc, &media_bytes_used, &proto_buffer_used    //其中crc, media_bytes_used, proto_buffer_used是输出参数
+cobs_decode_crc( *ptr, input_length,  *dst,  dest_buffer_length, *crc,  *input_length_used,  *dest_length )
+ 
+	u8  *start = dst, 
+        u8  *end = ptr + input_length;
+	u8  code = 0xFF; 
+        u8  copy = 0;
+
+        *dest_length = 0;
+        *input_length_used = 0;
+        *crc = 0;
+
+
+	for (; ptr < end; copy--)
+        
+            if (*dest_length == 3072)   //Output buffer overrun            
+                return false;
+            
+            (*input_length_used)++; //Keep track of bytes pulled from input
+
+            if (copy != 0)
+            
+                u8 c = *ptr++;
+                
+                *dst++ = c;          // 数据流：media_buffer --> proto_buffer
+                (*dest_length)++;
+
+                *crc += c;            //sumcheck
+            
+            else   //copy = 0的情况
+            
+                if (code != 0xFF)     // 待理解
+                
+                    *dst++ = 0;
+                    (*dest_length)++;
+
+                copy = code = *ptr++;      // 待理解，copy=输入的数据ptr，是什么概念
+
+                if (code == 0)
+                
+                    (*dest_length)--;  
+                    break;  
+
+                	
+        (*dest_length)--;
+
+        return true;
+ 
+
+
+
+
+-------------
+
+功能： 释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+       把24C16的reg00后面的16个字节读取到局部变量read_buffer，返回1  （待理解：为什么要读取到局部变量）
+       释放I2C
+
+参数：2  （对应I2C时）
+device_info_is_media_present(  port)
+
+    //storage_type = get_device_info_storage_type(2); 
+       storage_type =  DEVICE_INFO_I2C;
+
+    ......
+ 
+
+    if(storage_type == DEVICE_INFO_I2C)   //yes
+     
+        bool present = false;
+
+        twi_basic *i2c_driver;
+
+        //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+        acquire_i2c(port, &i2c_driver, IC_BUS_LOCATION_I2C_MOSI_CS0);
+
+        //把24C16的reg00后面的16个字节读取到局部变量read_buffer，返回1  （待理解：为什么要读取到局部变量）
+        device_info_reader_m24c16_is_present(i2c_driver);
+         
+        //释放I2C
+        release_i2c(port, &i2c_driver);
+
+        return present;   //bool类型
+
+
+-----
+
+功能：把24C16的reg00后面的16个字节读取到局部变量read_buffer
+数据流：24C16.reg00-reg16  -- > read_buffer 局部变量
+
+参数：senors_twi_basic_instance
+device_info_reader_m24c16_is_present( *i2c_driver)
+ 
+    uint8_t read_buffer[16];
+
+    device_info_reader_m24c16_read(i2c_driver, 0, read_buffer, 16);
+ 
+
+
+------
+
+功能：把24C16的reg00后面的16个字节读取到read_buffer
+数据流：24C16.reg00-reg16  -- > read_buffer 局部变量
+
+参数：senors_twi_basic_instance, 0, read_buffer, 16
+device_info_reader_m24c16_read(  *i2c_driver,  addr,  * data,   num_bytes)
+
+    addr &= 0x07FF;  //0
+
+    //slave_addr = M24C16_SLAVE_ADDR_MEM_4BIT | (0 >> 8);
+       slave_addr = 0x50;
+
+    return i2c_driver->read_data(slave_addr, addr&0xFF, data, num_bytes, 0x00, true);
+
+
+
+------
+功能：把24C16的reg00后面的16个字节读取到read_buffer
+
+参数：senors_twi_basic_instance, 0, read_buffer, 16
+twi_basic::read_data(  slave_addr,   register_addr,  *data_addr,  num_bytes,  flags,   blocking,   timeout_override)
+ 
+    return trx(slave_addr, &register_addr, 1, data_addr, num_bytes, flags, blocking, timeout_override);
+ 
+
+----------
+
+功能： 释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+
+数据流：senors_twi_basic_instance --> i2c_driver （局部变量）
+
+参数：2, &i2c_driver, IC_BUS_LOCATION_I2C_MOSI_CS0
+acquire_i2c(  port,  **i2c_driver,  bus_location)
+ 
+    //某标志，先跳过
+    restart_hot_plug_after_i2c_released = (current_state == IDLE_HOT_PLUG_CHECK);   
+
+    //某状态，先跳过
+    sensors_stop_state_machine();  
+
+    //释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+    acquire_i2c_without_stopping_state_machine(port, bus_location);
+
+     //把变量传给实参到本函数外面
+     *i2c_driver = senors_twi_basic_instance;            
+
+
+---
+
+功能：释放spi0，取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)，I2C频率设为400khz，I2C初始化senors_twi_basic_instance
+
+参数：port,  IC_BUS_LOCATION_I2C_MOSI_CS0
+acquire_i2c_without_stopping_state_machine( port,  bus_location)
+   
+    //释放spi0
+    nrfx_spim_uninit(&spi_peripheral[0]);     
+
+    sensors_twi_basic_bus_location = bus_location;    //0，IC_BUS_LOCATION_I2C_MOSI_CS0
+    
+    //取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)
+    //sensors_i2c_port_to_pins(2, 0, &senors_twi_basic_config.scl_pin, &senors_twi_basic_config.sda_pin);
+        senors_twi_basic_config.scl_pin = spi_mosi_pins[0];             //mosi0,P0.11 
+        senors_twi_basic_config.sda_pin = spi_ss_pins[ 0 ];             // CS0, P0.6
+
+
+    if((sensors_twi_basic_bus_location & 0x80) != 0x80) //no   
+        ...... 
+     
+    else  //yes
+    
+        senors_twi_basic_config.scl_push_pull = false;   
+
+    
+    //I2C频率设为400khz
+    senors_twi_basic_config.frequency = sensors_twi_basic_MOSI_CS0_freq;   //400k
+
+    //I2C初始化senors_twi_basic_instance
+    senors_twi_basic_instance->acquire_i2c(&senors_twi_basic_config);
+
+
+ ---
+
+功能：I2C初始化senors_twi_basic_instance
+
+参数：senors_twi_basic_config
+twi_basic::acquire_i2c( *twi_basic_config)
+ 
+    our_config = *twi_basic_config;
+
+    nrfx_twim_config_t config =
+    
+       .scl                = our_config.scl_pin,
+       .sda                = our_config.sda_pin,
+       .frequency          = our_config.frequency,
+       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
+       .hold_bus_uninit    = false
+     
+    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this));
+
+    nrf_gpio_cfg(our_config.scl_pin, PIN_DIR_INPUT, PIN_INPUT_CONNECT, PIN_PULLUP, (our_config.scl_push_pull ? PIN_H0H1 : PIN_H0D1), _PIN_NOSENSE);
+    nrf_gpio_cfg(our_config.sda_pin, PIN_DIR_INPUT, PIN_INPUT_CONNECT, PIN_PULLUP, PIN_H0D1,PIN_NOSENSE);
+
+    nrfx_twim_enable(&twi_peripheral);
+
+    //Setup timeout multipliers
+    update_timeout_scale(our_config.frequency);
+
+    //Set internal acquired flag
+    i2c_acquired = true;
+
+ 
+
+------------------------------------
+
+功能：取得24c16的TWI的引脚编号P0.11(SCL)，P0.6(SDA)
+
+参数：port(=2), sIC_BUS_LOCATION_I2C_MOSI_CS0, &senors_twi_basic_config.scl_pin, &senors_twi_basic_config.sda_pin
+sensors_i2c_port_to_pins(  port,   bus_location,   *scl_pin,   *sda_pin)
+
+    if(bus_location == IC_BUS_LOCATION_I2C_MOSI_CS0)  //yes
+    
+        spi_ch_index = port_defs[2].hw_index;      //0
+
+        *scl_pin = spi_mosi_pins[spi_ch_index];                              //mosi0,P0.11
+
+        //*sda_pin = spi_ss_pins[  port_defs[2].ss_index_list[0]  ];  
+           *sda_pin = spi_ss_pins[ 0 ];                                      // CS0, P0.6
+ 
+
+
+
+
+
+-----------
+
+功能：待理解，或是把读到的eeprom数据，经加工后，发送到PC
+参数：127, &dgdp.devices[0].device_info, buffer, buffer_length
+device_info_allocate_and_decode_proto_buffer(  proto_type,   **protobuf_structure,  *proto_buffer,   proto_buffer_size)
+
+    switch(proto_type)  //127
+    
+        case DEVICE_INFO_FIELD_PERM:   //127, yes
+        
+ 
+            //给结构体变量分配内存
+            *protobuf_structure = malloc(sizeof(DeviceInfoProto));
+
+
+            //stream = pb_istream_from_buffer(proto_buffer, proto_buffer_size);             
+               stream.callback = NULL;
+               stream.state = state.state;   //buffer 
+               stream.bytes_left = msglen;   //buffer_length
+ 
+
+            pb_decode(&stream, &DeviceInfoProto_msg, *protobuf_structure);
+
+            ......
+
+ 
+-------
+
+功能：？
+
+参数： stream, &DeviceInfoProto_msg, *protobuf_structure
+pb_decode(  *stream,   *fields,   *dest_struct)
+
+    status = pb_decode_inner(stream, fields, dest_struct, 0);
+ 
+    if (!status)
+        pb_release(fields, dest_struct);
+ 
+    return status;
+ 
+
+------
+
+功能：？  待理解
+
+参数： stream, &DeviceInfoProto_msg, *protobuf_structure，0
+pb_decode_inner(  *stream,  *fields, *dest_struct, flags)
+
+ （参考）
+            
+
+
+------
+
+参数： buffer, buffer_length
+pb_istream_t pb_istream_from_buffer(   *buf,  msglen)
+
+    pb_istream_t stream;
+
+    union 
+    {
+        void *state;
+        const void *c_state;
+    } state;
+ 
+ 
+    state.c_state = buf;      //buffer
+
+    stream.callback = NULL;
+    stream.state = state.state;   //buffer 
+    stream.bytes_left = msglen;   //buffer_length
+ 
+    return stream;
+
+
+
+
+
+
+
+
+=========================================================== 参考 ================================================================
+
+
+
+
+
+bool device_info_reader_m24c16_test_eeprom(twi_basic *i2c_driver)    //似乎没有真正被调用
+{
+uint8_t write_buffer[16];
+uint8_t read_buffer[16];
+
+    //Write last page in memory
+    memset(write_buffer, 0x55, 16);
+    if(i2c_driver->write_data(0x57, 0xF0, write_buffer, 16, 0x00, true) != NRF_SUCCESS)
+        return false;
+    nrf_delay_ms(10); //Wait for write to finish
+
+    //Read and compare page
+    if(i2c_driver->read_data(0x57, 0xF0, read_buffer, 16, 0x00, true) != NRF_SUCCESS)
+        return false;
+    if(memcmp(write_buffer, read_buffer, 16) != 0x00)
+        return false;
+
+    //Write last page in memory
+    memset(write_buffer, 0x00, 16);
+    if(i2c_driver->write_data(0x57, 0xF0, write_buffer, 16, 0x00, true) != NRF_SUCCESS)
+        return false;
+    nrf_delay_ms(10); //Wait for write to finish
+
+    //Read and compare page
+    if(i2c_driver->read_data(0x57, 0xF0, read_buffer, 16, 0x00, true) != NRF_SUCCESS)
+        return false;
+    if(memcmp(write_buffer, read_buffer, 16) != 0x00)
+        return false;
+    
+    return true;
+}
+
+
+
+------
+
+相关变量： stream
+   stream.callback = NULL;
+   stream.state = state.state;   //buffer 
+   stream.bytes_left = msglen;   //buffer_length
+
+功能：？  待理解
+
+参数： stream, &DeviceInfoProto_msg, *protobuf_structure，0
+pb_decode_inner(  *stream,  *fields, *dest_struct, flags)
+
+    extension_range_start = 0;
+    *extensions = NULL;
+
+    pb_size_t fixed_count_field = PB_SIZE_MAX;
+    pb_size_t fixed_count_size = 0;
+    pb_size_t fixed_count_total_size = 0;
+
+    pb_fields_seen_t fields_seen = {{0, 0}};
+    const uint32_t allbits = ~0;
+    pb_field_iter_t iter;
+
+
+    if (pb_field_iter_begin(&iter, fields, dest_struct))   //待理解
+    
+        if ((flags & PB_DECODE_NOINIT) == 0)
+        
+            if (!pb_message_set_to_defaults(&iter))
+                PB_RETURN_ERROR(stream, "failed to set defaults");
+
+
+    while (stream->bytes_left)   //buffer_length
+    
+        uint32_t tag;
+        pb_wire_type_t wire_type;
+        bool eof;
+
+        if (!pb_decode_tag(stream, &wire_type, &tag, &eof))
+        
+            if (eof)
+                break;
+            else
+                return false;
+        
+
+        if (tag == 0)
+        
+          if (flags & PB_DECODE_NULLTERMINATED)
+          
+            break;
+          
+          else
+          
+            PB_RETURN_ERROR(stream, "zero tag");
+          
+        
+
+        if (!pb_field_iter_find(&iter, tag) || PB_LTYPE(iter.type) == PB_LTYPE_EXTENSION)
+        
+            /* No match found, check if it matches an extension. */
+            if (extension_range_start == 0)
+            
+                if (pb_field_iter_find_extension(&iter))
+                
+                    extensions = *(pb_extension_t* const *)iter.pData;
+                    extension_range_start = iter.tag;
+                
+
+                if (!extensions)
+                
+                    extension_range_start = (uint32_t)-1;
+                
+            
+
+            if (tag >= extension_range_start)
+            
+                size_t pos = stream->bytes_left;
+
+                if (!decode_extension(stream, tag, wire_type, extensions))
+                    return false;
+
+                if (pos != stream->bytes_left)
+                
+                    /* The field was handled */
+                    continue;
+                
+            
+
+            /* No match found, skip data */
+            if (!pb_skip_field(stream, wire_type))
+                return false;
+            continue;
+        
+
+        /* If a repeated fixed count field was found, get size from
+         * 'fixed_count_field' as there is no counter contained in the struct.
+         */
+        if (PB_HTYPE(iter.type) == PB_HTYPE_REPEATED && iter.pSize == &iter.array_size)
+        
+            if (fixed_count_field != iter.index) {
+                /* If the new fixed count field does not match the previous one,
+                 * check that the previous one is NULL or that it finished
+                 * receiving all the expected data.
+                 */
+                if (fixed_count_field != PB_SIZE_MAX &&
+                    fixed_count_size != fixed_count_total_size)
+                
+                    PB_RETURN_ERROR(stream, "wrong size for fixed count field");
+                
+
+                fixed_count_field = iter.index;
+                fixed_count_size = 0;
+                fixed_count_total_size = iter.array_size;
+            
+
+            iter.pSize = &fixed_count_size;
+        
+
+        if (PB_HTYPE(iter.type) == PB_HTYPE_REQUIRED
+            && iter.required_field_index < PB_MAX_REQUIRED_FIELDS)
+        
+            uint32_t tmp = ((uint32_t)1 << (iter.required_field_index & 31));
+            fields_seen.bitfield[iter.required_field_index >> 5] |= tmp;
+        
+
+        if (!decode_field(stream, wire_type, &iter))
+            return false;
+    
+
+    /* Check that all elements of the last decoded fixed count field were present. */
+    if (fixed_count_field != PB_SIZE_MAX &&
+        fixed_count_size != fixed_count_total_size)
+    
+        PB_RETURN_ERROR(stream, "wrong size for fixed count field");
+    
+
+    /* Check that all required fields were present. */
+    
+        pb_size_t req_field_count = iter.descriptor->required_field_count;
+
+        if (req_field_count > 0)
+        
+            pb_size_t i;
+
+            if (req_field_count > PB_MAX_REQUIRED_FIELDS)
+                req_field_count = PB_MAX_REQUIRED_FIELDS;
+
+            /* Check the whole words */
+            for (i = 0; i < (req_field_count >> 5); i++)
+            
+                if (fields_seen.bitfield[i] != allbits)
+                    PB_RETURN_ERROR(stream, "missing required field");
+            
+
+            /* Check the remaining bits (if any) */
+            if ((req_field_count & 31) != 0)
+            
+                if (fields_seen.bitfield[req_field_count >> 5] !=
+                    (allbits >> (uint_least8_t)(32 - (req_field_count & 31))))
+                
+                    PB_RETURN_ERROR(stream, "missing required field");
+                
+
+

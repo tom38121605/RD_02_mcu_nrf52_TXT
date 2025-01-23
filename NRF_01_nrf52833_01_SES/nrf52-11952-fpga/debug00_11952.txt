@@ -1,0 +1,44 @@
+
+
+--------------------timer 名称----------------------------
+
+//timer3： timer_timestamp  //需要以收到的basestation的4个时间字节为基准，来计算时间
+
+//rtc2：   rtc_timeout      //不需要考虑basestation的4个时间字节，只是每次收到sync，把outtime的标志清false
+
+//rtc1：   m_rtc_inst       //只是做时间任务，如定时扫描小灯的状态和设置小灯颜色
+
+
+
+----------------------PPI编号-----------------------------
+
+
+GROUP3:  ppi_group_sample_start_spi
+
+
+---------
+
+
+//PPI0： ppi_channel_timestamp_capture 
+
+       uarte1.ENDRX 事件 --> T3.CAPTURE0 任务  
+
+
+//PPI1： ppi_channel_disable_timestamp_capture     //无用，可注释  
+
+       T3.COMPARE0 事件--> GROUP0.DIS 任务
+
+
+//PPI2:  ppi_channel_button_pressed                //忽略       
+
+   
+//PPI3:  ppi_channel_start_transfer[0]                                //ppi_channel（待理解,或跟传感器有关）                          
+
+
+
+说明：用 nrfx_ppi_channel_include_in_group 检测group通道是否有分配ppi，如果没有，则肯定该group通道没有使用
+
+
+
+
+

@@ -1,0 +1,73 @@
+
+struct pb_istream_s
+
+    int *callback;
+
+    void *state;  
+
+    size_t bytes_left;
+
+typedef struct   pb_istream_s   pb_istream_t;
+
+
+
+
+-------------------------
+
+
+#define COBS_MAX_LEN(x)  ((x) + 1 + ((x)>>8))
+#define COBS_CRC_POST0_MAX_LEN(x) (COBS_MAX_LEN(x) + 2)
+
+
+---------
+
+
+typedef enum _ICBusLocation 
+{ 
+    IC_BUS_LOCATION_I2C_MOSI_CS0 = 0, 
+
+    IC_BUS_LOCATION_I2C_MOSI_MISO = 1, 
+
+    IC_BUS_LOCATION_FIXED_0 = 128, 
+    IC_BUS_LOCATION_FIXED_1 = 129, 
+    IC_BUS_LOCATION_FIXED_2 = 130, 
+    IC_BUS_LOCATION_FIXED_3 = 131, 
+    IC_BUS_LOCATION_FIXED_4 = 132, 
+    IC_BUS_LOCATION_FIXED_5 = 133, 
+    IC_BUS_LOCATION_FIXED_6 = 134, 
+    IC_BUS_LOCATION_FIXED_7 = 135 
+} ICBusLocation;
+
+
+
+------------
+
+
+  typedef struct
+  {
+      port_type_t port_type;
+      uint8_t hw_index;
+      uint8_t eeprom_ss; 
+      uint8_t ss_index_list[4];
+  } sensors_port_t;
+
+
+sensors_port_t   port_defs[OMMO_SENSOR_NUM_PORTS] = OMMO_SENSOR_PORT_DESC;
+
+#define OMMO_SENSOR_PORT_DESC      
+  {                                
+    {PORT_TYPE_DIRECT, 0xFF, 0xFF, {0xFF, 0xFF, 0xFF, 0xFF}}, 
+    {PORT_TYPE_OMMOCOMM_HALF_DUPLEX_UART, 0, 0xFE, {0, 1, 2, 3}}, 
+
+    {PORT_TYPE_DIRECT, 0, 0, {0, 1, 2, 0xFF}},  
+  }
+
+
+
+
+
+
+
+
+
+
