@@ -73,7 +73,7 @@
    802_15_4
    ant
    ble
-   boards
+   //boards
    drivers_ext
    nfc
    serialization
@@ -82,6 +82,8 @@
    
    //删除下面文件和目录      //50M
    gzll
+
+
    
 8. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components\toolchain\cmsis 
    
