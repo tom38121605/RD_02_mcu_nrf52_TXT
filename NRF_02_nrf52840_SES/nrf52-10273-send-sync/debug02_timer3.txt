@@ -2,6 +2,9 @@
 
 timer3的时钟源是HFCLK16M, 预分频是0，则： f = 16M / 2^0 = 16M
 
+timer3的定时时间： ( 5328 + n ) * 1/16M = (16/3k)/16M = 1/3ms      (三次中断发送一次sync数据，刚好是1ms)
+
+
 
 =================================== 关于PPI GROUP0和PPI0的测试===============================
 
@@ -55,17 +58,17 @@ timestamp_timer_event_handler(  event_type, * p_context)
 main
 
      
-    //设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
+    //设置timer3的irq总中断优先级2，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
       取得空闲的CC0通道，捕获定时器值到cc0并计算新的CC0值，使能 COMPARE[0] 中断，设置新的cc0值。
-      分配一个空闲的ppi group0，并打开它 ，
-      分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0
+      分配一个空闲的ppi group0，并打开它  (没有作用，忽略)
+      分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0  (没有作用，忽略)
     timestamp_init_with_internal_sample_event(2);    //优先级2
 
 
     //数据流： sample_timer_event_handler --> sample_event_callbacks[0]
     //timestamp_add_sample_event_callback(sample_timer_event_handler); 
         sample_event_callbacks[0] = sample_timer_event_handler;  
-        sample_event_callbacks_num++;                                    //本程序中只有1个 event callback
+        sample_event_callbacks_num++;                                    //本程序中只有标号[0]的1个 event callback
 
 
 
@@ -74,8 +77,8 @@ main
 
 功能：设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
       取得空闲的CC0通道，捕获定时器值到cc0并计算新的CC0值，使能 COMPARE[0] 子中断，设置新的cc0值。
-      分配一个空闲的ppi group0，并使能打开它 ，
-      再分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0
+      分配一个空闲的ppi group0，并使能打开它 (没有作用，忽略)
+      再分配一个空闲的PPI0,把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI0，使能PPI0   (没有作用，忽略)
 
 
 全局变量：timer_timestamp
@@ -122,7 +125,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
        //rf_timer_cc_read( NRF_TIMER3, 0);         //忽略，没有使用
            p_reg->CC[0];                           //取得CC值
 
-    //捕获定时器计数器值到CC0，并计算新的sample_event_trigger_value （用于设置将来的cc0值）
+    //捕获定时器计数器值到CC0，并计算新的sample_event_trigger_value （下一句马上用于设置将来的cc0值）
     //sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
     //  sample_event_trigger_value = nrf_timer_cc_read( NRF_TIMER3, 0 ) + 5328;
            sample_event_trigger_value = p_reg->CC[0] + 5328;
@@ -136,7 +139,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
            p_reg->CC[0] = cc_value;                                 //设置cc值，p_reg->CC[0]+5328
 
 
-    //分配一个空闲的ppi group channel0    （似乎没有用到，没有连接具体的PPI通道 -- 待验证）
+    //分配一个空闲的ppi group channel0    (没有作用，忽略)
     //nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);  
        ppi_group_disable_timestamp_capture = NRF_PPI_CHANNEL_GROUP0;  //0
 
@@ -147,7 +150,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
 
 
     //分配一个空闲的ppi channel0
-    nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);  // 分配一个空闲的PPI通道 NRF_PPI_CHANNEL0
+    nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);  // 分配一个空闲的PPI通道 NRF_PPI_CHANNEL0  (没有作用，忽略)
        ppi_channel_disable_timestamp_capture = NRF_PPI_CHANNEL0;     // 0
 
     //给PPI0分配事件和任务 (把关闭group0的任务DIS分配给PPI1)
@@ -258,11 +261,11 @@ nrfx_timer_3_irq_handler( )
 
 
 功能：判断cc0触发了COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
-          取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+          取得上一次最新的采样cc值sample_event_trigger_value并保存，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
           清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
-          把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)
+          把新的cc0值即时间邮戳4字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)
           暂不开启uart的tx发送（会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
-          打开通道组GROUP0
+          打开通道组GROUP0  (没有作用，忽略)
 
 
 参数：NRF_TIMER3,  &m_cb[2],   6
@@ -290,11 +293,11 @@ irq_handler(  * p_reg, * p_cb,  channel_count)
                  NRF_TIMER3 + EVENTS_COMPARE[i] =0 ;          //清除COMPARE[0]事件标志            
 
 
-            //取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+            //取得上一次最新的采样cc值sample_event_trigger_value并保存，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
               清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
-              把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
+              把新的cc0值即时间邮戳4字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
             （会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
-              打开通道组GROUP0
+              打开通道组GROUP0 (没有作用，忽略)
 
             //p_cb->handler(event, p_cb->context);
                 timestamp_timer_event_handler(event, 0);      //COMPARE[0]中断服务函数
@@ -303,11 +306,11 @@ irq_handler(  * p_reg, * p_cb,  channel_count)
 ----------
 
 
-//取得最新的采样cc值sample_event_trigger_value，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
+//取得上一次最新的采样cc值sample_event_trigger_value并保存，循环计算新的采样cc值sample_event_trigger_value，直到delta值>0；
   清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值；
-  把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
+  把把新的cc0值即时间邮戳4字节打包作为同步信号包6个字节通过串口发送出去（每3个cc0中断即每1毫秒发送1次)，暂不开启uart的tx发送
 （会由下一次的COMPARE0事件自动触发PPI1的STARTTX任务），打开PPI1通道 
-  打开通道组GROUP0
+  打开通道组GROUP0  (没有作用，忽略)
 
 参数：NRF_TIMER_EVENT_COMPARE0，0
 timestamp_timer_event_handler( event_type,  * p_context)
@@ -316,7 +319,7 @@ timestamp_timer_event_handler( event_type,  * p_context)
 
         last_sample_event_trigger_value = sample_event_trigger_value;   //p_reg->CC[0] + 5328
 
-        //循环计算，直到delta值>0   （待理解）
+        //循环计算，直到delta值>0   （待理解）  //先理解为cc0值再加5328 (简化处理)
         do
         {
             timestamp_synch_count++;
@@ -333,7 +336,7 @@ timestamp_timer_event_handler( event_type,  * p_context)
             nrfx_timer_compare(&timer_timestamp, 0, p_reg->CC[0]+5328 + 0, true);     //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
 
 
-        //把时间邮戳4个字节打包作为同步信号包6个字节通过串口发送出去 （每3个cc0中断即每1毫秒发送1次)
+        //把新的cc0值即时间邮戳4字节打包作为同步信号包6个字节通过串口发送出去 （每3个cc0中断即每1毫秒发送1次)
         if(timestamp_synch_count >= OMMO_TIMESTAMP_SYNCH_PERIOD)     //3     
    
             timestamp_synch_count -= OMMO_TIMESTAMP_SYNCH_PERIOD;
@@ -343,10 +346,10 @@ timestamp_timer_event_handler( event_type,  * p_context)
 
             for(  i = 0; i < timestamp_synch_execute_functions_num; i++)
 
-                //把时间的4个字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，
+                //把新的cc0值即时间邮戳4字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，
                   暂不开启uart的tx发送（会由下一次的COMPARE0事件触发PPI1的STARTTX任务），打开PPI1通道 
                 //timestamp_synch_execute_functions[i](sample_event_trigger_value);        //i=0                   
-                   comms_uarte_execute_timestamp_synch( p_reg->CC[0] + 5328 + 5328 ）
+                   comms_uarte_execute_timestamp_synch( p_reg->CC[0] + 5328 + 3*5328 ）
 
 
         //打开通道组GROUP0
@@ -355,6 +358,28 @@ timestamp_timer_event_handler( event_type,  * p_context)
             //sample_event_callbacks[i](event_type, p_context);               
             //  sample_timer_event_handler(NRF_TIMER_EVENT_COMPARE0, 0);                //i=0
                    NRF_PPI->TASKS_CHG[0].EN = 1;                                        //打开通道组GROUP0
+
+
+---------
+
+功能：把新的cc0值4字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，暂不开启uart的tx发送（会由下一次的COMPARE0事件触发PPI1的STARTTX任务），打开PPI1通道 
+
+参数：p_reg->CC[0] + 5328 + 5328 
+comms_uarte_execute_timestamp_synch(  sample_event_value )
+
+    //把把新的cc0值即时间邮戳4字节放入到txbuf[1-3],把长度5放入到txbuf[0]，把最后一个字赋值0x00
+    cobs_encode_post0(  &sample_event_value, 4,  comms_uarte_tx_buffer );
+
+
+    //把comms_uarte_tx_buffer连接到uart的tx dma， 暂不开启uart的tx发送
+    nrfx_uarte_tx_with_hold(&comms_uarte, comms_uarte_tx_buffer, 6, true);
+
+
+    //打开PPI1通道  (PPI1通道，已确认)
+    //nrfx_ppi_channel_enable(comms_uarte_tx_ppi); 
+    //  nrf_ppi_channel_enable( NRF_PPI_CHANNEL1 );
+          NRF_PPI->CHENSET = PPI_CHENSET_CH0_Set << 1;    //1<<1
+
 
 
 -----
@@ -425,28 +450,6 @@ timestamp_get_last_sample_event_timestamp()
     else if(sample_event_timestamp_capture_channel != 0xFF)    // 外部时钟采样， 没有用到，忽略
 
         ......
-
-
----------
-
-功能：把时间的4个字节放入到comms_uarte_tx_buffer并加入发送格式，把*_tx_buffer连接到tx dma，暂不开启uart的tx发送（会由下一次的COMPARE0事件触发PPI1的STARTTX任务），打开PPI1通道 
-
-参数：p_reg->CC[0] + 5328 + 5328 
-comms_uarte_execute_timestamp_synch(  sample_event_value )
-
-    //把时间的4个字节放入到txbuf[1-3],把长度5放入到txbuf[0]，把最后一个字赋值0x00
-    cobs_encode_post0(  &sample_event_value, 4,  comms_uarte_tx_buffer );
-
-
-    //把comms_uarte_tx_buffer连接到uart的tx dma， 暂不开启uart的tx发送
-    nrfx_uarte_tx_with_hold(&comms_uarte, comms_uarte_tx_buffer, 6, true);
-
-
-    //打开PPI1通道  (PPI1通道，已确认)
-    //nrfx_ppi_channel_enable(comms_uarte_tx_ppi); 
-    //  nrf_ppi_channel_enable( NRF_PPI_CHANNEL1 );
-          NRF_PPI->CHENSET = PPI_CHENSET_CH0_Set << 1;    //1<<1
-
 
 
 ---------

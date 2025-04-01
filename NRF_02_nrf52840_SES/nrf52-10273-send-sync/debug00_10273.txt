@@ -21,6 +21,34 @@ usb_serial_write_now(usb_serial_rx_packet_buffer,usb_serial_rx_packet_length,0);
 
 
 
+----------------------PPI编号-----------------------------
+
+#PPI0： ppi_channel_disable_timestamp_capture      //没用到，可忽略   ( GROUP0 没有被分配ppi通道，即使调用也无实际作用 )
+
+        T3.COMPARE0事件  -->  GROUP0.DIS任务 
+
+
+PPI1： comms_uarte_tx_ppi                         //有用  ?
+
+       T3.COMPARE0事件  -->   STARTTX 
+
+PPI1:   ppi_channel_timestamp_capture   临时
+
+           
+#PPI2： temp                                          //没用到，可忽略  （只有了一次就关闭了，而且用的这一次也无实际作用）
+
+        UARTE0的ENDTX事件 -->  T3.CLEAR任务              
+
+
+
+GROUP0:  ppi_group_disable_timestamp_capture     //没用到，可忽略    (GROUP0 没有被nrfx_ppi_channel_include_in_group调用及分配ppi通道)
+
+
+
+说明：用 nrfx_ppi_channel_include_in_group 检测group通道是否有分配ppi，如果没有，则肯定该group通道没有使用
+
+
+
 ------------------- 忽略的功能 -------------------------
 
 
@@ -34,10 +62,41 @@ usb_serial_write_now(usb_serial_rx_packet_buffer,usb_serial_rx_packet_length,0);
    //app_timer_init();     //(待验证，其它功能是否用到）
 
 
-3. 忽略PPI0:          T3.COMPARE0事件  -->  GROUP0.DIS任务             （没有用到该功能）
-3. 忽略PPI GROUP0:    在GROUP0上没有绑定任何PPI通道                    （没有用到该功能）
+3. 可忽略PPI0:          T3.COMPARE0事件  -->  GROUP0.DIS任务             （没有用到该功能）
 
-3. 忽略PPI2:          UARTE0的ENDTX事件 -->  T3.CLEAR任务              （没有用到该功能）
+    //--//Allocate group for capture disables
+    //APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
+    //APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
+
+    ////Setup PPI for disabling timestamp capture on sample timer evt
+    //APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(), 
+                       nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
+    //--APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
+
+
+3. 可忽略PPI GROUP0:    在GROUP0上没有绑定任何PPI通道                    （没有用到该功能）
+
+   void timestamp_reenable_disabled_captures()
+       //--nrf_ppi_group_enable(ppi_group_disable_timestamp_capture);
+
+
+
+3. 可忽略PPI2:          UARTE0的ENDTX事件 -->  T3.CLEAR任务              （没有用到该功能）
+
+    //--//Align UARTE clock with timestamp clock
+    //nrf_ppi_channel_t temp;
+    //APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&temp));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_assign(temp, nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDTX), timestamp_get_timer_clear_task()));
+    //APP_ERROR_CHECK(nrfx_ppi_channel_enable(temp));
+    //uint8_t data = 0xFF;
+    //APP_ERROR_CHECK(nrfx_uarte_tx(&comms_uarte, &data, 1));
+    //while(nrfx_uarte_tx_in_progress(&comms_uarte));
+
+    ////Reset PPI
+    //APP_ERROR_CHECK(nrfx_ppi_channel_disable(temp));
+    //--APP_ERROR_CHECK(nrfx_ppi_channel_free(temp));
+
 
 
 
