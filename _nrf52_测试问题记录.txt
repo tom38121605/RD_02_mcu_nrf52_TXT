@@ -6,6 +6,17 @@
         Build failed, exit status 0x1
 答： 要换成sesV5.42版本来开发
 
+1. 找不到.s文件中的中断入口函数UARTE0_UART0_IRQHandler的函数体
+
+
+答(方法1)：在ses中全文搜索UARTE0_UART0_IRQHandler时，要使用目录遍历搜索 （不要用普通的工程搜索）
+
+答(方法2)：直接在windows的目录里，用文本搜索UARTE0_UART0_IRQHandler时
+
+ 
+ 
+            #define nrfx_uarte_0_irq_handler    UARTE0_UART0_IRQHandler  //nrfx_irqs_nrf52840.h
+
 
 
 
