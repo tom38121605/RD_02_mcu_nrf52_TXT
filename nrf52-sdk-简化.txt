@@ -16,16 +16,16 @@
    ReleaseNote.md
 
 
-
 2. D:\workspace-work\ommo_nrf-gauge\flash_files
    
-   //保留下面文件  （所有目录都删除）    //330M   -- 第一层清除
+   //保留所有文件  （所有目录都删除）    //330M   -- 第一层清除
    bootload.bat
    build.ini
    build.py
    dst_check.py
    generate_protobuf_lib.bat
    program.bat
+   sync_latest_firmware_folder.py
      
    
 3. D:\workspace-work\ommo_nrf-gauge\emUSBD_PRO_nRF52xxx_V3.64.0_USBD-00543_2ACA5E74_240311   
@@ -62,11 +62,19 @@
    
    //删除下面文件和目录      //44M
    documentation
-   external
+   //external
    external_tools
+
    license.txt
    nRF_MDK_8_40_3_IAR_BSDLicense.msi
-   
+
+
+5. D:\workspace-work\nrf-07-11763-52840-V5004-TI-adc\11763\nRF5_SDK_17.1.0_ddde560\external\
+
+    //保留下面的目录  （其他都删除）   
+    utf_converter
+
+
 6. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components   
    
    //删除下面文件和目录    //10M
