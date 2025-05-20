@@ -1,4 +1,4 @@
- 
+﻿ 
 
 说明：在adc_cartes_setup_PPI_start_sample_packet中，发送comman指令 0x03，xyzt 读取xyzt（再每隔一段时间发送一次0x83， set + xyzt）
 
@@ -436,6 +436,7 @@ adc_cartes_state_change()
                 
                     adc_cartes_setup_PPI_start_sample_packet(port);  //发送command指令，准备读取相关的xyzt数据
 
+                current_state = WAITING_FOR_ADC_START_SAMPLE_COMPLETION;
 
            case WAITING_FOR_ADC_START_SAMPLE_COMPLETION:
                 
