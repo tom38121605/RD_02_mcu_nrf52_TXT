@@ -1,44 +1,25 @@
 
 
 
-    #define NRF_ATFIFO_DEF(fifo_id, storage_type, item_cnt)                                     
-        static storage_type NRF_ATFIFO_BUF_NAME(fifo_id)[(item_cnt)+1];                         
-        NRF_LOG_INSTANCE_REGISTER(NRF_ATFIFO_LOG_NAME, fifo_id,                                 
-                                  NRF_ATFIFO_CONFIG_INFO_COLOR,                                 
-                                  NRF_ATFIFO_CONFIG_DEBUG_COLOR,                                
-                                  NRF_ATFIFO_CONFIG_LOG_INIT_FILTER_LEVEL,                      
-                                  NRF_ATFIFO_CONFIG_LOG_ENABLED ?                               
-                                          NRF_ATFIFO_CONFIG_LOG_LEVEL : NRF_LOG_SEVERITY_NONE); 
-        static nrf_atfifo_t NRF_ATFIFO_INST_NAME(fifo_id) = {                                   
-                .p_buf = NULL,                                                                  
-                NRF_LOG_INSTANCE_PTR_INIT(p_log, NRF_ATFIFO_LOG_NAME, fifo_id)                  
-        };                                                                                      
-        static nrf_atfifo_t * const fifo_id = &NRF_ATFIFO_INST_NAME(fifo_id)
-
-
-
-
-
-
-============================================
-
-typedef struct
+typedef union nrf_atfifo_postag_u
 {
-    nrf_sortlist_item_t         list_item;     /**< Token used by sortlist. */
-    uint64_t                    end_val;       /**< RTC counter value when timer expires or @ref APP_TIMER_IDLE_VAL. */
-    uint32_t                    repeat_period; /**< Repeat period (0 if single shot mode). */
-    app_timer_timeout_handler_t handler;       /**< User handler. */
-    void *                      p_context;     /**< User context. */
-    NRF_LOG_INSTANCE_PTR_DECLARE(p_log)        /**< Pointer to instance of the logger object (Conditionally compiled). */
-} app_timer_t;
+    uint32_t                   tag;  
+    nrf_atfifo_postag_pos_t    pos;  
+
+}nrf_atfifo_postag_t;
 
 
 
+typedef   struct nrf_atfifo_item_put_s
+{
+    nrf_atfifo_postag_t      last_tail;    
+
+}nrf_atfifo_item_put_t;
 
 
 
-#define APP_TIMER_IDLE_VAL 0xFFFFFFFFFFFFFFFFULL
-#define APP_TIMER_LOG_NAME app_timer
+---
+
 
 //#define ROUNDED_DIV(A, B)    (A + B /2) / B
   #define ROUNDED_DIV(A, B)     A/B + 1/2  
@@ -49,51 +30,163 @@ typedef struct
     #define APP_TIMER_TICKS(MS)   MS * 32768/1000 + 1/2  
 
 
----
 
-APP_TIMER_DEF(task_loop_timer_id);    //待理解
 
-#define _APP_TIMER_DEF(timer_id)            
+
+=================================关于m_req_fifo 的定义========================================
+
+
+NRF_ATFIFO_DEF(m_req_fifo, timer_req_t, 10);    //这里不是define，这里是调用下面的define，下面的define是带参数的 (相当于把参数值传入参数)
+
+
+    #define NRF_ATFIFO_DEF(fifo_id, storage_type, item_cnt)      //这里,相当于把上面的参数值,转化为参数名称（供下面的真正定义变量用）
+                                 
+        //static storage_type NRF_ATFIFO_BUF_NAME(fifo_id)[(item_cnt)+1];   
+           static storage_type  m_req_fifo_data[11];   
+
+                      
+        NRF_LOG_INSTANCE_REGISTER(NRF_ATFIFO_LOG_NAME, fifo_id,            //这里不是define，这里是调用下面的define，下面的define是带参数的 (相当于把参数值传入参数)
+                                  NRF_ATFIFO_CONFIG_INFO_COLOR,                                 
+                                  NRF_ATFIFO_CONFIG_DEBUG_COLOR,                                
+                                  NRF_ATFIFO_CONFIG_LOG_INIT_FILTER_LEVEL,                      
+                                  NRF_ATFIFO_CONFIG_LOG_ENABLED ?                               
+                                          NRF_ATFIFO_CONFIG_LOG_LEVEL : NRF_LOG_SEVERITY_NONE); 
+
+
+   #define NRF_LOG_INSTANCE_REGISTER(_module_name, _inst_name, info_color, debug_color, _initial_lvl, compiled_lvl)  //这里,相当于把上面的参数值，转化为参数名称(供下面的真正定义变量用)
+
+        //static nrf_atfifo_t NRF_ATFIFO_INST_NAME(fifo_id) =                                     
+        //        .p_buf = NULL,                                                                  
+        //        NRF_LOG_INSTANCE_PTR_INIT(p_log, NRF_ATFIFO_LOG_NAME, fifo_id)                  
+             
+            static nrf_atfifo_t m_req_fifo_inst =                                     
+                   .p_buf = NULL,             
+                                                     
+                   //NRF_LOG_INSTANCE_PTR_INIT(p_log, NRF_ATFIFO_LOG_NAME, fifo_id)   
+                       NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name)         //待理解   
+ 
+   
+                                                                                
+        //static nrf_atfifo_t * const fifo_id = &NRF_ATFIFO_INST_NAME(fifo_id)
+           static nrf_atfifo_t * const m_req_fifo = &m_req_fifo_inst
+
+
+###
+
+#define NRF_LOG_INSTANCE_REGISTER(_module_name, _inst_name, info_color, debug_color, _initial_lvl, compiled_lvl)
+#define NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name)
+
+###
+
+    #define NRF_ATFIFO_BUF_NAME(fifo_id) CONCAT_2(fifo_id, _data)
+    #define NRF_ATFIFO_INST_NAME(fifo_id) CONCAT_2(fifo_id, _inst)
+    #define NRF_LOG_INSTANCE_PTR_DECLARE(_p_name)
+
+
+
+=================================关于m_req_fifo定义化简后的结果====待完善====================================
+
+
+typedef struct nrf_atfifo_s
+{
+    void                * p_buf;         
+    nrf_atfifo_postag_t   tail;          
+    nrf_atfifo_postag_t   head;          
+    uint16_t              buf_size;      
+    uint16_t              item_size;     
+    NRF_LOG_INSTANCE_PTR_DECLARE(p_log)  
+}nrf_atfifo_t;
+
+
+storage_type  m_req_fifo_data[11];   
+
+
+nrf_atfifo_t   m_req_fifo_inst =                                     
+       .p_buf = NULL,             
+                                         
+       //NRF_LOG_INSTANCE_PTR_INIT(p_log, NRF_ATFIFO_LOG_NAME, fifo_id)   
+           NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name)         //待理解   
+
+
+nrf_atfifo_t  *m_req_fifo = &m_req_fifo_inst
+
+
+
+
+
+=================================关于task_loop_timer_id 的定义========================================
+
+
+//APP_TIMER_DEF(task_loop_timer_id);                           //这里不是define，这里是调用下面的define，下面的define是带参数的 (相当于把参数值传入参数)
+   _APP_TIMER_DEF(task_loop_timer_id);                   
+ 
+
+#define _APP_TIMER_DEF(timer_id)                               //这里,相当于把上面的参数值,转化为参数名称（供下面的真正定义变量用）
+      
                                                    
-    NRF_LOG_INSTANCE_REGISTER(APP_TIMER_LOG_NAME, timer_id,                                    
+    NRF_LOG_INSTANCE_REGISTER(APP_TIMER_LOG_NAME, timer_id,      //这里不是define，这里是调用下面的define，下面的define是带参数的 (相当于把参数值传入参数)                               
                               APP_TIMER_CONFIG_INFO_COLOR,                                     
                               APP_TIMER_CONFIG_DEBUG_COLOR,                                    
                               APP_TIMER_CONFIG_INITIAL_LOG_LEVEL,                              
                               APP_TIMER_CONFIG_LOG_ENABLED ?                                   
                                          APP_TIMER_CONFIG_LOG_LEVEL : NRF_LOG_SEVERITY_NONE);  
 
-    static app_timer_t CONCAT_2(timer_id,_data) = {                                            
-            .end_val = APP_TIMER_IDLE_VAL,                                                     
-            NRF_LOG_INSTANCE_PTR_INIT(p_log, APP_TIMER_LOG_NAME, timer_id)                     
-    };                         
-                                                                
-    static const app_timer_id_t timer_id = &CONCAT_2(timer_id,_data)
+#define NRF_LOG_INSTANCE_REGISTER(_module_name, _inst_name, info_color, debug_color, _initial_lvl, compiled_lvl)  //这里,相当于把上面的参数值,转化为参数名称（供下面的真正定义变量用）
 
+
+
+    //static app_timer_t task_loop_timer_id_data =                                              
+    //        .end_val = APP_TIMER_IDLE_VAL,                                                     
+    //        NRF_LOG_INSTANCE_PTR_INIT(p_log, APP_TIMER_LOG_NAME, timer_id)                     
+                         
+    static app_timer_t task_loop_timer_id_data =                                              
+            .end_val = FFFF FFFF FFFF FFFF,                                    //8 byte   
+                                       
+            //NRF_LOG_INSTANCE_PTR_INIT(p_log, APP_TIMER_LOG_NAME, timer_id)                     
+                NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name)     //待理解                 
+
+    
+                                                                
+    //static const app_timer_id_t timer_id = &CONCAT_2(timer_id,_data)
+       static const app_timer_id_t task_loop_timer_id = &task_loop_timer_id_data;
+
+
+###
 
 #define NRF_LOG_INSTANCE_REGISTER(_module_name, _inst_name, info_color, debug_color, _initial_lvl, compiled_lvl)
 #define NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name) 
 
----
-
-#define _APP_TIMER_DEF(timer_id)   
 
 
-#define NRF_LOG_INSTANCE_REGISTER(_module_name, _inst_name, info_color, debug_color, _initial_lvl, compiled_lvl);
+=================================关于task_loop_timer_id定义化简后的结果=======待完善=================================
 
 
-    app_timer_t  task_loop_timer_id_data  =                                              
-            .end_val = APP_TIMER_IDLE_VAL,                                                     
-            NRF_LOG_INSTANCE_PTR_INIT(p_log, app_timer, timer_id)                     
- 
+typedef struct
+{
+    nrf_sortlist_item_t         list_item;     
+    uint64_t                    end_val;       
+    uint32_t                    repeat_period;  
+    app_timer_timeout_handler_t handler;        
+    void *                      p_context;     
+    NRF_LOG_INSTANCE_PTR_DECLARE(p_log)         
+} app_timer_t;
 
-#define NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name) 
 
----
+ app_timer_t    task_loop_timer_id_data =                            
+                  
+    .end_val = FFFF FFFF FFFF FFFF,                                    //8 byte   
+                               
+    //NRF_LOG_INSTANCE_PTR_INIT(p_log, APP_TIMER_LOG_NAME, timer_id)                     
+        NRF_LOG_INSTANCE_PTR_INIT(_p_name, _module_name, _inst_name)     //待理解   
+
+
+app_timer_id_t    task_loop_timer_id = &task_loop_timer_id_data;
 
 
 
 
-                
+
+
 
 
                                                                                              

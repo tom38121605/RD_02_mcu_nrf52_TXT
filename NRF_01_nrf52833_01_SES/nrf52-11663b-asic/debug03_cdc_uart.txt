@@ -21,6 +21,10 @@ flow:
    usb_serial_init -- USBD_Init -- USBD_EnableIAD -- AddCDC -- USBD_CDC_SetOnControlLineState
 
 
+数据流：usb_serial_packet_received  --> packet_received_callback
+数据流：usb_serial_connect_disconnect  --> event_callback
+
+
 ----------------------------------
 
 main
@@ -32,6 +36,9 @@ main
 
 
 ------------------
+
+数据流：usb_serial_packet_received  --> packet_received_callback
+数据流：usb_serial_connect_disconnect  --> event_callback
 
 参数： usb_serial_packet_received, usb_serial_connect_disconnect
 usb_serial_init(  br_callback, ev_callback)
@@ -73,7 +80,6 @@ usb_serial_init(  br_callback, ev_callback)
 
 
 
-
 ============================== uart == DTR detect ==================================
 
 flow: 
@@ -85,6 +91,10 @@ flow:
 
    usb_serial_event_queue_process -- usb_serial_state_port_open = (TRUE) --  usb_serial_connect_disconnect
 
+
+
+数据流：usb_serial_packet_received  --> packet_received_callback
+数据流：usb_serial_connect_disconnect  --> event_callback
 
 数据流：  DTR  -->  usb_serial_state_port_dtr  -->  usb_serial_state_port_open
 
@@ -99,6 +109,9 @@ main
 
 ---------------------------------------
 
+
+数据流：usb_serial_packet_received  --> packet_received_callback
+数据流：usb_serial_connect_disconnect  --> event_callback
 
 参数： usb_serial_packet_received, usb_serial_connect_disconnect
 usb_serial_init( br_callback, ev_callback)

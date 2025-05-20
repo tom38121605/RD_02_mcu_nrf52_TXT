@@ -42,3 +42,48 @@ GROUP3:  ppi_group_sample_start_spi
 
 
 
+
+
+==============================cnc 看不到数据问题的解决==========================================
+
+
+
+
+22把下面语句的注释去掉，则可以在cnc上看到 数据了
+
+
+                device_info_allocate_and_read_from_port(port, (void**)&dgdp.devices[current_device].device_info_user, DEVICE_INFO_FIELD_USER);
+
+                if(dgdp.devices[current_device].device_info_user == NULL)
+                {
+                    if(device_info_allocate_and_create_user(&dgdp.devices[current_device].device_info_user) != NRF_SUCCESS)
+                        return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_NO_MEM);
+                }
+
+
+
+12用下面的注释方式，则可以在cnc上看到 数据了
+
+ 
+
+    error_code = device_info_read_proto_buffer_from_port(port, proto_type, buffer, sizeof(buffer), &buffer_length);
+
+
+
+//error_code = NRF_SUCCESS;
+
+//if( (port==2) && (proto_type==DEVICE_INFO_FIELD_PERM))
+//{
+//    buffer_length = 0x0236;                 //566
+//    memcpy(buffer, buffer_1, 0x0236+3);   //569
+//}else if( (port==2) && (proto_type==DEVICE_INFO_FIELD_USER))
+//{
+//    buffer_length = 3;
+//    memcpy(buffer, buffer_1, 3+3);  //6
+//}
+
+
+
+
+
+

@@ -1,0 +1,400 @@
+
+
+================================================spi init=======================================================
+
+
+flow：
+
+
+      main -- sensors_init -- 
+
+
+
+数据流： sample_set_ready            -->  sample_set_ready_callback
+数据流： hot_plug_callback           -->  hot_plug_event_callback
+数据流： sample_timer_event_handler  -->  sample_event_callbacks[0]   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
+
+
+
+-----------------------------------------------------------
+
+
+main
+
+    sensors_init(&sample_set_ready, &hot_plug_callback, &twi_basic_instance, &ommocomm_uarte_instance);
+
+
+
+
+------------
+
+数据流： sample_set_ready            -->  sample_set_ready_callback
+数据流： hot_plug_callback           -->  hot_plug_event_callback
+数据流： sample_timer_event_handler  -->  sample_event_callbacks[0]   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
+
+参数：sample_set_ready,  hot_plug_callback,  twi_basic_instance,  ommocomm_uarte_instance
+sensors_init( sample_set_ready_callback_function,  hot_plug_cb,  *twi_basic_g,  *ommcomm_uarte)
+
+    ommocomm_uarte_sampler = ommcomm_uarte;     //这里只看spi，忽略跳过
+
+    senors_twi_basic_instance = twi_basic_g;                               //没有用到，忽略
+ 
+
+    sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
+    hot_plug_event_callback = hot_plug_cb;                             //hot_plug_callback
+
+
+     //设置timer3的中断服务函数
+    //timestamp_add_sample_event_callback(sample_timer_event_handler);   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
+        sample_event_callbacks[0] = sample_timer_event_handler;  
+        sample_event_callbacks_num++;
+
+
+    current_output_data = output_data_1;
+    next_output_data = output_data_2;
+    next_next_output_data = output_data_3;
+
+    memset(output_data_1, 0x55, 512);
+    memset(output_data_2, 0x55, 512);
+    memset(output_data_3, 0x55, 512);
+
+
+    current_state = STATE_MACHINE_STOPPED;
+
+    active_ss_pin = 0xFF;
+    disable_spi_callback = false;
+    stop_state_machine_bit = false;
+    timing_check_failed_count = 0;
+    total_num_ics = 0;
+    ppi_start_transfer_tasks_assigned = 0;
+ 
+    mag_calibration_mode = false;
+ 
+    onboard_sensors_enabled = true;
+
+    i2c_current_state_index = 0;
+    hot_plug_current_state_index = 0;
+    hot_unplug_double_check = false;
+    hot_plug_send_event = false;
+
+    ommocomm_uarte_present = false;
+    ommocomm_op_complete_flag = true;
+    execute_sample_ready_callback = false;
+
+    memset(ss_map, 0, sizeof(ss_map));
+    num_ss_pins_with_mag = 0;
+    num_ss_pins_with_imu = 0;
+
+    last_timestamp = current_timestamp = 0;
+    last_timestamp_offset = current_timestamp_offset = 0;
+
+    current_output_data_timestamp = 0;
+    current_output_data_timestamp_offset = 0;
+
+ 
+    //设置5个cs引脚
+    for( i=0; i<5; i++)
+     
+        nrf_gpio_pin_write(spi_ss_pins[i], 1);    //初始电平为高电平
+
+        //sensors_configure_spi_pin(spi_ss_pins[i]);
+            nrf_gpio_cfg(pin,  _DIR_OUTPUT,  _INPUT_DISCONNECT,  _NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE); //输出，无上拉，强驱动H0H1
+     
+
+    //nrfx_ppi_group_alloc(&ppi_group_sample_start_spi));
+      ppi_group_sample_start_spi = NRF_PPI_CHANNEL_GROUP3;
+
+
+    //把PPIx装入到GROUP3中，把TIMER3的COMPAREx事件、SPIMx的START任务关联到PPIx  (3个spi要用2个ppi通道和T3的两个CC通道)
+    for(uint8_t i=0; i<3; i++)
+    
+        init_spi(i);
+        spi_xfer_done[i] = true;
+
+        //取得SPIx的START任务的地址
+        //transfer_start_task_addr = nrfx_spim_start_task_get(&spi_peripheral[i]);
+           transfer_start_task_addr = NRF_SPIMi +NRF_SPIM_TASK_START;
+
+        //把TIMER3的COMPAREx事件、SPIMx的START任务关联到PPIx，把PPIx装入到GROUP3中
+        sensors_add_task_to_ppi_start_transfer(transfer_start_task_addr);
+     
+
+  
+    //Add start tx task for ommocomm as well
+    if(ommocomm_uarte_sampler->initialized)
+     
+        //transfer_start_task_addr = ommocomm_uarte_sampler->get_uarte_starttx_task();
+           transfer_start_task_addr = uarte + starttx ;
+
+        sensors_add_task_to_ppi_start_transfer(transfer_start_task_addr);
+     
+
+
+    //Init event for triggering mag set (needs to be after mag sample is complete)
+    sensor_set_sample_time_offset_event = timestamp_create_sample_event_offset_event(OMMO_SENSOR_MAG_SET_TIME);
+
+   
+ 
+    //Init hot_plug idle timer
+    APP_ERROR_CHECK(app_timer_create(&hot_plug_idle_timer_id, APP_TIMER_MODE_SINGLE_SHOT, hot_plug_idle_timer_handler));
+ 
+ 
+
+    //Counter for making temperature measurements
+    mag_temp_set_count = 0; //OMMO_SENSOR_MEMSIC_MMC5983_TEMP_COUNT;
+
+   
+
+------
+
+功能：把PPIx装入到GROUP3中，把TIMER3的COMPAREx事件、SPIMx的START任务关联到PPIx  ?
+
+ sensors_add_task_to_ppi_start_transfer(  task_addr)
+
+//第2个spi跟第一个spi公用同一个ppi，通过fork来实现
+ 
+    nrf_ppi_channel_t ppi_channel;       //局部变量
+
+
+    //Allocate PPI channel and add to group OR find channel with open fork
+
+
+    if( (ppi_start_transfer_tasks_assigned%2) != 0 )  //second
+     
+        ppi_channel = ppi_channel_start_transfer[ppi_start_transfer_tasks_assigned/2];
+        nrfx_ppi_channel_fork_assign(ppi_channel, task_addr) ;
+    
+    else  //yes, first
+     
+        //取得空闲的ppi通道PPIx
+         nrfx_ppi_channel_alloc(&ppi_channel) ;
+
+        //把PPIx装入到GROUP1中
+         nrfx_ppi_channel_include_in_group(ppi_channel, ppi_group_sample_start_spi) ;
+
+        //把PPIx赋值给全局变量ppi_channel_start_transfer[n]
+         ppi_channel_start_transfer[ppi_start_transfer_tasks_assigned/2] = ppi_channel;
+
+       //把TIMER3的COMPAREx事件、SPIMx的START任务任务关联到PPIx
+         nrfx_ppi_channel_assign(ppi_channel, timestamp_get_sample_event_address(), task_addr) ;
+     
+
+    ppi_start_transfer_tasks_assigned++;
+ 
+
+----------------------
+
+
+
+
+init_spi( spi_channel)
+
+    nrfx_spim_config_t spi_config = NRFX_SPIM_DEFAULT_CONFIG;
+#ifdef OMMO_SENSOR_MEMSIC_MMC5983_8MHZ_SPI
+    spi_config.frequency = NRF_SPIM_FREQ_8M;
+#else
+    spi_config.frequency = NRF_SPIM_FREQ_2M;
+#endif
+    spi_config.mode = NRF_SPIM_MODE_3;
+    spi_config.irq_priority = OMMO_SENSOR_SPI_IRQ_PRIORITY;
+    spi_config.miso_pin = spi_miso_pins[spi_channel];
+    spi_config.mosi_pin = spi_mosi_pins[spi_channel];
+    spi_config.sck_pin  = spi_sck_pins[spi_channel];
+    OMMO_APP_ERROR_CHECK(nrfx_spim_init(&spi_peripheral[spi_channel], &spi_config, spi_event_handler, (void *)(uint32_t)spi_channel), 
+                         STRING("SPI initialization failure"), L(spi_channel), 0); //Enable SPI bus
+    nrf_spim_disable(spi_peripheral[spi_channel].p_reg); //Enable right before transfer, prevents PPI from sending old data on the bus
+    
+    //Configure output pins for high strength drive
+    nrf_gpio_pin_set(spi_sck_pins[spi_channel]);
+    nrf_gpio_pin_clear(spi_mosi_pins[spi_channel]);
+    nrf_gpio_cfg(spi_mosi_pins[spi_channel], NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+    nrf_gpio_cfg(spi_sck_pins[spi_channel], NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+
+}
+
+
+
+
+
+==================================== 参考 ===============================================
+
+
+
+nrfx_err_t nrfx_spim_init(nrfx_spim_t  const * const p_instance,
+                          nrfx_spim_config_t const * p_config,
+                          nrfx_spim_evt_handler_t    handler,
+                          void                     * p_context)
+{
+    NRFX_ASSERT(p_config);
+    spim_control_block_t * p_cb = &m_cb[p_instance->drv_inst_idx];
+    nrfx_err_t err_code;
+
+    if (p_cb->state != NRFX_DRV_STATE_UNINITIALIZED)
+    {
+        err_code = NRFX_ERROR_INVALID_STATE;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+#if NRFX_CHECK(NRFX_SPIM_EXTENDED_ENABLED)
+    // Currently, only SPIM3 in nRF52840 supports the extended features.
+    // Other instances must be checked.
+    if ((p_instance->drv_inst_idx != NRFX_SPIM3_INST_IDX) &&
+        ((p_config->dcx_pin   != NRFX_SPIM_PIN_NOT_USED) ||
+         (p_config->frequency == NRF_SPIM_FREQ_16M)      ||
+         (p_config->frequency == NRF_SPIM_FREQ_32M)      ||
+         (p_config->use_hw_ss)))
+    {
+        err_code = NRFX_ERROR_NOT_SUPPORTED;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+#endif
+
+    NRF_SPIM_Type * p_spim = (NRF_SPIM_Type *)p_instance->p_reg;
+
+#if NRFX_CHECK(NRFX_PRS_ENABLED)
+    static nrfx_irq_handler_t const irq_handlers[NRFX_SPIM_ENABLED_COUNT] = {
+        #if NRFX_CHECK(NRFX_SPIM0_ENABLED)
+        nrfx_spim_0_irq_handler,
+        #endif
+        #if NRFX_CHECK(NRFX_SPIM1_ENABLED)
+        nrfx_spim_1_irq_handler,
+        #endif
+        #if NRFX_CHECK(NRFX_SPIM2_ENABLED)
+        nrfx_spim_2_irq_handler,
+        #endif
+        #if NRFX_CHECK(NRFX_SPIM3_ENABLED)
+        nrfx_spim_3_irq_handler,
+        #endif
+    };
+    if (nrfx_prs_acquire(p_instance->p_reg,
+            irq_handlers[p_instance->drv_inst_idx]) != NRFX_SUCCESS)
+    {
+        err_code = NRFX_ERROR_BUSY;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+#endif // NRFX_CHECK(NRFX_PRS_ENABLED)
+
+    p_cb->handler = handler;
+    p_cb->p_context = p_context;
+
+    uint32_t mosi_pin;
+    uint32_t miso_pin;
+    // Configure pins used by the peripheral:
+    // - SCK - output with initial value corresponding with the SPI mode used:
+    //   0 - for modes 0 and 1 (CPOL = 0), 1 - for modes 2 and 3 (CPOL = 1);
+    //   according to the reference manual guidelines this pin and its input
+    //   buffer must always be connected for the SPI to work.
+    if (p_config->mode <= NRF_SPIM_MODE_1)
+    {
+        nrf_gpio_pin_clear(p_config->sck_pin);
+    }
+    else
+    {
+        nrf_gpio_pin_set(p_config->sck_pin);
+    }
+    nrf_gpio_cfg(p_config->sck_pin,
+                 NRF_GPIO_PIN_DIR_OUTPUT,
+                 NRF_GPIO_PIN_INPUT_CONNECT,
+                 NRF_GPIO_PIN_NOPULL,
+                 NRF_GPIO_PIN_S0S1,
+                 NRF_GPIO_PIN_NOSENSE);
+    // - MOSI (optional) - output with initial value 0,
+    if (p_config->mosi_pin != NRFX_SPIM_PIN_NOT_USED)
+    {
+        mosi_pin = p_config->mosi_pin;
+        nrf_gpio_pin_clear(mosi_pin);
+        nrf_gpio_cfg_output(mosi_pin);
+    }
+    else
+    {
+        mosi_pin = NRF_SPIM_PIN_NOT_CONNECTED;
+    }
+    // - MISO (optional) - input,
+    if (p_config->miso_pin != NRFX_SPIM_PIN_NOT_USED)
+    {
+        miso_pin = p_config->miso_pin;
+        nrf_gpio_cfg_input(miso_pin, (nrf_gpio_pin_pull_t)NRFX_SPIM_MISO_PULL_CFG);
+    }
+    else
+    {
+        miso_pin = NRF_SPIM_PIN_NOT_CONNECTED;
+    }
+    p_cb->miso_pin = p_config->miso_pin;
+    // - Slave Select (optional) - output with initial value 1 (inactive).
+
+    // 'p_cb->ss_pin' variable is used during transfers to check if SS pin should be toggled,
+    // so this field needs to be initialized even if the pin is not used.
+    p_cb->ss_pin = p_config->ss_pin;
+
+    if (p_config->ss_pin != NRFX_SPIM_PIN_NOT_USED)
+    {
+        if (p_config->ss_active_high)
+        {
+            nrf_gpio_pin_clear(p_config->ss_pin);
+        }
+        else
+        {
+            nrf_gpio_pin_set(p_config->ss_pin);
+        }
+        nrf_gpio_cfg_output(p_config->ss_pin);
+#if NRFX_CHECK(NRFX_SPIM_EXTENDED_ENABLED)
+        if (p_config->use_hw_ss)
+        {
+            p_cb->use_hw_ss = p_config->use_hw_ss;
+            nrf_spim_csn_configure(p_spim,
+                                   p_config->ss_pin,
+                                   (p_config->ss_active_high == true ?
+                                        NRF_SPIM_CSN_POL_HIGH : NRF_SPIM_CSN_POL_LOW),
+                                   p_config->ss_duration);
+        }
+#endif
+        p_cb->ss_active_high = p_config->ss_active_high;
+    }
+
+#if NRFX_CHECK(NRFX_SPIM_EXTENDED_ENABLED)
+    // - DCX (optional) - output.
+    if (p_config->dcx_pin != NRFX_SPIM_PIN_NOT_USED)
+    {
+        nrf_gpio_pin_set(p_config->dcx_pin);
+        nrf_gpio_cfg_output(p_config->dcx_pin);
+        nrf_spim_dcx_pin_set(p_spim, p_config->dcx_pin);
+    }
+
+    // Change rx delay
+    nrf_spim_iftiming_set(p_spim, p_config->rx_delay);
+#endif
+
+
+    nrf_spim_pins_set(p_spim, p_config->sck_pin, mosi_pin, miso_pin);
+    nrf_spim_frequency_set(p_spim, p_config->frequency);
+    nrf_spim_configure(p_spim, p_config->mode, p_config->bit_order);
+
+    nrf_spim_orc_set(p_spim, p_config->orc);
+
+    nrf_spim_enable(p_spim);
+
+    if (p_cb->handler)
+    {
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),
+            p_config->irq_priority);
+        NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+    }
+
+    p_cb->transfer_in_progress = false;
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+    err_code = NRFX_SUCCESS;
+    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+}
+
+

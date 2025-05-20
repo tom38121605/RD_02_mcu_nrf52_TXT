@@ -1,0 +1,22 @@
+
+0. 修改start为0x00 （在ses的 魔法棒里面修改）
+    。右键单击 project \options \ 左上角的下拉选Common（code上面）\code \linker \section placement macros \FLASH_START \设为0x00
+
+1. 屏蔽synch，屏蔽PLUGOFF, 屏蔽eeprom校准  （在ommo_config.h中修改）
+
+    #define SENSORS_MAG_CALIBRATION_ON
+    #define HOT_PLUG_OFF
+    #define RUN_WITHOUT_SYNC 
+
+
+2. 频率修改  （在ommo_config.h中修改）
+
+   #define OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD     (15984 * 1) //~1000hz, divisible by 3 for basestation and 16 for uart clock
+   #define ADC_CARTES_OSR_VALUE      256        
+
+
+3. gain修改  （在adc_cartes_twi_sampler.cpp中修改）
+
+   if(device_present) device_present = senors_twi_basic_instance[port]->write_byte_blocking(ADC_CARTES_SLAVE_ADDR, ADC_CARTES_REG_20, ADC_CARTES_REG_20_VAL(64)) 
+      == NRF_SUCCESS; //default at 64x
+  

@@ -1,29 +1,28 @@
  
 
-说明：在adc_cartes_setup_PPI_start_sample_packet中，发送comman指令 0x03，xyzt （没隔一段时间发送一次0x83， set + xyzt）
+说明：在adc_cartes_setup_PPI_start_sample_packet中，发送comman指令 0x03，xyzt 读取xyzt（再每隔一段时间发送一次0x83， set + xyzt）
+
 说明：在adc_cartes_start_data_read中，读取xyzt
+
 说明：通过current_output_data发送到pc  （待整理）
 
-
-current_output_data
-
-============================================= asic 回调函数 init =======================================================
+current_output_data  -- frm 11952
 
 
-flow: (通过twi0的irq，最后运行的是 adc_cartes_state_change  )
+============================================= asic 回调函数和PPI3 init =======================================================
+
+
+flow：
 
    main -- adc_cartes_init -- (sample_set_ready_callback = sample_set_ready) -- (hot_plug_event_callback = Sample timestamp callback)
-   --  (senors_twi_basic_config[0].twi_basic_event_listener = twi_basic_event_handler) -- (*.twi_basic_event_listener_context = 0)
-   -- twi_basic::acquire_i2c -- nrfx_twim_init -- (p_cb->handler = static_event_handler) -- (p_cb->p_context = twi_basic::)
-
-  nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler
-  -- (our_config.twi_basic_event_listener) -- twi_basic_event_handler -- adc_cartes_state_change 
-
-   main -- adc_cartes_init --  twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_prs_acquire -- (p_box->handler(twi0硬件地址) = nrfx_twim_0_irq_handler) 
 
 
-数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
-数据流： sample_timer_event_handler --> sample_event_callbacks[0]
+
+数据流： sample_set_ready            -->  sample_set_ready_callback
+数据流： hot_plug_callback           -->  hot_plug_event_callback
+数据流： sample_timer_event_handler  -->  sample_event_callbacks[0]   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
+
+
 
 ----------------------------------------------------------------------
 
@@ -35,24 +34,27 @@ main()
 
 -------------------------
 
+功能：把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件 、TWIM0的TX任务关联到PPI3
+
 全局变量：
 #define NRFX_TWIM_INSTANCE(0)                                                                                          
     .p_twim       = NRF_TWIM0,             
     .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
 
 
-功能：选择I2C0, 配置I2C引脚，频率，回调函数
-      把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件 、TWIM0的TX任务关联到PPI3
+数据流： sample_set_ready     -->  sample_set_ready_callback
+数据流： hot_plug_callback    -->  hot_plug_event_callback
+数据流： sample_timer_event_handler --> sample_event_callbacks[0]   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
 
-数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
-数据流： sample_timer_event_handler --> sample_event_callbacks[0]
 参数：sample_set_ready, hot_plug_callback, rtc_timeout
 adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
 
     sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
     hot_plug_event_callback = hot_plug_cb;                             //hot_plug_callback
+
     
-    //timestamp_add_sample_event_callback(sample_timer_event_handler); 
+    //设置timer3的中断服务函数
+    //timestamp_add_sample_event_callback(sample_timer_event_handler);   //是在timer3的中断里面用的 （如果放在timer3的初始化中更合适）
         sample_event_callbacks[0] = sample_timer_event_handler;  
         sample_event_callbacks_num++;
 
@@ -91,69 +93,66 @@ adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeou
     set_reset_cnt = SET_RESET_SAMPLE_INTERVAL;   //do a set/reset first
 
 
-    for(i=0; i<1; i++)
-    
-        senors_twi_basic_instance[i] = new twi_basic(twi_peripherals[i], rtc_timeout_g);  //twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral
+    ......
 
-        senors_twi_basic_config[i].twi_basic_event_listener = twi_basic_event_handler;    //事件   
-        senors_twi_basic_config[i].twi_basic_event_listener_context = 0;   //this?
-        senors_twi_basic_config[i].frequency = NRF_TWIM_FREQ_400K;
-        senors_twi_basic_config[i].sda_pin = twi_sda_pins[i];                                 //P0.6
-        senors_twi_basic_config[i].scl_pin = twi_scl_pins[i];                                 //P0.11
-        senors_twi_basic_config[i].scl_push_pull = false;
 
-        senors_twi_basic_instance[i]->acquire_i2c(&senors_twi_basic_config[i]);  //twi初始化
-    
-    
+    //分配一个空闲的PPI分组GROUP1
     //nrfx_ppi_group_alloc(&ppi_group_sample_start_spi);
         ppi_group_sample_start_spi = NRF_PPI_CHANNEL_GROUP1;
 
 
-    for(i=0; i<1; i++)
-    
-        twi_xfer_done[i] = true;
+     twi_xfer_done[0] = true;
 
-        //transfer_start_task_addr = nrfx_twim_start_task_get(&twi_peripherals[i], NRFX_TWIM_XFER_TX);      
-            transfer_start_task_addr = NRF_TWIM0 + NRFX_TWIM_XFER_TX;
+     //取得TWIM0_TX的任务地址
+     //transfer_start_task_addr = nrfx_twim_start_task_get(&twi_peripherals[0], NRFX_TWIM_XFER_TX);      
+          transfer_start_task_addr = NRF_TWIM0 + NRFX_TWIM_XFER_TX;
 
-        //把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件 、TWIM0的TX任务关联到PPI3
-        adc_cartes_add_task_to_ppi_start_transfer(transfer_start_task_addr);                                    
+
+     //把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件 、TWIM0的TX任务关联到PPI3
+     //adc_cartes_add_task_to_ppi_start_transfer(transfer_start_task_addr);   
+         ppi_channel_start_transfer[0] = PPI_CHANNEL3;   
+                              
+         NRF_PPI->CH[1].EEP = NRF_TIMER3 + NRF_TIMER_CC_CHANNEL0;         //TIMER3的COMPARE0事件
+         NRF_PPI->CH[1].TEP = NRF_TWIM0 + NRFX_TWIM_XFER_TX;              //TWIM0的TX任务
+
 
 
 -----
 
-功能：把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件 、TWIM0的TX任务关联到PPI3
+功能：把PPI3装入到GROUP1中，把TIMER3的COMPARE0事件、TWIM0的TX任务关联到PPI3
 
 参数：NRF_TWIM0 + NRFX_TWIM_XFER_TX
 adc_cartes_add_task_to_ppi_start_transfer( task_addr)
 
+说明：因这里只调用1次，固ppi_start_transfer_tasks_assigned没有作用，可以忽略
 
-    ppi_already_allocated = (ppi_start_transfer_tasks_assigned%2) != 0;  //no
+    nrf_ppi_channel_t    ppi_channel;                  //局部变量
 
-    if(ppi_already_allocated)  //no
+    if((ppi_start_transfer_tasks_assigned%2) != 0)  //no
     
         ......
     
     else  //yes
     
+        //取得空闲的ppi通道PPI3
         //nrfx_ppi_channel_alloc(&ppi_channel);
            ppi_channel = PPI_CHANNEL3;
 
+        //把PPI3装入到GROUP1中
         //nrfx_ppi_channel_include_in_group(ppi_channel, ppi_group_sample_start_spi);
-           NRF_PPI->CHG[1] = 1<<3;                                                      //把PPI3装入到GROUP1中
+           NRF_PPI->CHG[1] = 1<<3;                                                      
 
-
+        //把PPI3赋值给全局变量ppi_channel_start_transfer[0]
         //ppi_channel_start_transfer[ppi_start_transfer_tasks_assigned/2] = ppi_channel;
-           ppi_channel_start_transfer[0] = 3; 
+           ppi_channel_start_transfer[0] = PPI_CHANNEL3; //3
 
-
+        //把TIMER3的COMPARE0事件、TWIM0的TX任务关联到PPI3
         //nrfx_ppi_channel_assign(ppi_channel, timestamp_get_sample_event_address(), task_addr);
         //   nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel]);
                 NRF_PPI->CH[1].EEP = NRF_TIMER3 + NRF_TIMER_CC_CHANNEL0;         //TIMER3的COMPARE0事件
                 NRF_PPI->CH[1].TEP = NRF_TWIM0 + NRFX_TWIM_XFER_TX;              //TWIM0的TX任务
 
     ppi_start_transfer_tasks_assigned++;
-
 
 
 -----
@@ -181,175 +180,14 @@ nrfx_ppi_group_alloc(  * p_group)
           mask &= ~group_to_mask(group);
 
     
- -------
 
-twi_basic::acquire_i2c( *twi_basic_config)
 
-    ......
+============================================= asic 配置reg === init =======================================================
 
-    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
 
+flow：
 
------------------
 
-参数：&twi_peripheral, &config, static_event_handler, this
-nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
-
-    ......
-
-    p_cb->handler         = event_handler;  //static_event_handler
-    p_cb->p_context       = p_context;      //this , 指twi_basic::
-
-    ......
-
-
-
-
-=====----------------------------------------------------------
-
-
-
-可作为硬件irq中断入口
-nrfx_twim_0_irq_handler(  )
- 
-    twim_irq_handler(NRF_TWIM0, &m_cb[0]);
-
-
-------
-
-
-可作为硬件irq中断入口
-twim_irq_handler(  * p_twim,  * p_cb)
-
-    ......
-
-
-    if (!(p_cb->flags & NRFX_TWIM_FLAG_NO_XFER_EVT_HANDLER) || p_cb->error)
-     
-        //p_cb->handler(&event, p_cb->p_context);
-           static_event_handler(&event, twi_basic:: )
-  
-------------
-
-参数：event, twi_basic::
-static_event_handler(  *p_event, *p_context)
-
-    //p_context->twim_event_handler(p_event);
-         twi_basic::twim_event_handler(p_event);
-
-
--------
-
-
-twi_basic::twim_event_handler(  *p_event)
-
-    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))
-    
-        //Stop timeout timer
-        APP_ERROR_CHECK( rtc_timeout->disable_timeout(rtc_timeout_channel) );
-
-        switch(p_event->type)
-        
-          case NRFX_TWIM_EVT_DONE:
-            last_event = TWI_BASIC_EVT_DONE;   
-            break;
-
-          case NRFX_TWIM_EVT_ADDRESS_NACK:
-          case NRFX_TWIM_EVT_BUS_ERROR:
-            last_event = TWI_BASIC_EVT_ADDRESS_NACK;
-            break;
-
-          case NRFX_TWIM_EVT_DATA_NACK:
-            last_event = TWI_BASIC_EVT_DATA_NACK;
-            break;
-
-          default:
-            APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
-            break;
-        
-
-        if(!disable_callback)
-
-            //our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
-                 twi_basic_event_handler(last_event, 0);
-
-------
-
-
-//直接由中断入口函数而来，可直接当成中断入口函数   
-参数：last_event, 0
-twi_basic_event_handler( p_event, *p_context)
-
-    twi_xfer_done[0] = true;
-
-    //if(adc_cartes_rw_finished() && !disable_twi_callback)
-       if(!twi_xfer_done[0] && !disable_twi_callback)
-    
-           adc_cartes_state_change();
- 
-
-------
-
-
-数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
-adc_cartes_state_change()
- 
-    ......(忽略，见下面read reg data)
-
-
-
-==========------------------------------------------------------------------------------
-
-
-adc_cartes_init(  sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
-
-    ......
-
-    senors_twi_basic_instance[i]->acquire_i2c(&senors_twi_basic_config[i]);  //twi初始化
-
-
-
-----------------
-
-twi_basic::acquire_i2c( *twi_basic_config)
-
-    ......
-
-    nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
-
-
------------------
-
-参数：&twi_peripheral, &config, static_event_handler, this
-nrfx_twim_init( p_instance, * p_config,  event_handler,  p_context)
-
-    ......
-
-    p_cb->handler         = event_handler;  //static_event_handler
-
-    ......
-
-   irq_handlers[0] = { nrfx_twim_0_irq_handler };
- 
-   nrfx_prs_acquire(p_instance->p_twim,  irq_handlers[0]);
-
-
-------------
-
-参数： NRF_TWIM0,  nrfx_twim_0_irq_handler
-nrfx_prs_acquire( * p_base_addr,  irq_handler)
-
-    ......
-
-    prs_box_t * p_box = prs_box_get(p_base_addr);  //NRF_TWIM0
-
-    p_box->handler  = irq_handler;   //nrfx_twim_0_irq_handler  //把中断函数的指针，保存到twi块的硬件地址
-    p_box->acquired = true;
-
-
-
-
-============================================= asic 配置reg init =======================================================
 
 flow：
 
@@ -582,20 +420,6 @@ adc_cartes_start_state_machine()
 -------------------------------------
 
 
-//直接由中断入口函数而来，可直接当成中断入口函数  （参考10036f的debug02_sensor.txt）
-twi_basic_event_handler( p_event, *p_context)
-
-    uint32_t twi_channel = p_context;
-
-    twi_xfer_done[twi_channel] = true;
-
-    //if(adc_cartes_rw_finished() && !disable_twi_callback)
-       if(!twi_xfer_done[0] && !disable_twi_callback)
-    
-        adc_cartes_state_change();
- 
-
-------
 
 
 数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
@@ -660,7 +484,7 @@ adc_cartes_state_change()
                     wait_for_callback = true;
                 
                 else                                
-                    swap_sample_buffers_and_flag_sample_callback();   //swap buffers
+                    swap_sample_buffers_and_flag_sample_callback();   //swap buffers        //here
                     current_state = SETUP_ADC_START_SAMPLE;
 
 
@@ -966,8 +790,28 @@ usb_serial_event_queue_process()
 
 
 
+ 
+
+ 
+
+
+
+
+
   
 
+==========================================参考2================================================
+
+    
+
+-----
+
+adc_cartes_rw_finished()
+
+    for(int32_t i=0; i<OMMO_CARTES_ADC_NUM_PORTS; i++)  //1
+    
+        if(!twi_xfer_done[i]) 
+           return false;
 
 
 

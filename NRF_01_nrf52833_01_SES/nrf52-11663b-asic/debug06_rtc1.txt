@@ -1,5 +1,5 @@
  
-待察1： rtc1的具体作用
+待察1： rtc1的具体作用  (或跟task_loop_timer_function有关)
 
 
 =================================== rtc1 ===init===============================
@@ -78,6 +78,16 @@ app_timer_init( )
 
 
 -----
+
+全局变量： m_rtc_inst
+
+    DRV_RTC_INSTANCE(1)                                       
+                                                                 
+    .p_reg            = NRF_RTC1,                
+    .irq              = RTC1_IRQn,             
+    .instance_id      = DRV_RTC_RTC1_INST_IDX,  //0
+    .cc_channel_count = RTC1_CC_NUM,            //4
+
 
 功能：使能COMPARE[1]的事件， 使能COMPARE[1]的中断，设置cc[1]值
 

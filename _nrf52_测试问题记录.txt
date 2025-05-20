@@ -15,7 +15,7 @@
 
  
  
-            #define nrfx_uarte_0_irq_handler    UARTE0_UART0_IRQHandler  //nrfx_irqs_nrf52840.h
+            #define nrfx_uarte_0_irq_handler    UARTE0_UART0_IRQHandler    //nrfx_irqs_nrf52840.h
 
 
 

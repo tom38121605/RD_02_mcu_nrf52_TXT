@@ -2,6 +2,7 @@
 
 timer3的时钟源是HFCLK16M, 预分频是0，则： f = 16M / 2^0 = 16M
 
+timer3的定时时间： ( 15984 + n ) * 1/16M = 16k/16M = 1ms
 
 
 =================================== timer3 ===init===============================
@@ -24,9 +25,9 @@ flow:
 main
      
       //设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
-      取得空闲的CC0通道，捕获定时器值到cc0, 取得cc0值并计算新的cc0值，使能 COMPARE[0] 中断，设置新的cc0值。
-      分配一个空闲的ppi group0并打开它 ，
-      再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
+      取得空闲的CC0通道，捕获定时器值到cc0, 取得cc0值并加15984计算新的cc0值，使能 COMPARE[0] 中断，设置新的cc0值。
+       ##分配一个空闲的ppi group0并打开它 ，  （没用，忽略）
+       ##再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1   （没用，忽略）
 
     timestamp_init_with_internal_sample_event(3);    //优先级3
 
@@ -38,9 +39,9 @@ main
 -----------------
 
 功能：设置timer3的irq总中断优先级，使能timer3的irq总中断，定时器模式，bitwidth为32位，预分频为0，开启timer3。
-      取得空闲的CC0通道，捕获定时器值到cc0并计算新的sample value，使能 COMPARE[0] 中断，设置新的cc0值。
-      分配一个空闲的ppi group0并打开它 ，
-      再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1
+      取得空闲的CC0通道，捕获定时器值到cc0并加15984计算新的sample value，使能 COMPARE[0] 中断，设置新的cc0值。
+      ##分配一个空闲的ppi group0并打开它 ，  （没用，忽略）
+      ##再分配一个空闲的PPI1(channel1),把TIMER3的COMPARE0事件 、PPI组 GROUP0的 DIS任务 关联到PPI1，使能PPI1   （没用，忽略）
 
 全局变量：timer_timestamp
 
@@ -86,7 +87,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
            p_reg->CC[0];                           //取得CC值
 
 
-    //捕获定时器计数器值到CC0，并计算新的sample_event_trigger_value （用于设置将来的cc0值）
+    //捕获定时器计数器值到CC0，加15984并计算新的sample_event_trigger_value （用于设置将来的cc0值）
     //sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
     //  sample_event_trigger_value = nrf_timer_cc_read( NRF_TIMER3, 0 ) + 15984;
            sample_event_trigger_value = p_reg->CC[0] + 15984;
@@ -187,7 +188,6 @@ nrfx_ppi_group_alloc(  * p_group)
 
           mask &= ~group_to_mask(group);
  
-
  
 
 ------
@@ -273,8 +273,6 @@ nrfx_timer_init( *p_instance, * p_config, timer_event_handler)
 
 
 
-
-
 ========================================== timer3 ===irq=========================================
 
 flow:
@@ -286,6 +284,10 @@ flow:
 -----------------------------------------------------------------------
 
 可看作是硬件中断入口
+
+功能：進入T3的COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+      关闭 COMPARE[0]中断，设置cc值,循环计算新的cc值，直到delta值>0，使能 COMPARE[0] 中断，设置cc[0]值
+      ？
 
 全局变量：timer_timestamp                               
     .p_reg            = NRF_TIMER3,             
@@ -301,7 +303,8 @@ nrfx_timer_3_irq_handler( )
 
 -----
 
-功能：進入RTC2的COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+功能：進入T3的COMPARE0中断，清该中断标志，进入中断服务函数timestamp_timer_event_handler
+      关闭 COMPARE[0]中断，设置cc值,循环计算新的cc值，直到delta值>0，使能 COMPARE[0] 中断，设置cc[0]值
       ？
 
 参数：NRF_TIMER3,  &m_cb[3],   6
@@ -334,7 +337,8 @@ irq_handler(  * p_reg, * p_cb,  channel_count)
 
 ----------
 
-功能： ？
+功能： 关闭T3的 COMPARE[0]中断，设置cc值,循环计算新的cc值，直到delta值>0，使能 COMPARE[0] 中断，设置cc[0]值
+       ？
 
 参数：NRF_TIMER_EVENT_COMPARE0，0
 timestamp_timer_event_handler( event_type,  * p_context)
@@ -352,7 +356,7 @@ timestamp_timer_event_handler( event_type,  * p_context)
                         nrfx_timer_compare(&timer_timestamp, 0, p_reg->CC[0]+15984 + 0, false);     //关闭 COMPARE[0]中断，设置cc值
 
 
-            //循环计算，直到delta值>0   （待理解）
+            //循环计算新的cc值，直到delta值>0   （待理解）
             do            
                 sample_event_trigger_value += OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;  //15984
             
@@ -361,41 +365,21 @@ timestamp_timer_event_handler( event_type,  * p_context)
              while( AAA > 0);
 
 
-
             //清除COMPARE[0]事件标志 ，使能 COMPARE[0] 中断，设置cc[0]值
             //nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
                 nrfx_timer_compare(&timer_timestamp, 0, p_reg->CC[0]+15984 + 0, true);     //使能 COMPARE[0]中断，设置cc值
-        
-
-
-        //打开通道组GROUP0
+ 
+        //？， 打开通道组GROUP0   
         for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
-            //sample_event_callbacks[i](event_type, p_context);              //参考： debug02_ASIC_reg.txt
-            //  sample_timer_event_handler(NRF_TIMER_EVENT_COMPARE0, 0);       //i=0
-                   NRF_PPI->TASKS_CHG[0].EN = 1;                                        //打开通道组GROUP0
+            //sample_event_callbacks[i](event_type, p_context);                //参数没有用到
+            //  sample_timer_event_handler(NRF_TIMER_EVENT_COMPARE0, 0);       //i=0  参考： debug02_ASIC_reg.txt
 
-    
+                   //待理解
+                   //timestamp_get_last_sample_event_timestamp_basestation_units(current_timestamp, current_timestamp_offset);    //0,0 ,   ?
+                        timestamp_get_last_sample_event_timestamp_basestation_units(&, &);
 
-----
-
-功能：？，  打开通道组GROUP0
-
-参数：NRF_TIMER_EVENT_COMPARE0，0                        //参数没有用到
-sample_timer_event_handler( event_type,  *p_context)
-
-    last_timestamp = current_timestamp;                //0
-    last_timestamp_offset = current_timestamp_offset;  //0
-
-    //Save the timestamp/encoder for the next packet (after packet in process)
-    //timestamp_get_last_sample_event_timestamp_basestation_units(current_timestamp, current_timestamp_offset);  //0,0
-       timestamp_get_last_sample_event_timestamp_basestation_units(&, &);
-
-
-    //Re enable encoder sampling
-    //timestamp_reenable_disabled_captures();
-    //  nrf_ppi_group_enable(ppi_group_disable_timestamp_capture);  //NRF_PPI_CHANNEL_GROUP0; //0
-           NRF_PPI->TASKS_CHG[0].EN = 1;                            //打开通道组GROUP0
-
+                   NRF_PPI->TASKS_CHG[0].EN = 1;                                // 打开通道组GROUP0    （无用，忽略 ）
+             
 
 -----
 
@@ -406,16 +390,16 @@ timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timest
 
       //timestamp = timestamp_get_last_sample_event_timestamp() + timestamp_synch_offset;
       //  timestamp = (last_sample_event_trigger_value + 1) + timestamp_synch_offset;
-             current_timestamp = (p_reg->CC[0] + 15984 + 1) + timestamp_synch_offset;
+             current_timestamp = (NRF_TIMER3->CC[0] + 15984 + 1) + timestamp_synch_offset;
 
       if(!timestamp_synch_received)
-          timestamp_offset = 0x00;
+          current_timestamp_offset = 0x00;
 
       else if(timestamp_synch_offset == 0x00)
-          timestamp_offset = 0x01;
+          current_timestamp_offset = 0x01;
 
       else
-          timestamp_offset = timestamp_synch_offset;
+          current_timestamp_offset = timestamp_synch_offset;
       
       timestamp_synch_received = false;
 
@@ -423,7 +407,7 @@ timestamp_get_last_sample_event_timestamp_basestation_units( &timestamp, &timest
 
 -----
 
-//待理解，先忽略跳过
+//循环计算，直到delta值>0   （待理解，先忽略）
 
 参数：p_reg->CC[0] + 100, sample_event_trigger_value, FFFFffff
 calculate_wrapped_delta(  first,  second,  period)
@@ -442,15 +426,13 @@ calculate_wrapped_delta(  first,  second,  period)
 -----
 
 参数： &timer_timestamp, 0 
-nrfx_timer_capture( * const p_instance,  cc_channel) 
+nrfx_timer_capture( *p_instance,  cc_channel) 
 
     //nrf_timer_task_trigger( NRF_TIMER3,  nrf_timer_capture_task_get(0));
         NRF_TIMER3 + TASKS_CAPTURE[0] =1; //启动CAPTURE[0]任务，把定时器的计数值，捕获到cc寄存器中
 
     return nrf_timer_cc_read( NRF_TIMER3, cc_channel);   //p_reg->CC[0]; //取得CC值
  
-
-
 
 ------
 
@@ -465,7 +447,12 @@ nrfx_timer_compare( *p_instance, cc_channel, cc_value, enable_int)
 
     if (enable_int)  //yes
      
-        .....
+        //nrf_timer_event_clear(p_instance->p_reg, nrf_timer_compare_event_get(cc_channel));
+        //  nrf_timer_event_clear( NRF_TIMER3 , nrf_timer_compare_event_get(cc_channel));
+               *(NRF_TIMER3 + EVENTS_COMPARE[0])=0;                 //清除COMPARE[0]事件标志  
+
+        //nrf_timer_int_enable(p_instance->p_reg, timer_int);
+           p_reg->INTENSET = 1<<16;                                 //使能 COMPARE[0] 中断
 
     else
         //nrf_timer_int_disable(p_instance->p_reg, timer_int);
@@ -517,38 +504,7 @@ nrfx_ppi_channel_alloc(  * p_channel)
 
          mask &= ~(1<<channel);  //mask.0=0,  清零已测试过的通道，继续下一个通道
 
-
-
---------------------------------
-
-uint32_t timestamp_create_sample_event_offset_event(uint32_t offset)
-
-    NRFX_ASSERT(next_free_sample_time_offset_index < OMMO_TIMESTAMP_MAX_SAMPLE_TIME_OFFSET_CHANNELS);
-
-    uint8_t sample_time_offset_index = next_free_sample_time_offset_index;
-    next_free_sample_time_offset_index++;
-
-    sample_time_offset_cc_channel[sample_time_offset_index] = timestamp_get_capture_compare_channel();
-    sample_time_offset_time[sample_time_offset_index] = offset;
-
-    return nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_time_offset_cc_channel[sample_time_offset_index]]);
-
-
-
-------
-
-uint32_t timestamp_add_sample_event_callback(nrfx_timer_event_handler_t func)
-
-    if(sample_event_callbacks_num < TIMESTAMP_MAX_SAMPLE_EVENT_CALLBACKS)
-    {
-        sample_event_callbacks[sample_event_callbacks_num] = func;
-        sample_event_callbacks_num++;
-
-        return NRF_SUCCESS;
-    }
-
-    return NRF_ERROR_NO_MEM;
-
+ 
 
 
 

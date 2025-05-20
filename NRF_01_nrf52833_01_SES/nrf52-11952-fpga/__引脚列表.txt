@@ -24,7 +24,7 @@ P0.08  --  CS4  K
 P0.26  --  UARTE DATA       //repeat MI0    //注释后该UARTE1也可以正常运行，忽略跳过
 P0.23  --  UARTE UNUSED     //null
 
-P1.02  --  UARTE SYNCH  K
+P1.02  --  UARTE SYNCH  K             // UARTE1 ？ UARTE2 ？
 
 
 //Unused pins
@@ -50,6 +50,7 @@ P0.30  --  ADC_V  K
 P1.01  --  BUS_OE_UC  K
 P1.04  --  POWER_ON  K
 P0.22  --  ISET2  K
+
 
 
 

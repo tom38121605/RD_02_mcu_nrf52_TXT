@@ -6,6 +6,17 @@
 
 说明：跟rtc1有关
 
+flow：
+
+    main -- app_timer_create -- app_timer_start -- timer_req_schedule -- nrf_atfifo_item_alloc -- nrf_atfifo_item_put -- timer_request_proc_trigger
+
+
+
+数据流： task_loop_timer_handler --> task_loop_timer_id.handler
+数据流： 0 --> p_timer.p_context
+
+
+-------------------
 
 main
 
@@ -29,37 +40,34 @@ app_timer_create( * p_timer_id,  mode, timeout_handler)
     p_t->repeat_period = (mode == APP_TIMER_MODE_REPEATED) ? 1 : 0;   //1
 
 
-
 ------
+
+功能： 或设置task_loop的定时时间为100ms
+数据流： 0 --> p_timer.p_context
 
 参数：task_loop_timer_id, 32768/10, NULL
 app_timer_start( * p_timer,  timeout_ticks, * p_context)
 
     p_t = p_timer;
 
-
     //if (APP_TIMER_IS_IDLE(p_t))
-      if (timer->end_val == APP_TIMER_IDLE_VAL)    //yes
+      if (timer->end_val == APP_TIMER_IDLE_VAL)    //yes, ffff ffff ffff ffff
 
         //p_t->end_val = get_now() + timeout_ticks;
             p_t->end_val = RTC1->COUNTER + 32768/10;
 
-
         cont = true;
     
     else
-
         cont = false;
 
  
-    if (!cont)
-    
+    if (!cont)    
         return NRF_SUCCESS;
-   
 
     p_t->p_context = p_context;   //0
 
-    if (p_t->repeat_period)
+    if (p_t->repeat_period)  //yes
     
         p_t->repeat_period = timeout_ticks;   //32768/10
       
@@ -69,29 +77,68 @@ app_timer_start( * p_timer,  timeout_ticks, * p_context)
 
 ---
 
-功能：？
+全局变量： m_rtc_inst
+ 
+    DRV_RTC_INSTANCE(1)                                       
+                                                                 
+    .p_reg            = NRF_RTC1,                
+    .irq              = RTC1_IRQn,             
+    .instance_id      = DRV_RTC_RTC1_INST_IDX,  //0
+    .cc_channel_count = RTC1_CC_NUM,            //4
+
+
+功能：？，软件触发RTC1_IRQn中断 
 
 参数：TIMER_REQ_START ，task_loop_timer_id
 timer_req_schedule(  type,  * p_timer)
  
     nrf_atfifo_item_put_t     fifo_ctx;
 
-
     p_req = nrf_atfifo_item_alloc(m_req_fifo, &fifo_ctx);
  
-    if (p_req)
+    if (p_req)  //yes
    
         p_req->type    = type;
         p_req->p_timer = p_timer;
 
-        if (nrf_atfifo_item_put(m_req_fifo, &fifo_ctx))
+
+        AAA = nrf_atfifo_item_put(m_req_fifo, &fifo_ctx);
+        if ( AAA )  //yes
          
-            timer_request_proc_trigger();
-         
-        else
-        
-            NRF_LOG_WARNING("Scheduling interrupted another scheduling.");
-        
+            //timer_request_proc_trigger();
+            //  drv_rtc_irq_trigger(&m_rtc_inst);
+            //   NVIC_SetPendingIRQ(RTC1_IRQn);
+                    NVIC->ISPR[(IRQn >> 5)] =  1 << (IRQn & 0x1F);    // 软件触发RTC1_IRQn中断 
+
+
+---
+
+
+参数：m_req_fifo, &fifo_ctx
+nrf_atfifo_item_alloc( *p_fifo, * p_context)
+
+    //AAA = nrf_atfifo_wspace_req(p_fifo, &(p_context->last_tail));
+       AAA = 汇编语言;
+
+    if ( AAA )   //yes
+    
+        p_item =    p_fifo->p_buf  + p_context->last_tail.pos.wr;
+
+        return p_item;
+
+
+---
+
+参数：m_req_fifo, &fifo_ctx
+nrf_atfifo_item_put( *p_fifo,   * p_context)
+
+    if ((p_context->last_tail.pos.wr) == (p_context->last_tail.pos.rd))
+
+        //nrf_atfifo_wspace_close(p_fifo);
+           汇编语言
+
+        return true;
+
 
 
 
@@ -101,7 +148,9 @@ timer_req_schedule(  type,  * p_timer)
 
 get_now()
 
-    now = m_base_counter + drv_rtc_counter_get(&m_rtc_inst);   //rtc1
+    //now = m_base_counter + drv_rtc_counter_get(&m_rtc_inst);   //rtc1
+       now = m_base_counter + RTC1->COUNTER;
+          
 
     if (now < m_stamp64)  
         now += (DRV_RTC_MAX_CNT + 1);      //FFF FFF + 1
@@ -114,13 +163,55 @@ get_now()
 
 
 
+flow：
+
+    ses_startup_nrf52833.s -- RTC1_IRQHandler -- drv_rtc_rtc_1_irq_handler --(m_handlers[0]) -- rtc_irq     //详见 debug06_rtc1.txt
+
+    rtc_irq -- rtc_update -- rtc_schedule -- timer_expire -- task_loop_timer_handler -- while -- task_loop_timer_function 
+
 
 
 --------------------------------------------
 
- task_loop_timer_handler( * p_context)
- 
-    task_loop_timer_execute = true;
+
+timer_expire( * p_timer)
+
+
+    if ((m_global_active == true) && (p_timer != NULL))
+
+        //AAA = get_now();
+           AAA = m_base_counter + RTC1->COUNTER;
+
+        if ( AAA >= p_timer->end_val)   //yes
+
+            if (p_timer->repeat_period == 0)            //no        
+                p_timer->end_val = APP_TIMER_IDLE_VAL;
+
+
+            //p_timer->handler(p_timer->p_context);
+            //  task_loop_timer_handler(0);
+                  task_loop_timer_execute = true;
+
+
+            if (p_timer->repeat_period && !APP_TIMER_IS_IDLE(p_timer))
+             
+                p_timer->end_val += p_timer->repeat_period;
+                cont = true;
+            
+            else             
+                cont = false;
+
+
+            if (cont)
+            
+                nrf_sortlist_add(&m_app_timer_sortlist, &p_timer->list_item);
+                ret = true;
+             
+        
+        else if (!APP_TIMER_IS_IDLE(p_timer))
+         
+            nrf_sortlist_add(&m_app_timer_sortlist, &p_timer->list_item);
+            ret = true;
  
 
 

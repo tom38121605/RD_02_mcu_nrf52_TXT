@@ -4,6 +4,30 @@
 #define OMMO_CARTES_ADC_SPI_SDA_PINS      {NRF_GPIO_PIN_MAP(0,6)} //CS0
 
 
+-----------------
+
+u32 twim_settings[] = { NRF_TWIM_FREQ_5p9K, NRF_TWIM_FREQ_9p8K, NRF_TWIM_FREQ_19p5K, NRF_TWIM_FREQ_29p3K, NRF_TWIM_FREQ_39p1K, NRF_TWIM_FREQ_100K,      //x-value
+                    NRF_TWIM_FREQ_162K, NRF_TWIM_FREQ_250K, NRF_TWIM_FREQ_400K, NRF_TWIM_FREQ_600K, NRF_TWIM_FREQ_800K };
+
+u32 twim_freqs[] = { 5900, 9800, 19500, 29300, 39100, 100000, 162000, 250000, 400000, 600000, 800000 };    //y-value
+
+
+typedef enum
+{
+    NRF_TWIM_FREQ_5p9K =  0x 001E 0000 ,
+    NRF_TWIM_FREQ_9p8K =  0x 0028 0000 ,
+    NRF_TWIM_FREQ_19p5K = 0x 0050 0000 ,
+    NRF_TWIM_FREQ_29p3K = 0x 0078 0000 ,
+    NRF_TWIM_FREQ_39p1K = 0x 00A0 0000 ,
+    NRF_TWIM_FREQ_100K =  0x 0198 0000 ,  
+    NRF_TWIM_FREQ_162K =  0x 029F 0000 ,
+    NRF_TWIM_FREQ_250K =  0x 0400 0000 ,  
+    NRF_TWIM_FREQ_400K =  0x 0640 0000 ,   
+    NRF_TWIM_FREQ_600K =  0x 0916 DFB0 ,  // 571 kbps.
+    NRF_TWIM_FREQ_800K =  0x 0C38 0D40   
+
+} nrf_twim_frequency_t;
+
 
 ------------------
 

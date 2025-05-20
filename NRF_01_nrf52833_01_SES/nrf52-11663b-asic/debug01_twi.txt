@@ -1,18 +1,53 @@
 
-================================= twi  init =================================
+================================= twim0  init =================================
 
 flow:
 
-   main  -->  adc_cartes_init  -->  twi_basic::twi_basic  -->  twi_basic::acquire_i2c
+
+   main --> adc_cartes_init -- twi_basic::twi_basic -- twi_basic::acquire_i2c -- nrfx_twim_init -- nrfx_twim_enable -- update_timeout_scale
    
 
-数据流： NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
 
-数据流： sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
-数据流： hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
-数据流： our_config.twi_basic_event_listener = twi_basic_event_handler;    //twi_basic_event_handler
+数据流：NRFX_TWIM_INSTANCE(0)  -->  twi_peripherals[0]
+数据流：NRFX_TWIM_INSTANCE(0)  -->  senors_twi_basic_instance[0].twi_peripheral
+数据流：rtc_timeout            -->  senors_twi_basic_instance[0].rtc_timeout
+
+数据流：static_timeout_handler -->  callback_funcs[1] 
+数据流：this                   -->  callback_context[1]
+
+数据流：nrfx_twim_0_irq_handler --> irq_handlers[0]
+数据流：static_event_handler --> mcb[0]
+数据流：this (twi_basic::)  --> mcb[0].p_context
+
+数据流： twi_basic_event_handler  -->  senors_twi_basic_config[0].twi_basic_event_listener     
+数据流： 0                        -->  senors_twi_basic_config[0].twi_basic_event_listener_context   
+
+数据流： nrfx_twim_0_irq_handler  --> m_prs_box_0.handler
+
+
+相关变量：twim_timeout_scale = 10 * 2 * 32768 / 40k (400khz)    // 主要用于twi发送和接收时，给rtc2设置做超时判断 （知道这个概念就行，跳过）
+
+
 
 ------------------------------------------------------------------------------
+
+
+
+数据流： NRFX_TWIM_INSTANCE(0)  --> twi_peripherals[0]
+
+//nrfx_twim_t  twi_peripherals[]  = OMMO_CARTES_ADC_TWI_PERIPHERALS;
+   nrfx_twim_t  twi_peripherals[2]  ={ NRFX_TWIM_INSTANCE(0), NRFX_TWIM_INSTANCE(1) };
+
+ 
+---------------------------------------------------
+
+数据流：NRFX_RTC_INSTANCE(2)      -->  rtc_timeout.timeout_rtc     //参考debug07_rtc2.txt  （先跳过）
+
+//设置RTC2的优先级和分频系数，使能RTC2的irq，启动 RTC2
+rtc_timeout_gen   rtc_timeout( NRFX_RTC_INSTANCE(2) );  
+
+
+---------------------------------------------------
 
 main( )
 
@@ -22,58 +57,88 @@ main( )
 
 ---------------------------
 
-全局变量：
+功能：选择I2C0, 设置I2C引脚，设置I2C频率，设置I2C0的irq总中断优先级，使能I2C0的irq总中断
+      关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来） 
+
+全局变量：twi_peripherals[0]， enors_twi_basic_instance[0].twi_peripheral
 #define NRFX_TWIM_INSTANCE(0)                                                                                          
     .p_twim       = NRF_TWIM0,             
     .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
 
 
-功能：选择I2C0, 配置I2C引脚，频率，回调函数？
+全局变量: rtc_timeout.timeout_rtc   (private成员)
+NRFX_RTC_INSTANCE(2)                                   
+                                                              
+    .p_reg            =  NRF_RTC2 ,             
+    .irq              =  RTC2_IRQn ,          
+    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
+    .cc_channel_count =  RTC2_CC_NUM,           //4
+
+
+数据流：NRFX_TWIM_INSTANCE(0)  -->  twi_peripherals[0]
+数据流：NRFX_TWIM_INSTANCE(0)  -->  senors_twi_basic_instance[0].twi_peripheral
+数据流：rtc_timeout            -->  senors_twi_basic_instance[0].rtc_timeout
+
+数据流：static_timeout_handler -->  callback_funcs[1] 
+数据流：this                   -->  callback_context[1]
+
+数据流： twi_basic_event_handler  -->  senors_twi_basic_config[0].twi_basic_event_listener     
+数据流： 0                        -->  senors_twi_basic_config[0].twi_basic_event_listener_context                    
+
 参数：sample_set_ready, hot_plug_callback, rtc_timeout
-数据流：  NRFX_TWIM_INSTANCE(0) --> twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral 
-adc_cartes_init( sample_set_ready_callback_function,  hot_plug_cb,   *rtc_timeout_g)
+adc_cartes_init( sample_set_ready_callback_function,  hot_plug_cb,  *rtc_timeout_g)
 
-    sample_set_ready_callback = sample_set_ready_callback_function;   //sample_set_ready
-    hot_plug_event_callback = hot_plug_cb;                            //hot_plug_callback
-
-    timestamp_add_sample_event_callback(sample_timer_event_handler);   
-
-          ...... (跳过)
-
-     for(i=0; ... )
-
-        //senors_twi_basic_instance[i] = new twi_basic(twi_peripherals[i], rtc_timeout_g);
-           twi_peripheral = twi_instance;   //twi_peripherals[0] --> senors_twi_basic_instance[0].twi_peripheral
-           rtc_timeout = rtc_timeout_g;
-
-        senors_twi_basic_config[i].twi_basic_event_listener = twi_basic_event_handler;
-        senors_twi_basic_config[i].twi_basic_event_listener_context = 0;
-        senors_twi_basic_config[i].frequency = NRF_TWIM_FREQ_400K;
-        senors_twi_basic_config[i].sda_pin = twi_sda_pins[i];         //p0.6
-        senors_twi_basic_config[i].scl_pin = twi_scl_pins[i];         //p0,11
-        senors_twi_basic_config[i].scl_push_pull = false;
-
-        senors_twi_basic_instance[0]->acquire_i2c(&senors_twi_basic_config[i]);
+        ...... 
 
 
+        //senors_twi_basic_instance[0] = new twi_basic(twi_peripherals[0], rtc_timeout_g);
+        //   senors_twi_basic_instance[0] = new twi_basic( NRFX_TWIM_INSTANCE(0), rtc_timeout );
 
- 
+            twi_peripheral = NRFX_TWIM_INSTANCE(0);    //数据流：NRFX_TWIM_INSTANCE(0)  -->  senors_twi_basic_instance[0].twi_peripheral
+            rtc_timeout = rtc_timeout;                 //数据流：rtc_timeout            -->  senors_twi_basic_instance[0].rtc_timeout
+
+            //rtc_timeout->get_timeout_channel(&rtc_timeout_channel, static_timeout_handler, this) ;
+                rtc_timeout_channel = 1;  
+                callback_funcs[1] = static_timeout_handler;
+                callback_context[1] = this;
+
+
+        senors_twi_basic_config[0].twi_basic_event_listener = twi_basic_event_handler;
+        senors_twi_basic_config[0].twi_basic_event_listener_context = 0;
+
+        senors_twi_basic_config[0].frequency = NRF_TWIM_FREQ_400K;
+        senors_twi_basic_config[0].sda_pin = twi_sda_pins[0];         //p0.6
+        senors_twi_basic_config[0].scl_pin = twi_scl_pins[0];         //p0,11
+
+        senors_twi_basic_config[0].scl_push_pull = false;
+
+       //设置I2C引脚，设置I2C频率，设置I2C0的irq总中断优先级，使能I2C0的irq总中断
+         关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来） 
+        senors_twi_basic_instance[0]->acquire_i2c(&senors_twi_basic_config[0]);
+
+
 
 ------
 
-功能：I2C0初始化
+功能：设置I2C0的引脚，频率，中断优先级，使能I2c0
+       关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler
+       据频率,取得对应的分频值, 根据分频值，设置超时倍数
+
 参数：senors_twi_basic_config[0]
 twi_basic::acquire_i2c( *twi_basic_config)
 
     our_config = *twi_basic_config;
 
-    nrfx_twim_config_t config =    
+    config =    
        .scl                = our_config.scl_pin,      // p0.11
        .sda                = our_config.sda_pin,      // p0.6
        .frequency          = our_config.frequency,    // 400kHz
        .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
        .hold_bus_uninit    = false
-    
+
+
+    //设置I2C引脚，设置I2C频率，设置I2C0的irq总中断优先级，使能I2C0的irq总中断
+      关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来）    
     nrfx_twim_init(&twi_peripheral, &config, static_event_handler, this);
 
     nrf_gpio_cfg(our_config.scl_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP,   //输入，上拉
@@ -82,27 +147,294 @@ twi_basic::acquire_i2c( *twi_basic_config)
     nrf_gpio_cfg(our_config.sda_pin, NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_PULLUP,    //输入，上拉
                   NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
 
-    nrfx_twim_enable(&twi_peripheral);
+    nrfx_twim_enable(&twi_peripheral);  //使能I2c0
 
+
+    //根据频率,取得对应的分频值, 如设置NRF_TWIM_FREQ_400K，则得到的值是40 0000
+      根据分频值，设置超时倍数
     update_timeout_scale(our_config.frequency);
 
     i2c_acquired = true;
 
 
-----------
+--------------    
 
-static_event_handler(  *p_event,  *p_context)
+功能：根据频率,取得对应的分频值, 如设置NRF_TWIM_FREQ_400K，则得到的值是40 0000
+      根据分频值，设置超时倍数
+参数： our_config.frequency                //400KHz
+twi_basic::update_timeout_scale( freq)
 
-    ((twi_basic*)p_context)->twim_event_handler(p_event);
+    //Calculate timeout scale from given freq setting
+
+    //根据频率,取得对应的分频值, 如设置NRF_TWIM_FREQ_400K，则得到的值是40 0000
+    //bps = interpolate_table(twim_settings, twim_freqs, sizeof(twim_freqs)/sizeof(u32), freq);
+        bps = interpolate_table(twim_settings, twim_freqs, 11, freq);
+
+    //根据分频值，设置超时倍数
+    //twim_timeout_scale = CALC_I2C_TIMEOUT_SCALE(bps);
+    //  twim_timeout_scale = 10 * OMMO_TWI_BASIC_TIMEOUT_SCALE * RTC_TIMEOUT_GEN_FREQUENCY / bps;
+          twim_timeout_scale = 10 * 2 * 32768 / bps;
+
+
+
+---------------
+
+功能：根据频率,取得对应的值
+
+参数： twim_settings, twim_freqs,11, freq
+interpolate_table( *x_values, *y_values, table_len, x)
+ 
+    if (x < x_values[0])      //5p9k
+
+        //return x_values[0];   //5p9k   //196 6080  
+        return y_values[0];   //5900     
+
+    if (x > x_values[10])     //FREQ_800K
+
+        return y_values[10];  //80 0000
+
+    for (  i = 1; i<11; i++)
+    
+        if ( x <=x_values[i] )
+
+            x0 = x_values[i-1];  //5k9
+            y0 = y_values[i-1];  //5900
+            x1 = x_values[i];    //9k8
+            y1 = y_values[i];    //9800
+
+            //y = y0 + (x-x0)*(y1-y0)/(x1-x0);
+            y = 5900 + (x-5k9)*(9800-5900)/(9k8-5k9);
+
+            return y;
+
+
+---------------
+
+功能：设置I2C引脚，设置I2C频率，设置I2C0的irq总中断优先级，使能I2C0的irq总中断
+      关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来）
+
+全局变量：twi_peripherals[0]， enors_twi_basic_instance[0].twi_peripheral
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+数据流：nrfx_twim_0_irq_handler --> irq_handlers[0]
+数据流：static_event_handler --> mcb[0]
+数据流：this --> mcb[0].p_context
+
+参数：NRFX_TWIM_INSTANCE(0), config, static_event_handler, this
+nrfx_twim_init( *p_instance, * p_config, event_handler, p_context)
+ 
+    p_cb  = &m_cb[0];
+
+    irq_handlers[2] = { nrfx_twim_0_irq_handler,  nrfx_twim_1_irq_handler };
+
+    //关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来）
+    nrfx_prs_acquire( NRF_TWIM0, nrfx_twim_0_irq_handler );
+
+
+    p_cb->handler         = event_handler;  //static_event_handler
+    p_cb->p_context       = p_context;      //this , 指twi_basic::
+
+    p_cb->int_mask        = 0;
+    p_cb->repeated        = false;
+    p_cb->busy            = false;
+    p_cb->hold_bus_uninit = p_config->hold_bus_uninit;
+ 
+
+    TWIM_PIN_INIT(p_config->scl);  //设置P0.11引脚的方向，上下拉，驱动能力
+    TWIM_PIN_INIT(p_config->sda);  //设置P0.6引脚的方向，上下拉，驱动能力
+
+    //设置I2C引脚
+    //nrf_twim_pins_set( NRF_TWIM0, p_config->scl, p_config->sda);
+        p_reg->PSEL.SCL = scl_pin;
+        p_reg->PSEL.SDA = sda_pin;
+
+    //设置I2C频率
+    //nrf_twim_frequency_set( NRF_TWIM0, p_config->frequency);
+        p_reg->FREQUENCY = frequency;
+
+
+    if (p_cb->handler)  //yes
+    
+        NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_twim),  p_config->interrupt_priority);  //设置I2C0的irq总中断优先级
+        NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_twim));                                        //使能I2C0的irq总中断
+    
+
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+
+--------------
+
+功能：关联nrfx_twim_0_irq_handler到中断入口地址m_prs_box_0.handler（即 nrfx_prs_box_0_irq_handler，即SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler，由.s文件定义而来）
+  
+数据流： nrfx_twim_0_irq_handler  --> m_prs_box_0.handler
+
+参数： NRF_TWIM0, nrfx_twim_0_irq_handler
+nrfx_prs_acquire( * p_base_addr, irq_handler)
+
+    //p_box = prs_box_get(NRF_TWIM0);
+         p_box =  m_prs_box_0； 
+             .handler = NULL 
+             .acquired = false 
+
+
+    if (p_box != NULL)    //yes
+ 
+        bool busy = false;
+ 
+        if (p_box->acquired)  //no
+ 
+            busy = true;
+ 
+        else      //yes
+ 
+            p_box->handler  = irq_handler;    //nrfx_twim_0_irq_handler
+            p_box->acquired = true;
+ 
+------
+
+#define NRFX_PRS_BOX_0_ADDR     NRF_SPIM0   // 0x40003000UL
+#define NRF_TWIM0                           // 0x40003000UL 
+
+参数：NRF_TWIM0
+prs_box_get(* p_base_addr)
+
+    //#define IS_PRS_BOX(n, p_base_addr)  ((p_base_addr) == NRFX_PRS_BOX_##n##_ADDR)
+        #define IS_PRS_BOX(n, p_base_addr)     p_base_addr  == NRFX_PRS_BOX_##n##_ADDR 
+
+    //AAA = IS_PRS_BOX(0, p_base_addr);
+        AAA =  NRF_TWIM0  == NRFX_PRS_BOX_0_ADDR;
+
+    //if ( AAA ) 
+       if ( NRF_TWIM0  == NRFX_PRS_BOX_0_ADDR )  //yes，都是0x40003000，所以相等
+
+         //return &m_prs_box_0; 
+              return m_prs_box_0 ； 
+                    .handler = NULL 
+                    .acquired = false 
+
+------
+
+
+#define   nrfx_prs_box_0_irq_handler  SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler
+
+//下面是定义m_prs_box_0，包括定义nrfx_prs_box_0_irq_handler中断服务函数
+
+#define PRS_BOX_DEFINE(0)                                                     
+    m_prs_box_0 = { .handler = NULL, .acquired = false };  
+
+    nrfx_prs_box_0_irq_handler( )                                 
+                                  
+        m_prs_box_0.handler();                                              
+    
+
+
+
+
+================================= twim0 write data =================================
+
+
+
+adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],  buffer_size) 
+
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x23, 0x00) ;                      //MSB bit 0: Vref 1.2V
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x20, ADC_CARTES_REG_20_VAL(4);    //-- set the gain to 4x
+   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x1e, 0x01);
+
+
+---
+
+参数：  0x63, 0x23, 0x00
+数据流：0x00 --> REG23
+twi_basic::write_byte_blocking( slave_addr, register_addr, data)
+
+    write_data(slave_addr, register_addr, &data, 1, 0x00, true);
+
+
+
+
+
+================================= twim0 read data =================================
+
+
+adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],   buffer_size)  
+ 
+      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x20, &reg_value[0]);
+      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x21, &reg_value[1]);
+ 
 
 
 ------
 
-twi_basic::twim_event_handler( *p_event)
+参数：  0x63, 0x20, &reg_value[0]
+数据流：reg20 --> reg_value[0]
+twi_basic::read_byte_blocking(uint8_t slave_addr, uint8_t register_addr, uint8_t* data)
 
-    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))    
-        
-        rtc_timeout->disable_timeout(rtc_timeout_channel);   //Stop timeout timer
+    trx(slave_addr, &register_addr, 1, data, 1, 0x00, true);
+
+
+
+
+
+
+====================================== twim0 irq =============================================
+
+
+说明：因nrfx_prs_box_0_irq_handler的定义没有使能（不能关联到硬件中断），所以irq实际上没有工作  （忽略，跳过）
+
+flow:
+
+    ses_startup_nrf52833.s -- SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0_IRQHandler -- nrfx_prs_box_0_irq_handler -- (m_prs_box_0.handler) 
+    -- nrfx_twim_0_irq_handler -- twim_irq_handler -- (p_cb->handler) -- static_event_handler -- (p_context->twim_event_handler) -- twi_basic::twim_event_handler 
+    -- (our_config.twi_basic_event_listener) -- twi_basic_event_handler -- adc_cartes_state_change
+
+
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
+
+
+--------------------------------------------------------------------
+
+
+可作为硬件irq中断入口
+nrfx_twim_0_irq_handler(  )
+ 
+    twim_irq_handler(NRF_TWIM0, &m_cb[0]);
+
+
+------
+
+
+可作为硬件irq中断入口
+twim_irq_handler(  * p_twim,  * p_cb)
+
+    ......
+
+
+    if (!(p_cb->flags & NRFX_TWIM_FLAG_NO_XFER_EVT_HANDLER) || p_cb->error)
+     
+        //p_cb->handler(&event, p_cb->p_context);
+           static_event_handler(&event, twi_basic:: )
+
+  
+------------
+
+参数：event, twi_basic::
+static_event_handler(  *p_event, *p_context)
+
+    //p_context->twim_event_handler(p_event);
+         twi_basic::twim_event_handler(p_event);
+
+ 
+-------
+
+
+twi_basic::twim_event_handler(  *p_event)
+
+    if(!nrfx_atomic_flag_set_fetch(&twi_xfer_done))
+    
+        //Stop timeout timer
+        APP_ERROR_CHECK( rtc_timeout->disable_timeout(rtc_timeout_channel) );
 
         switch(p_event->type)
         
@@ -122,89 +454,30 @@ twi_basic::twim_event_handler( *p_event)
           default:
             APP_ERROR_HANDLER(NRF_ERROR_INTERNAL);
             break;
-       
+        
 
         if(!disable_callback)
-            our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
- 
 
-
--------------------------
-
-回调函数一
-功能： ？
-sample_set_ready( *data, data_size, timestamp, timestamp_offset)
-
-    if(data_mode == DATA_MODE_DISABLED || timestamp_is_synch_lost())
-        return;
-
-    if(data_mode == DATA_MODE_USB)
-    
-        size_t packet_size = 1 + 4 + data_size; 
-
-        //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via USB
-        code = usb_serial_write_data_packet_vargs(packet_size,
-            1, &packet_id, 
-            4, &timestamp, 
-            data_size, data,
-            0);
-
-        if(code == NRF_ERROR_BUSY)
-            skipped_tx_count++;
-        else
-            OMMO_APP_ERROR_CHECK(code, STRING("USB data transfer error"), 0);
-    
-    //Update count
-    tx_count++;
- 
-
----------------
-
-回调函数二 （忽略）
-
-hot_plug_callback(  adc_removed) 
- 
-#ifndef HOT_PLUG_OFF
-    if(usb_serial_state_port_open)
-    {
-        uint8_t hot_plug_cmd_buf[2] = {0};
-        hot_plug_cmd_buf[0] = OMMO_COMMAND_HOT_PLUG_DETECT;
-        hot_plug_cmd_buf[1] = (adc_removed) ? 1 : 0;
-
-        usb_serial_send_command_packet(hot_plug_cmd_buf, 2);
-    }
-#endif
-  
-
-
--------
-
-回调函数三
-功能：？
-
-
-twi_basic_event_handler( p_event, *p_context)
-
-    uint32_t twi_channel = p_context;
-
-    twi_xfer_done[twi_channel] = true;
-
-    if(adc_cartes_rw_finished() && !disable_twi_callback)
-    
-        adc_cartes_state_change();
-    
-
------
-
-adc_cartes_rw_finished()
-
-    for(int32_t i=0; i<OMMO_CARTES_ADC_NUM_PORTS; i++)  //1
-    
-        if(!twi_xfer_done[i]) return false;
-
-
+            //our_config.twi_basic_event_listener(last_event, our_config.twi_basic_event_listener_context);
+                 twi_basic_event_handler(last_event, 0);
 
 ------
+
+ 
+参数：last_event, 0
+twi_basic_event_handler( p_event, *p_context)
+
+    twi_xfer_done[0] = true;
+
+    //if(adc_cartes_rw_finished() && !disable_twi_callback)
+       if(!twi_xfer_done[0] && !disable_twi_callback)
+    
+           adc_cartes_state_change();
+
+------
+
+
+数据流：xyzt数据 --> m_twi_rx_buf[0] -->  current_output_data
 
 adc_cartes_state_change()
 
@@ -262,7 +535,7 @@ uint8_t len, offset, port;
                     len = ic_data[ss_map[ports_with_adc[current_state_index]]].data_length;
                     offset = ic_data[ss_map[ports_with_adc[current_state_index]]].data_offset;
 
-                    memcpy( current_output_data + data_output_index[ports_with_adc[current_state_index]], 
+                    memcpy( current_output_data + data_output_index[ports_with_adc[current_state_index]],     //here
                             m_twi_rx_buf[ports_with_adc[current_state_index]]+offset, len);
                 
 
@@ -280,7 +553,7 @@ uint8_t len, offset, port;
                 else
                 
                     //swap buffers
-                    swap_sample_buffers_and_flag_sample_callback();
+                    swap_sample_buffers_and_flag_sample_callback();   //here
                     current_state = SETUP_ADC_START_SAMPLE;
                 
                 break;
@@ -292,56 +565,20 @@ uint8_t len, offset, port;
 
 
 
-================================= twi write data =================================
+
+
+====================================================== 参考 ==================================================================
 
 
 
-adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],  buffer_size) 
-
-   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x23, 0x00) ;                      //MSB bit 0: Vref 1.2V
-   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x20, ADC_CARTES_REG_20_VAL(4);    //-- set the gain to 4x
-   senors_twi_basic_instance[port]->write_byte_blocking( 0x63, 0x1e, 0x01);
-
-
----
-
-参数：  0x63, 0x23, 0x00
-数据流：0x00 --> REG23
-twi_basic::write_byte_blocking( slave_addr, register_addr, data)
-
-    write_data(slave_addr, register_addr, &data, 1, 0x00, true);
+void static_timeout_handler(void * p_context)
+{
+    ((twi_basic*)p_context)->timeout_handler();
+}
 
 
 
-
-
-================================= twi read data =================================
-
-
-adc_cartes_scan_bus_generate_data_descriptor( packet_id_request_buffer[],   buffer_size)  
  
-      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x20, &reg_value[0]);
-      senors_twi_basic_instance[port]->read_byte_blocking(  0x63, 0x21, &reg_value[1]);
- 
-
-
-------
-
-参数：  0x63, 0x20, &reg_value[0]
-数据流：reg20 --> reg_value[0]
-twi_basic::read_byte_blocking(uint8_t slave_addr, uint8_t register_addr, uint8_t* data)
-
-    trx(slave_addr, &register_addr, 1, data, 1, 0x00, true);
-
-
-
-
-
-
-
-
-
-
 
 
 

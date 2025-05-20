@@ -25,6 +25,19 @@ cdcuart调试log：
    。二是等usb_serial_write_force=true再发送，可在定时器里面设置true，也可手动设置true 未选择任何文件
 
 
+timestamp_add_capture_event_with_disable
+timestamp_add_capture_event_with_disable
+timestamp_add_capture_event_with_disable
+
+
+
+--------------------timer 名称----------------------------
+
+timer3： timer_timestamp  //需要以收到的basestation的4个时间字节为基准，来计算时间
+
+rtc2：   rtc_timeout      //不需要考虑basestation的4个时间字节，只是每次收到sync，把outtime的标志清false
+
+rtc1：   m_rtc_inst       //只是做时间任务，如定时扫描小灯的状态和设置小灯颜色
 
 
 
@@ -33,16 +46,30 @@ cdcuart调试log：
 //sample_trigger_ppi  //nouse
 
 PPI0： ppi_channel_timestamp_capture 
-PPI1： ppi_channel_disable_timestamp_capture   
-PPI2:  ppi_channel_button_pressed               
-PPI3:  ppi_channel               
-                        
 
-GROUP0:  ppi_group_disable_timestamp_capture 
+       uarte1.ENDRX 事件 --> T3.CAPTURE0 任务     //把t3的计数值，捕获到cc0寄存器中  （相当于T3从这个时点从新计时？疑问：只捕捉counter到cc0中，并没有加新延时值重新设置cc0值）
+
+
+//PPI1： ppi_channel_disable_timestamp_capture     //无用，可注释  
+
+       T3.COMPARE0 事件--> GROUP0.DIS 任务
+
+
+PPI2:  ppi_channel_button_pressed                //忽略       
+
+   
+PPI3:  ppi_channel_start_transfer[0]                                //ppi_channel（待理解,或跟传感器有关）                          
+
+
+
+//GROUP0:  ppi_group_disable_timestamp_capture        //无用，可注释  
+
+
 GROUP1:  ppi_group_sample_start_spi
 
 
-nrfx_ppi_channel_include_in_group
+
+说明：用 nrfx_ppi_channel_include_in_group 检测group通道是否有分配ppi，如果没有，则肯定该group通道没有使用
 
 
 
@@ -75,7 +102,22 @@ nrfx_ppi_channel_include_in_group
     //--comms_uarte_local_ts_capture_channel = timestamp_add_capture_event(nrfx_uarte_event_address_get(&comms_uarte, NRF_UARTE_EVENT_ENDRX));
 
 
-4. 可注释下面这句 （ppi group0）
+4. 可注释下面这句 （ppi1）
+
+    void timestamp_init_with_internal_sample_event(uint8_t isr_priority)
+
+       //APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
+       //APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(),       
+         nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
+       //APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
+
+
+5. 可同时注释下面这几句 （ppi group0）    //如只注释前面两句，则不能显示数值，只显示NaN
+
+    void timestamp_init_with_internal_sample_event(uint8_t isr_priority)
+
+      //APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
+      //APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
 
    void timestamp_reenable_disabled_captures()
       //--nrf_ppi_group_enable(ppi_group_disable_timestamp_capture);
@@ -104,17 +146,8 @@ nrfx_ppi_channel_include_in_group
    6A 88 3C 1D  -->  0x1D3C886A
 
 
-8. 下面的不能注释，注释后在cnctestapp上open后，蓝灯可以转变为绿灯。但不能显示数值，只显示NaN  （TIMER3初始化函数）
 
-    //Allocate group for capture disables
-    APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
-    APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
 
-    //Setup PPI for disabling timestamp capture on sample timer evt
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(),  
-                    nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
-    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
 
 
 
