@@ -21,7 +21,6 @@ if(ppi_group_sample_start_spi==1)   //yes
 }
 
 
-
 uint8_t flg_myled=0;  //--test
 
 //--test
@@ -36,7 +35,6 @@ extern uint8_t flg_myled;  //--test
 
 //--test
 flg_myled=1;  //yes
-
 
 
 usb_serial_write((uint8_t*)"12345abcde",10);
