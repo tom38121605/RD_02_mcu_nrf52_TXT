@@ -1,0 +1,51 @@
+nrf_delay_ms(100);
+
+
+nrfx_uarte_tx(&comms_uarte, &itest, 1);
+while(nrfx_uarte_tx_in_progress(&comms_uarte));
+
+   //main_led.set_basic(LED_MODE_DC_ACTIVED, LED_COLOR_DC_ACTIVED);  //STEADY, CYAN
+   //main_led.set_basic(LED_MODE_USB_CLOSED, LED_COLOR_USB_CLOSED);   //FADE , WHITE
+   //main_led.set_basic(LED_MODE_USB_OPEN, LED_COLOR_USB_OPEN);         //FADE, BLUE(255)
+   //main_led.set_basic(LED_MODE_EN_SYNCH_WIRELESS, LED_COLOR_EN_SYNCH_WIRELESS);   //FADE,GREEN(255)
+
+
+#include "led_driver.hpp"     //--add
+extern led_driver main_led;   //--add
+
+//--test
+if(ppi_group_sample_start_spi==1)   //yes
+{
+    main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));   //--test
+    main_led.event_queue_process();                           //--test
+}
+
+
+
+uint8_t flg_myled=0;  //--test
+
+//--test
+if(flg_myled==1)   //yes
+{
+    main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));   //--test
+    main_led.event_queue_process();                           //--test
+}
+
+
+extern uint8_t flg_myled;  //--test
+
+//--test
+flg_myled=1;  //yes
+
+
+
+usb_serial_write((uint8_t*)"12345abcde",10);
+usb_serial_write_now(usb_serial_rx_packet_buffer,usb_serial_rx_packet_length,0);  //--test
+
+
+
+
+
+
+
+

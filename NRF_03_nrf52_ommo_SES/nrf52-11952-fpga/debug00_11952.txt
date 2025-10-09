@@ -1,0 +1,89 @@
+
+
+--------------------timer 名称----------------------------
+
+//timer3： timer_timestamp  //需要以收到的basestation的4个时间字节为基准，来计算时间
+
+//rtc2：   rtc_timeout      //不需要考虑basestation的4个时间字节，只是每次收到sync，把outtime的标志清false
+
+//rtc1：   m_rtc_inst       //只是做时间任务，如定时扫描小灯的状态和设置小灯颜色
+
+
+
+----------------------PPI编号-----------------------------
+
+
+GROUP3:  ppi_group_sample_start_spi
+
+
+---------
+
+
+//PPI0： ppi_channel_timestamp_capture 
+
+       uarte1.ENDRX 事件 --> T3.CAPTURE0 任务  
+
+
+//PPI1： ppi_channel_disable_timestamp_capture     //无用，可注释  
+
+       T3.COMPARE0 事件--> GROUP0.DIS 任务
+
+
+//PPI2:  ppi_channel_button_pressed                //忽略       
+
+   
+//PPI3:  ppi_channel_start_transfer[0]                                //ppi_channel（待理解,或跟传感器有关）                          
+
+
+
+说明：用 nrfx_ppi_channel_include_in_group 检测group通道是否有分配ppi，如果没有，则肯定该group通道没有使用
+
+
+
+
+
+
+
+==============================cnc 看不到数据问题的解决==========================================
+
+
+
+
+22把下面语句的注释去掉，则可以在cnc上看到 数据了
+
+
+                device_info_allocate_and_read_from_port(port, (void**)&dgdp.devices[current_device].device_info_user, DEVICE_INFO_FIELD_USER);
+
+                if(dgdp.devices[current_device].device_info_user == NULL)
+                {
+                    if(device_info_allocate_and_create_user(&dgdp.devices[current_device].device_info_user) != NRF_SUCCESS)
+                        return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_NO_MEM);
+                }
+
+
+
+12用下面的注释方式，则可以在cnc上看到 数据了
+
+ 
+
+    error_code = device_info_read_proto_buffer_from_port(port, proto_type, buffer, sizeof(buffer), &buffer_length);
+
+
+
+//error_code = NRF_SUCCESS;
+
+//if( (port==2) && (proto_type==DEVICE_INFO_FIELD_PERM))
+//{
+//    buffer_length = 0x0236;                 //566
+//    memcpy(buffer, buffer_1, 0x0236+3);   //569
+//}else if( (port==2) && (proto_type==DEVICE_INFO_FIELD_USER))
+//{
+//    buffer_length = 3;
+//    memcpy(buffer, buffer_1, 3+3);  //6
+//}
+
+
+
+
+
+

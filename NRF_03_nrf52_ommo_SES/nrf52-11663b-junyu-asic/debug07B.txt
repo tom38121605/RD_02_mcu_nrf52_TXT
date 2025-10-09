@@ -1,0 +1,245 @@
+
+_vectors:
+  .word   RTC2_IRQHandler    //ses_startup_nrf52833.s
+
+
+#define nrfx_rtc_2_irq_handler      RTC2_IRQHandler
+
+
+typedef enum
+{
+    NRFX_RTC_INT_COMPARE0 = 0,  
+    NRFX_RTC_INT_COMPARE1 = 1,  
+    NRFX_RTC_INT_COMPARE2 = 2, 
+    NRFX_RTC_INT_COMPARE3 = 3,  
+    NRFX_RTC_INT_TICK     = 4, 
+    NRFX_RTC_INT_OVERFLOW = 5    
+} nrfx_rtc_int_type_t;
+
+
+
+---------------------
+
+uint8_t timestamp_lost_compare_channel;
+
+#define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY    32768
+#define RTC_TIMEOUT_GEN_FREQUENCY            NRFX_RTC_DEFAULT_CONFIG_FREQUENCY
+
+//#define MS_TO_RTC_TIMEOUT_GEN(x)        x * RTC_TIMEOUT_GEN_FREQUENCY / 1000   
+   #define MS_TO_RTC_TIMEOUT_GEN(500)        500 * 32768 / 1000   
+
+
+
+-------------------
+
+
+#define OMMO_RTC_TIMEOUT_GEN_RTC          NRFX_RTC_INSTANCE(2)
+
+rtc_timeout_gen rtc_timeout(OMMO_RTC_TIMEOUT_GEN_RTC);
+
+
+enum   
+    NRFX_RTC0_INST_IDX,     //0
+    NRFX_RTC2_INST_IDX,     //1
+    NRFX_RTC_ENABLED_COUNT  //2
+
+#define RTC2_CC_NUM 4
+
+#define NRFX_RTC_INSTANCE(2)                                   
+{                                                               
+    .p_reg            =  NRF_RTC2 ,             
+    .irq              =  RTC2_IRQn ,            //6
+    .instance_id      =  NRFX_RTC2_INST_IDX ,   //1
+    .cc_channel_count =  RTC2_CC_NUM,           //4
+}
+
+
+#define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY 32768
+#define RTC_INPUT_FREQ 32768
+
+#define RTC_FREQ_TO_PRESCALER(FREQ)   (RTC_INPUT_FREQ / FREQ) - 1    //0
+
+#define NRFX_RTC_MAXIMUM_LATENCY_US 2000
+#define NRFX_RTC_US_TO_TICKS(us,freq) (((us) * (freq)) / 1000000U)
+
+
+typedef enum
+{
+    NRF_RTC_TASK_START            = offsetof(NRF_RTC_Type,TASKS_START),   
+    NRF_RTC_TASK_STOP             = offsetof(NRF_RTC_Type,TASKS_STOP),      
+    NRF_RTC_TASK_CLEAR            = offsetof(NRF_RTC_Type,TASKS_CLEAR),     
+    NRF_RTC_TASK_TRIGGER_OVERFLOW = offsetof(NRF_RTC_Type,TASKS_TRIGOVRFLW),
+} nrf_rtc_task_t;
+
+
+
+RTC2_IRQn   =  36,            //nrf52833.h
+
+
+
+
+
+
+
+
+
+======================================================= 参考 =========================================================
+
+
+#define TIMER_INTENSET_COMPARE0_Pos (16 )  
+#define TIMER_INTENSET_COMPARE0_Msk (0x1  << TIMER_INTENSET_COMPARE0_Pos)
+
+ enum
+
+    NRF_TIMER_INT_COMPARE0_MASK = TIMER_INTENSET_COMPARE0_Msk,     //1<<16
+
+---
+
+#define PPI_GROUP_NUM 6
+
+#define NRFX_PPI_GROUPS_USED    NRF_PPI_GROUPS_USED
+#define NRF_PPI_GROUPS_USED   (SD_PPI_GROUPS_USED)
+#define SD_PPI_GROUPS_USED        0uL
+
+//#define NRFX_PPI_ALL_APP_GROUPS_MASK     (((1uL << PPI_GROUP_NUM) - 1) & ~(NRFX_PPI_GROUPS_USED))
+//  #define NRFX_PPI_ALL_APP_GROUPS_MASK     ((1 << 6) - 1) & 0xff 
+       #define NRFX_PPI_ALL_APP_GROUPS_MASK    0x3f 
+
+
+typedef enum
+{
+    NRF_PPI_CHANNEL_GROUP0 = 0,  
+    NRF_PPI_CHANNEL_GROUP1 = 1,  
+    NRF_PPI_CHANNEL_GROUP2 = 2,  
+    NRF_PPI_CHANNEL_GROUP3 = 3,  
+
+    NRF_PPI_CHANNEL_GROUP4 = 4,  
+    NRF_PPI_CHANNEL_GROUP5 = 5   
+
+} nrf_ppi_channel_group_t;
+
+nrf_timer_event_t compare_events[] = { NRF_TIMER_EVENT_COMPARE0, NRF_TIMER_EVENT_COMPARE1, NRF_TIMER_EVENT_COMPARE2, 
+                                       NRF_TIMER_EVENT_COMPARE3, NRF_TIMER_EVENT_COMPARE4, NRF_TIMER_EVENT_COMPARE5};
+
+
+---------------------
+
+typedef enum
+{
+    NRF_TIMER_CC_CHANNEL0 = 0, ///< Timer capture/compare channel 0.
+    NRF_TIMER_CC_CHANNEL1,     ///< Timer capture/compare channel 1.
+    NRF_TIMER_CC_CHANNEL2,     ///< Timer capture/compare channel 2.
+    NRF_TIMER_CC_CHANNEL3,     ///< Timer capture/compare channel 3.
+
+    NRF_TIMER_CC_CHANNEL4,     ///< Timer capture/compare channel 4.
+
+    NRF_TIMER_CC_CHANNEL5,     ///< Timer capture/compare channel 5.
+
+} nrf_timer_cc_channel_t;
+
+nrf_timer_cc_channel_t next_free_capture_channel = NRF_TIMER_CC_CHANNEL0;   //0
+
+#define OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD     (15984 * 1) 
+
+---
+
+nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+#define OMMO_TIMESTAMP_TIMER                   NRFX_TIMER_INSTANCE(3)
+
+#define NRFX_TIMER_INSTANCE(3)                                   
+                                                                
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX, //3
+    .cc_channel_count = TIMER3_CC_NUM,           
+
+
+enum 
+    NRFX_TIMER0_INST_IDX,        //0
+    NRFX_TIMER1_INST_IDX,        //1
+    NRFX_TIMER2_INST_IDX,        //2
+    NRFX_TIMER3_INST_IDX,        //3
+    NRFX_TIMER4_INST_IDX,        //4
+    NRFX_TIMER_ENABLED_COUNT     //5
+
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    
+{                                                                                    
+    .frequency          = NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,     //0
+    .mode               = NRFX_TIMER_DEFAULT_CONFIG_MODE,          //0         
+    .bit_width          = NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,     //3
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,  //6                  
+    .p_context          = NULL                                                       
+}
+
+typedef enum
+{
+    NRF_TIMER_BIT_WIDTH_8  = TIMER_BITMODE_BITMODE_08Bit,   //0
+    NRF_TIMER_BIT_WIDTH_16 = TIMER_BITMODE_BITMODE_16Bit,   //1
+    NRF_TIMER_BIT_WIDTH_24 = TIMER_BITMODE_BITMODE_24Bit,   //2
+    NRF_TIMER_BIT_WIDTH_32 = TIMER_BITMODE_BITMODE_32Bit    //3
+} nrf_timer_bit_width_t;
+
+
+
+#define TIMER_MAX_SIZE(3)  TIMER3_MAX_SIZE   //32
+#define TIMER3_MAX_SIZE    32
+
+#define NRFX_OFFSETOF(type, member)  ((size_t)&(((type *)0)->member))
+
+
+
+__IOM uint32_t  EVENTS_COMPARE[6];   
+ 
+
+typedef struct {                                /*!< (@ 0x40008000) TIMER0 Structure                                           */
+  __OM  uint32_t  TASKS_START;                  /*!< (@ 0x00000000) Start Timer                                                */
+  __OM  uint32_t  TASKS_STOP;                   /*!< (@ 0x00000004) Stop Timer                                                 */
+  __OM  uint32_t  TASKS_COUNT;                  /*!< (@ 0x00000008) Increment Timer (Counter mode only)                        */
+  __OM  uint32_t  TASKS_CLEAR;                  /*!< (@ 0x0000000C) Clear time                                                 */
+  __OM  uint32_t  TASKS_SHUTDOWN;               /*!< (@ 0x00000010) Deprecated register - Shut down timer                      */
+  __IM  uint32_t  RESERVED[11];
+  __OM  uint32_t  TASKS_CAPTURE[6];             /*!< (@ 0x00000040) Description collection: Capture Timer value to
+                                                                    CC[n] register                                             */
+  __IM  uint32_t  RESERVED1[58];
+  __IOM uint32_t  EVENTS_COMPARE[6];            /*!< (@ 0x00000140) Description collection: Compare event on CC[n]
+                                                                    match                                                      */
+  __IM  uint32_t  RESERVED2[42];
+  __IOM uint32_t  SHORTS;                       /*!< (@ 0x00000200) Shortcuts between local events and tasks                   */
+  __IM  uint32_t  RESERVED3[64];
+  __IOM uint32_t  INTENSET;                     /*!< (@ 0x00000304) Enable interrupt                                           */
+  __IOM uint32_t  INTENCLR;                     /*!< (@ 0x00000308) Disable interrupt                                          */
+  __IM  uint32_t  RESERVED4[126];
+  __IOM uint32_t  MODE;                         /*!< (@ 0x00000504) Timer mode selection                                       */
+  __IOM uint32_t  BITMODE;                      /*!< (@ 0x00000508) Configure the number of bits used by the TIMER             */
+  __IM  uint32_t  RESERVED5;
+  __IOM uint32_t  PRESCALER;                    /*!< (@ 0x00000510) Timer prescaler register                                   */
+  __IM  uint32_t  RESERVED6[11];
+  __IOM uint32_t  CC[6];                        /*!< (@ 0x00000540) Description collection: Capture/Compare register
+                                                                    n                                                          */
+} NRF_TIMER_Type;    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

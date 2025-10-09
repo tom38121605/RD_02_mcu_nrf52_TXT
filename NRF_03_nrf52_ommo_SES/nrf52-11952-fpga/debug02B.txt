@@ -1,0 +1,22 @@
+spi_peripheral[]  = {NRFX_SPIM_INSTANCE(0),NRFX_SPIM_INSTANCE(1),NRFX_SPIM_INSTANCE(2)};
+
+
+#define NRFX_SPIM_INSTANCE(0)                               
+                                                            
+    .p_reg        = NRF_SPIM0,             
+    .drv_inst_idx = NRFX_SPIM0_INST_IDX      //0
+
+
+#define NRFX_SPIM_INSTANCE(1)                               
+                                                            
+    .p_reg        = NRF_SPIM1,             
+    .drv_inst_idx = NRFX_SPIM1_INST_IDX      //1
+
+
+#define NRFX_SPIM_INSTANCE(2)                               
+                                                            
+    .p_reg        = NRF_SPIM2,             
+    .drv_inst_idx = NRFX_SPIM2_INST_IDX      //2
+
+
+

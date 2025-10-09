@@ -1,0 +1,382 @@
+uint16_t sensors_scan_bus_generate_data_descriptor(uint8_t packet_id_request_buffer[], uint16_t buffer_size)
+
+PortStatus port_status_list[OMMO_SENSOR_NUM_PORTS];
+StreamDescriptorProto sdp = {0};
+DeviceGroupDescriptorProto dgdp = {0};
+bool disable_onboard_sensors = !onboard_sensors_enabled;
+
+
+    //Assemble static stream descriptor
+    sdp.port_status_list = port_status_list;
+    sdp.port_status_list_count = OMMO_SENSOR_NUM_PORTS;
+    sdp.descriptors = &dgdp;
+    sdp.descriptors_count = 1;
+
+    //Clear existing ss_map and data output indicies
+    memset(port_status_list, 0x00, sizeof(port_status_list));
+    memset(ss_map, 0x00, sizeof(ss_map));
+    memset(data_output_index, 0xFF, sizeof(data_output_index)); //OMMO_SENSOR_NUM_SPI_CHANNELS*OMMO_SENSOR_NUM_SS_LINES*2);
+    total_num_ics = 0;
+    num_i2c_ics = 0;
+
+    #ifdef OMMOCOMM_UARTE_ENABLED
+    ommocomm_uarte_present = false;
+    ommocomm_uarte_data_len = 0;
+    ommocomm_uarte_data_saved = false;
+    #endif
+
+    //Stop the state machine
+    sensors_stop_state_machine();
+    
+    //Reset hot_plug state
+    hot_unplug_event_set = false;
+    hot_plugin_event_set = false;
+    hot_unplug_double_check = false;
+
+    //Set I2C speed based on SCL/SDA rise times
+    sensors_twi_basic_MOSI_CS0_freq = sensors_measure_and_calculate_i2c_MOSI_CS0_frequency();
+
+    memset(dgdp.devices, 0x00, OMMO_SENSOR_NUM_PORTS*sizeof(DeviceDescriptorProto));
+
+
+    for(uint8_t port = 0; port < OMMO_SENSOR_NUM_PORTS; port++) //yes
+    {
+        uint8_t hw_index = port_defs[port].hw_index;
+        bool device_present = false;
+        uint8_t current_device = dgdp.devices_count;
+
+        //Make sure this device is cleared, it is possible we could have started filling it out and decided the device was invalid
+        pb_release(&DeviceDescriptorProto_msg, &dgdp.devices[current_device]);   
+        memset(&dgdp.devices[current_device], 0x00, sizeof(DeviceDescriptorProto));
+
+        //Set port number
+        dgdp.devices[current_device].port_num = port;
+
+
+        //Read device info
+        bool device_info_media_present = device_info_is_media_present(port);
+
+        if(device_info_media_present)//yes
+        {
+            if(device_info_allocate_and_read_from_port(port, (void**)&dgdp.devices[current_device].device_info, DEVICE_INFO_FIELD_PERM) == NRF_SUCCESS)
+            {//yes
+                device_present = true;
+
+                device_info_allocate_and_read_from_port(port, (void**)&dgdp.devices[current_device].device_info_user, DEVICE_INFO_FIELD_USER);
+
+                if(dgdp.devices[current_device].device_info_user == NULL) //no
+                {
+                    if(device_info_allocate_and_create_user(&dgdp.devices[current_device].device_info_user) != NRF_SUCCESS)
+                        return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_NO_MEM);
+                }
+            }
+        }
+
+        //Scan port to so that we can flag detected sensors that are invalid
+        ICBusType ic_bus_type[OMMO_SENSOR_MAX_ICS_PER_PORT];
+        ICBusLocation ic_bus_location[OMMO_SENSOR_MAX_ICS_PER_PORT];
+        uint8_t ic_ss_index[OMMO_SENSOR_MAX_ICS_PER_PORT];
+        ICType ic_type[OMMO_SENSOR_MAX_ICS_PER_PORT];
+        uint8_t num_ics;
+
+        //Scan port for all devices
+        num_ics = scan_port_for_devices(port, ic_type, ic_ss_index, ic_bus_type, ic_bus_location);
+
+
+        //If we don't have a device but there are sensors/eeprom, flag them for hotplug detected and flag port as invalid
+        if(!device_present)
+        {//yes
+            if(device_info_media_present || num_ics > 0)
+            {//no
+                port_status_list[port] = PORT_STATUS_ERROR;
+                for(uint8_t i=0; i<num_ics; i++)
+                    ss_map[port_defs[port].hw_index][ic_ss_index[i]] = IC_DATA_DISABLED_INDEX;
+            }
+
+            continue;
+        }
+
+#ifndef EMI_RUN_WITHOUT_SENSOR
+
+        //Figure out firmware spi sample delay on this port
+        uint32_t synch_to_spi_start_sample_complete_delay = SENSOR_SPI_START_DELAY; //This constant is exactly the time for a 2Mhz 2 byte SPI TX
+
+        //Init and verify ic, fill in blank values ic/sensor values
+        for(uint8_t ic_num = 0; device_present && ic_num < dgdp.devices[current_device].device_info->ics_count; ic_num++)
+        {//yes
+            ICBusType bus_type = dgdp.devices[current_device].device_info->ics[ic_num].ic_bus_type;
+
+            if(bus_type == IC_BUS_TYPE_SPI)
+            {//yes
+
+                uint8_t port_ss_index = dgdp.devices[current_device].device_info->ics[ic_num].ic_ss_index;
+                switch(dgdp.devices[current_device].device_info->ics[ic_num].ic_type)
+                {//yes
+
+                    case IC_TYPE_MEMSIC_5983:  //yes    //--测试空板
+                    {
+
+                        //Check product id
+                        uint8_t reg_value;
+                        if(device_present) 
+                        {//yes
+                           device_present = sensors_read_byte_blocking(port, port_ss_index, MMC5983_PRODUCT_ID_REG, &reg_value) == NRF_SUCCESS && reg_value == MMC5983_PRODUCT_ID_RESULT;
+                        }
+                    
+                        //Init
+                        if(device_present) device_present = sensors_write_byte_blocking(port, port_ss_index, MMC5983_CONTROL1_REG, MMC5983_CONTROL1_CHIP_RESET) == NRF_SUCCESS;
+                        nrf_delay_ms(20);
+                        if(device_present) device_present = sensors_write_byte_blocking(port, port_ss_index, MMC5983_CONTROL0_REG, MMC5983_CONTROL0_INIT) == NRF_SUCCESS;
+                        if(device_present) device_present = sensors_write_byte_blocking(port, port_ss_index, MMC5983_CONTROL1_REG, MMC5983_CONTROL1_INIT) == NRF_SUCCESS;
+
+
+                        if(!device_present) //no
+                            break;
+
+                        //Defaults
+                        if(device_info_allocate_and_fill_in_default_ic_data(&dgdp.devices[current_device].device_info->ics[ic_num], &ic_def_mmc5983, 
+                           synch_to_spi_start_sample_complete_delay, dgdp.devices[current_device].device_info->data_sourcing_strat) != NRF_SUCCESS)
+                        {//no
+                            device_present = false;
+                        }
+
+                        break;
+                    }
+
+                }
+            }
+            else if(bus_type == IC_BUS_TYPE_I2C)
+            {//yes
+
+                switch(dgdp.devices[current_device].device_info->ics[ic_num].ic_type)
+                {//yes
+
+                    case IC_TYPE_BQ27427:   //yes  (don't see led here)
+                    {
+
+                        //Defaults
+                        if(device_info_allocate_and_fill_in_default_ic_data(&dgdp.devices[current_device].device_info->ics[ic_num], &ic_def_bq27427, 0, 
+                            dgdp.devices[current_device].device_info->data_sourcing_strat) != NRF_SUCCESS)
+                        {//no
+
+                        }
+                        break;
+                    }
+
+                    default: //Unknown type  //yes
+                        device_present = false;
+                        break;
+                }
+            }
+            else if(bus_type == IC_BUS_TYPE_CUSTOM)  //yes  (don't see led here)
+            {
+
+                switch(dgdp.devices[current_device].device_info->ics[ic_num].ic_type)
+                {//yes
+                    case IC_TYPE_BUTTON:
+                        if(device_info_allocate_and_fill_in_default_ic_data(&dgdp.devices[current_device].device_info->ics[ic_num], &ic_def_analog_button, 0, 
+                           dgdp.devices[current_device].device_info->data_sourcing_strat) != NRF_SUCCESS)
+                        {//no
+                        }
+                        break;
+                }
+            }
+        }
+
+#endif
+
+        //Check for failed initialization, if failed flag sensors for hotplug detected and flag port as invalid
+        if(!device_present)  
+        {//yes
+            port_status_list[port] = PORT_STATUS_ERROR;
+
+            continue;
+        }
+
+        //Found a good sensor
+        port_status_list[port] = PORT_STATUS_CONNECTED;
+
+        //Check for ignore onboard sensors flag 
+        disable_onboard_sensors |= dgdp.devices[current_device].device_info_user->config_disable_onboard_sensors;
+
+        //Move on to next device
+        dgdp.devices_count++;
+    }
+
+    //Check for nothing plugged in
+    if(dgdp.devices_count == 0)  //1 //no  //--测试空板
+        return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_NOT_FOUND);
+
+    //Setup sampling system
+    for(uint8_t current_device =0; current_device < dgdp.devices_count; current_device++)  //yes
+    {//yes
+        uint8_t port = dgdp.devices[current_device].port_num;
+        uint8_t hw_index = port_defs[port].hw_index;
+
+        //Disable ics on disabled port ss lines
+        for(uint8_t ic_num = 0; ic_num < dgdp.devices[current_device].device_info->ics_count; ic_num++)
+        {//no
+
+        }
+
+        //Setup sampling system
+        if(port_defs[port].port_type == PORT_TYPE_DIRECT)  
+        {//yes
+            //Sensor verified, fill in ss map for state machine
+            for(uint8_t ic_num = 0; ic_num < dgdp.devices[current_device].device_info->ics_count; ic_num++)
+            {//yes
+                //Ignore disabled ic's
+                bool disabled_device = (dgdp.devices[current_device].device_info->ics[ic_num].ic_data_format == IC_DATA_FORMAT_OFF);
+
+                //Keep track of total ic count
+                if(!disabled_device)
+                {//yes
+                    total_num_ics++;
+                }
+
+                ICBusType bus_type = dgdp.devices[current_device].device_info->ics[ic_num].ic_bus_type;
+                uint8_t ic_data_dictionary_index = find_ic_data_dictionary_index(dgdp.devices[current_device].device_info->ics[ic_num].ic_type);
+
+                if(bus_type == IC_BUS_TYPE_SPI)  //yes
+                {
+                    if(disabled_device) 
+                    {//no
+                        //ss_map[hw_index][port_defs[port].ss_index_list[dgdp.devices[current_device].device_info->ics[ic_num].ic_ss_index]] = IC_DATA_DISABLED_INDEX;
+                    }
+                    else  //yes
+                        ss_map[hw_index][port_defs[port].ss_index_list[dgdp.devices[current_device].device_info->ics[ic_num].ic_ss_index]] = ic_data_dictionary_index;
+                }
+                else if(bus_type == IC_BUS_TYPE_I2C)  //no
+                {
+
+                }
+            }
+        }
+#ifdef OMMOCOMM_UARTE_ENABLED
+        else if(port_defs[port].port_type == PORT_TYPE_OMMOCOMM_HALF_DUPLEX_UART)
+        {//no
+
+        }
+#endif
+    }
+
+#ifdef OMMOCOMM_UARTE_ENABLED
+    //Set ommocomm flags
+    ommocomm_sample_error_count = 0;
+#endif
+
+    //Compute list of ss pins that have a mag on at least 1 bus
+    //Compute list of ss pins that has an imu on at least 1 bus
+    num_ss_pins_with_mag = 0;
+    num_ss_pins_with_imu = 0;
+    for(uint8_t ss_pin = 0; ss_pin < OMMO_SENSOR_NUM_SS_LINES; ss_pin++)  
+    {//no       
+     }
+
+    //Compute data output indexes
+    uint16_t cur_data_output_index = 0;
+    uint8_t cur_i2c_ic = 0;  
+    for(uint8_t device = 0; device < dgdp.devices_count; device++)  
+    {//yes
+        uint8_t port = dgdp.devices[device].port_num;
+        uint8_t hw_index = port_defs[port].hw_index;
+
+        if(port_defs[port].port_type == PORT_TYPE_DIRECT)   
+        {//yes
+            for(uint8_t ic = 0; ic < dgdp.devices[device].device_info->ics_count; ic++)  
+            {//yes
+                ICBusType bus_type = dgdp.devices[device].device_info->ics[ic].ic_bus_type;
+                uint8_t ss_index = port_defs[port].ss_index_list[dgdp.devices[device].device_info->ics[ic].ic_ss_index];
+                uint8_t hw_index = port_defs[port].hw_index;
+
+                if(bus_type == IC_BUS_TYPE_SPI)
+                {//yes
+                    data_output_index[hw_index][ss_index] = cur_data_output_index;
+                    cur_data_output_index += ic_data[ss_map[hw_index][ss_index]].read_command[0].data_length;
+                }
+                else if(bus_type == IC_BUS_TYPE_I2C)
+                {//no
+                    //i2c_data_output_index[cur_i2c_ic] = cur_data_output_index;
+                    //for(uint8_t read_command_index = 0; read_command_index < ic_data[i2c_ic_dictionary_index[cur_i2c_ic]].num_read_commands; read_command_index++)
+                    //    cur_data_output_index += ic_data[i2c_ic_dictionary_index[cur_i2c_ic]].read_command[read_command_index].data_length;
+                    //cur_i2c_ic++;
+                }
+                //TODO analog pins
+            }
+        }
+
+        else if(port_defs[port].port_type == PORT_TYPE_OMMOCOMM_HALF_DUPLEX_UART)  //no
+          ;
+
+    }
+
+    data_output_length = cur_data_output_index;
+    if(data_output_length > OMMO_SENSOR_MAX_PACKET_LENGTH) //no
+       ;
+
+    //Fill in misc data
+    dgdp.header_format = data_header_format;
+    dgdp.timestamp_ticks_per_second = HFCLK_FREQ;
+    dgdp.sample_period = OMMO_TIMESTAMP_SYNCH_SAMPLE_PERIOD;
+    dgdp.siu_uuid = NRF_FICR->DEVICEID[0];
+    
+    if(data_header_format == DATA_HEADER_FORMAT_TS)
+    {//no
+        //dgdp.data_packet_length = data_output_length + 1 + 4;    //pkt_id(1) + ts(4)
+    }
+    else if(data_header_format == DATA_HEADER_FORMAT_TS_TSO)
+    {//no
+        //dgdp.data_packet_length = data_output_length +  1 + 4 + 4; //pkt_id(1) + ts(4) + tso(4)
+    }
+    else
+    {//no
+        //APP_ERROR_CHECK(NRF_ERROR_NOT_SUPPORTED);
+     }
+    
+    //Generate packet id request info
+    uint16_t index = 0;
+    copyUint8(packet_id_request_buffer, index, OMMO_COMMAND_GET_PACKET_DESCRIPTOR); //command
+    copyUint8(packet_id_request_buffer, index, DEVICE_GROUP_DESCRIPTOR_FORMAT_MULTI_PROTOBUF); //dataDescriptorFormat
+
+    //Encode protobuf and save size
+    pb_ostream_t stream = pb_ostream_from_buffer(packet_id_request_buffer+4, buffer_size-4);
+
+    if(!pb_encode(&stream, &StreamDescriptorProto_msg, &sdp))
+    {//no
+        //return sensors_scan_bus_generate_data_descriptor_return_error(packet_id_request_buffer, &dgdp, OMMO_ACK_INTERNAL_ERROR);
+    }
+
+    copyUint16_LE(packet_id_request_buffer, index, stream.bytes_written);
+    index += stream.bytes_written;
+
+    //Free allocated memory
+    pb_release(&DeviceGroupDescriptorProto_msg, &dgdp);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+===================================================参考====================================================
+
+#ifndef HOT_PLUG_OFF  //no
+    ////Start idle hot_plug detection
+    //sensors_start_idle_hot_plug_check(); 
+#endif
+
+#ifdef OMMO_POWER_REQUIREMENTS //no
+    ////Update ommocomm present status in case we found a problem with an ommocomm device
+    //modify_power_status(ommocomm_uarte_present, POWER_REQ_OMMOCOMM_SAMPLER);
+    //check_power_requirements();
+#endif
+
+
+

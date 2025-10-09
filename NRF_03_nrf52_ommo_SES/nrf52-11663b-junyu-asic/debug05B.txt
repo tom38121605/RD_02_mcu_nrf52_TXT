@@ -1,0 +1,166 @@
+typedef enum 
+{
+  UARTE1_IRQn               =  40,              /*!< 40 UARTE1                                                                 */
+  PWM3_IRQn                 =  45,              /*!< 45 PWM3                                                                   */
+  SPIM3_IRQn                =  47               /*!< 47 SPIM3                                                                  */
+} IRQn_Type;
+
+#define TIMESTAMP_SYNCH_UART_TX_DELAY      (6*10*16 + 1 + (16-4)) //TX time + PPI rx time capture delay + uart clock vs basestation timer delay
+
+---------------
+
+#define TIMESTAMP_SYNCH_SOURCE_UART 0
+
+
+typedef enum
+
+    NRF_UARTE_EVENT_CTS       = offsetof(NRF_UARTE_Type, EVENTS_CTS),        
+    NRF_UARTE_EVENT_NCTS      = offsetof(NRF_UARTE_Type, EVENTS_NCTS),       
+    NRF_UARTE_EVENT_RXDRDY    = offsetof(NRF_UARTE_Type, EVENTS_RXDRDY),    // Data received in RXD (but potentially not yet transferred to Data RAM) 
+    NRF_UARTE_EVENT_ENDRX     = offsetof(NRF_UARTE_Type, EVENTS_ENDRX),     // Receive buffer is filled up 
+
+
+offsetof(TYPE, MEMBER) __builtin_offsetof (TYPE, MEMBER)
+
+nrf_timer_cc_channel_t next_free_capture_channel = NRF_TIMER_CC_CHANNEL0;
+
+
+typedef enum
+
+    NRF_TIMER_CC_CHANNEL0 = 0,    // Timer capture/compare channel 0 
+
+
+#define NRFX_PPI_PROG_APP_CHANNELS_MASK  ( 0x000FFFFFuL & ~(NRFX_PPI_CHANNELS_USED) )   //FF-FFF
+
+
+nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+#define OMMO_TIMESTAMP_TIMER                   NRFX_TIMER_INSTANCE(3) 
+
+#define NRFX_TIMER_INSTANCE(3)                                   
+                                                                 
+    .p_reg            = NRF_TIMER3,             
+    .instance_id      = NRFX_TIMER3_INST_IDX, 
+    .cc_channel_count = TIMER3_CC_NUM,           
+
+#define PPI_CHENSET_CH0_Set (1UL) /*!< Write: Enable channel */
+
+
+-------------------------------------------
+
+#define NRFX_PPI_CHANNELS_USED  NRF_PPI_CHANNELS_USED   //0
+#define NRF_PPI_CHANNELS_USED (SD_PPI_CHANNELS_USED | GZLL_PPI_CHANNELS_USED | ESB_PPI_CHANNELS_USED)  //0
+
+    #define SD_PPI_CHANNELS_USED      0uL
+    #define GZLL_PPI_CHANNELS_USED    0uL
+    #define ESB_PPI_CHANNELS_USED     0uL 
+
+
+typedef enum
+
+    NRF_PPI_CHANNEL0  = PPI_CHEN_CH0_Pos,   //0
+    NRF_PPI_CHANNEL1  = PPI_CHEN_CH1_Pos,   //1
+
+       ......
+
+
+
+capture_tasks[] = {NRF_TIMER_TASK_CAPTURE0, NRF_TIMER_TASK_CAPTURE1, NRF_TIMER_TASK_CAPTURE2, NRF_TIMER_TASK_CAPTURE3, NRF_TIMER_TASK_CAPTURE4, NRF_TIMER_TASK_CAPTURE5};
+
+
+
+
+
+==========================================================================================
+
+
+
+#define NRFX_PPI_PROG_APP_CHANNELS_MASK  ( 0x000FFFFF  & ~(NRFX_PPI_CHANNELS_USED))  // ~0
+
+#define NRFX_PPI_CHANNELS_USED  NRF_PPI_CHANNELS_USED  //0
+#define NRF_PPI_CHANNELS_USED (SD_PPI_CHANNELS_USED | GZLL_PPI_CHANNELS_USED | ESB_PPI_CHANNELS_USED)   // 0, 0, 0
+
+
+    #define SD_PPI_CHANNELS_USED      0 
+    #define GZLL_PPI_CHANNELS_USED    0 
+    #define ESB_PPI_CHANNELS_USED     0 
+
+
+
+========================================================================
+
+--#define NRFX_PRS_BOX_0_ADDR     NRF_SPIM0
+--#define NRF_SPIM0                   ((NRF_SPIM_Type*)          NRF_SPIM0_BASE)
+
+#define NRF_UARTE1                  ((NRF_UARTE_Type*)         NRF_UARTE1_BASE)
+
+#define nrfx_uarte_1_irq_handler    UARTE1_IRQHandler
+
+---
+
+ses_startup_nrf52833.s
+_vectors:
+  .word   UARTE1_IRQHandler
+
+
+--------------------
+
+
+nrfx_uarte_t comms_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
+
+nrfx_uarte_t comms_uarte_synch_uarte = OMMO_COMMS_UARTE_SYNCH_UART;
+
+#define OMMO_COMMS_UARTE_SYNCH_UART           NRFX_UARTE_INSTANCE(1)
+#define OMMO_COMMS_UARTE_SYNCH_PIN            NRF_GPIO_PIN_MAP(1,2) 
+
+
+#define NRF_UARTE_PSEL_DISCONNECTED 0xFFFFFFFF
+
+
+#define NRFX_UARTE_INSTANCE(1)                              
+    .p_reg        = NRF_UARTE1,             
+    .drv_inst_idx = NRFX_UARTE1_INST_IDX   //1
+
+
+enum 
+#if NRFX_CHECK(NRFX_UARTE0_ENABLED)         //yes
+    NRFX_UARTE0_INST_IDX,                   //0
+
+#if NRFX_CHECK(NRFX_UARTE1_ENABLED)         //yes
+    NRFX_UARTE1_INST_IDX,                   //1
+
+
+
+#define NRFX_UARTE_ENABLED 1
+#define NRFX_UARTE0_ENABLED 1
+#define NRFX_UARTE1_ENABLED 1
+
+
+---------
+
+typedef enum
+{
+    NRF_UARTE_EVENT_CTS       = offsetof(NRF_UARTE_Type, EVENTS_CTS),        
+    NRF_UARTE_EVENT_NCTS      = offsetof(NRF_UARTE_Type, EVENTS_NCTS),       
+    NRF_UARTE_EVENT_RXDRDY    = offsetof(NRF_UARTE_Type, EVENTS_RXDRDY),     
+    NRF_UARTE_EVENT_ENDRX     = offsetof(NRF_UARTE_Type, EVENTS_ENDRX),      //here
+
+    NRF_UARTE_EVENT_TXDRDY    = offsetof(NRF_UARTE_Type, EVENTS_TXDRDY),     
+    NRF_UARTE_EVENT_ENDTX     = offsetof(NRF_UARTE_Type, EVENTS_ENDTX),      .
+    NRF_UARTE_EVENT_ERROR     = offsetof(NRF_UARTE_Type, EVENTS_ERROR),     
+    NRF_UARTE_EVENT_RXTO      = offsetof(NRF_UARTE_Type, EVENTS_RXTO),       
+    NRF_UARTE_EVENT_RXSTARTED = offsetof(NRF_UARTE_Type, EVENTS_RXSTARTED),  
+    NRF_UARTE_EVENT_TXSTARTED = offsetof(NRF_UARTE_Type, EVENTS_TXSTARTED),  
+    NRF_UARTE_EVENT_TXSTOPPED = offsetof(NRF_UARTE_Type, EVENTS_TXSTOPPED)    
+} nrf_uarte_event_t;
+
+
+
+
+
+
+
+
+
+
+

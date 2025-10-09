@@ -1,0 +1,154 @@
+
+
+11952的调试方法：
+
+1. 用led调试，程序哪些地方是运行到的地方
+
+   #include "led_driver.hpp"     //--add
+   extern led_driver main_led;   //--add
+
+   //--test
+   if(ppi_group_sample_start_spi==1)   //yes
+   {
+       main_led.set_basic(LED_DRIVER_ON_STEADY,RGB_GREEN(255));   //--test
+       main_led.event_queue_process();                           //--test
+   }
+
+
+2. 用单步调试，从eeprom中读出media_buffer数据的调试
+
+    1). 先定义buf1[580]用来保存eeprom读取出来的数据
+
+    2). 加上判断语句 if(addr<M24C16_USER_ADDR)  打断点， 把断点锁定在eeprom标志1的完成时刻，以便读取eeprom标志1(而不是标志2)，并保存到buf1  
+
+      //--test
+      if(addr<M24C16_USER_ADDR)     //DEVICE_INFO_FIELD_PERM
+                      return NRF_SUCCESS;
+      else
+                      return NRF_SUCCESS;
+
+   3). 调试函数
+
+      uint32_t device_info_reader_m24c16_read_terminated_data(twi_basic *i2c_driver, uint16_t addr, uint8_t *buffer, uint16_t buffer_length, uint16_t *read_length)
+
+          uint8_t buf1[580]={0};    //--test
+
+          *read_length = 0x00;
+
+          while(((*read_length)+16) <= buffer_length)
+          {
+              VERIFY_SUCCESS(device_info_reader_m24c16_read(i2c_driver, addr, buffer+(*read_length), 16));
+              addr += 16;
+
+              for(uint8_t i=0; i<16; i++, (*read_length)++)
+              {
+
+                  uint8_t current_byte = buffer[(*read_length)];
+
+                  buf1[(*read_length)]=current_byte;   //--test
+
+                  if((*read_length) == 0x00 && (current_byte == 0xFF || current_byte == 0x00)) //Empty eeprom
+                      return NRF_SUCCESS; 
+            
+                  if( last_byte == 0x00 && current_byte == 0x00) //Normal terminator
+                  {
+                      (*read_length)++; //Include current_byte
+      //--test
+      if(addr<M24C16_USER_ADDR)     //DEVICE_INFO_FIELD_PERM
+                      return NRF_SUCCESS;
+      else
+                      return NRF_SUCCESS;
+
+                  }
+
+                  if( last_last_byte == 0x00 && last_byte == 0xFF && current_byte != 0x0A) //Bug fix terminator
+                  {
+                      buffer[*read_length - 1] = 0x00; //Change last byte to 0x00 to create 0x00 0x00 terminator
+                                                       //Current byte is not included
+                      return NRF_SUCCESS;
+                  }
+
+      //--test
+      if(addr<M24C16_USER_ADDR)     //DEVICE_INFO_FIELD_PERM
+                  last_last_byte = last_byte;
+      else
+                  last_last_byte = last_byte;
+
+                  last_byte = current_byte;
+
+              }
+          }
+
+
+2. 用单步调试，取得proto_buffer数据的调试
+
+
+   1). 加上判断语句 if( (port==2) && (proto_type==DEVICE_INFO_FIELD_PERM))  打断点，把断点锁定在eeprom标志1的完成时刻
+
+         if( (port==2) && (proto_type==DEVICE_INFO_FIELD_PERM))  //port=2，是表示eeprom中的数据 ， DEVICE_INFO_FIELD_PERM表示第一个标志
+         {
+             if(error_code == NRF_SUCCESS) error_code = device_info_allocate_and_decode_proto_buffer(proto_type, proto, buffer, buffer_length);
+         }
+
+   2). 在下面的return error_code;前面，也加一个断点，并且在这个断点取单步调试的数据 （注意：这个断点先不要加，等运行到第一个断点时再加这个断点）
+       
+       return error_code;
+
+
+   3). 调试函数
+
+
+         uint32_t device_info_allocate_and_read_from_port(uint8_t port, void **proto, DeviceInfoField proto_type)
+         {
+             uint8_t buffer[DEVICE_INFO_MAX_PERM_ENCODED_SIZE];
+             uint16_t buffer_length;
+             uint32_t error_code;
+
+             error_code = device_info_read_proto_buffer_from_port(port, proto_type, buffer, sizeof(buffer), &buffer_length);
+
+
+         //--test
+         if( (port==2) && (proto_type==DEVICE_INFO_FIELD_PERM))
+         {
+             if(error_code == NRF_SUCCESS) error_code = device_info_allocate_and_decode_proto_buffer(proto_type, proto, buffer, buffer_length);
+         }
+         else if( (port==2) && (proto_type==DEVICE_INFO_FIELD_USER))
+         {
+             if(error_code == NRF_SUCCESS) error_code = device_info_allocate_and_decode_proto_buffer(proto_type, proto, buffer, buffer_length);
+         }
+
+             return error_code;
+
+         }
+
+
+3. 目前没有用uart调试
+   。usb的uart可以发送，但目前没有用来打log
+   。synch的uart，只有接收功能 （但可以连到电脑串口上看pc发来的数据）
+
+
+
+
+
+=====================参考-在SES单步调试的技巧=========================================
+
+
+
+1.   按右上角的右象三角形，進入单步调试运行
+
+2.  调试的时候调出watch（眼镜）
+    。菜单view  --  靠近中下面的watch -- watch1
+
+3.   单步调试中，把字符数组buf列表的所有值拷贝出来
+      。先用眼镜取得buf列表的值
+      。点开buf列表的值
+      。在右上角眼镜下面的齿轮的左边，点击工具按钮“export to text editor"  （注意： 是齿轮的左边）
+      。菜单 file\save all ， 即可把字符串数组的所有列表值保存到txt文件  （当前ses目录，跟工程文件.emProject在同一个目录）
+
+
+
+
+
+
+
+

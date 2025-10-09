@@ -1,0 +1,103 @@
+#define BQ27427_SLAVE_ADDR                 0x55
+#define OMMO_FUEL_SCL       NRF_GPIO_PIN_MAP(0,15) 
+#define OMMO_FUEL_SDA       NRF_GPIO_PIN_MAP(1,0) 
+
+//Register
+#define BQ27427_CONTROL_LOW                 0x00    
+#define BQ27427_CONTROL_HIGH                0x01  
+#define BQ27427_TEMP_LOW                    0x02    
+#define BQ27427_TEMP_HIGH                   0x03
+#define BQ27427_VOLTAGE_LOW                 0x04
+#define BQ27427_VOLTAGE_HIGH                0x05
+#define BQ27427_FLAGS_LOW                   0x06
+#define BQ27427_FLAGS_HIGH                  0x07
+#define BQ27427_NOM_AVAILABLE_CAP_LOW       0x08
+#define BQ27427_NOM_AVAILABLE_CAP_HIGH      0x09
+#define BQ27427_FULL_AVAILABLE_CAP_LOW      0x0A
+#define BQ27427_FULL_AVAILABLE_CAP_HIGH     0x0B
+#define BQ27427_REMAINING_CAP_LOW           0x0C
+#define BQ27427_REMAINING_CAP_HIGH          0x0D
+#define BQ27427_FULL_CHARGE_CAP_LOW         0x0E
+#define BQ27427_FULL_CHARGE_CAP_HIGH        0x0F
+#define BQ27427_AVG_CURRENT_LOW             0x10
+#define BQ27427_AVG_CURRENT_HIGH            0x11
+
+#define BQ27427_AVG_POWER_LOW               0x18
+#define BQ27427_AVG_POWER_HIGH              0x19
+#define BQ27427_STATE_OF_CHARGE_LOW         0x1C
+#define BQ27427_STATE_OF_CHARGE_HIGH        0x1D
+#define BQ27427_INT_TEMP_LOW                0x1E
+#define BQ27427_INT_TEMP_HIGH               0x1F
+
+#define BQ27427_REMAINING_CAP_UNFILT_LOW    0x28
+#define BQ27427_REMAINING_CAP_UNFILT_HIGH   0x29
+#define BQ27427_REMAINING_CAP_FILT_LOW      0x2A
+#define BQ27427_REMAINING_CAP_FILT_HIGH     0x2B
+#define BQ27427_FULL_CHARGE_UNFILT_CAP_LOW  0x2C
+#define BQ27427_FULL_CHARGE_UNFILT_CAP_HIGH 0x2D
+#define BQ27427_FULL_CHARGE_FILT_CAP_LOW    0x2E
+#define BQ27427_FULL_CHARGE_FILT_CAP_HIGH   0x2F
+#define BQ27427_STATE_OF_CHARGE_UNFILT_LOW  0x30
+#define BQ27427_STATE_OF_CHARGE_UNFILT_HIGH 0x31
+
+#define BQ27427_DATA_CLASS                  0x3E
+#define BQ27427_DATA_BLOCK                  0x3F
+#define BQ27427_BLOCK_DATA_START            0x40
+#define BQ27427_BLOCK_DATA_END              0x5F
+#define BQ27427_BLOCK_DATA_CHECKSUM         0x60
+#define BQ27427_BLOCK_DATA_CONTROL          0x61
+
+//Control sub command
+#define BQ27427_CONTROL_STATUS              0x0000
+#define BQ27427_CONTROL_DEVICE_TYPE         0x0001
+#define BQ27427_CONTROL_FW_VERSION          0x0002
+#define BQ27427_CONTROL_DM_CODE             0x0004
+#define BQ27427_CONTROL_PREV_MACWRITE       0x0007
+#define BQ27427_CONTROL_CHEM_ID             0x0008
+#define BQ27427_CONTROL_BAT_INSERT          0x000C
+#define BQ27427_CONTROL_BAT_REMOVE          0x000D
+#define BQ27427_CONTROL_SET_CFGUPDATE       0x0013
+#define BQ27427_CONTROL_SMOOTH_SYNC         0x0019
+#define BQ27427_CONTROL_SHUTDOWN_ENABLE     0x001B
+#define BQ27427_CONTROL_SHUTDOWN            0x001C
+#define BQ27427_CONTROL_SEALED              0x0020
+#define BQ27427_CONTROL_PULSE_SOC_INT       0x0023
+#define BQ27427_CONTROL_CHAM_A              0x0030   //3230  4.35V
+#define BQ27427_CONTROL_CHAM_B              0x0031   //1202  4.20V
+#define BQ27427_CONTROL_CHAM_C              0x0032   //3142  4.40V
+#define BQ27427_CONTROL_RESET               0x0041
+#define BQ27427_CONTROL_SOFT_RESET          0x0042
+#define BQ27427_CONTROL_UNSEAL              0x8000
+
+----------------------------------------------------------
+
+#define OMMO_SENSOR_TWIM              NRFX_TWIM_INSTANCE(0)
+#define NRFX_TWIM_INSTANCE(0)                                                                                          
+    .p_twim       = NRF_TWIM0,             
+    .drv_inst_idx = NRFX_TWIM0_INST_IDX,   //0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+=======================================参考========================================
+
+
+#define ADC_CARTES_SLAVE_ADDR       0x63
+#define OMMO_CARTES_ADC_TWI_SCL_PINS      {NRF_GPIO_PIN_MAP(0,11)} //MOSI
+#define OMMO_CARTES_ADC_SPI_SDA_PINS      {NRF_GPIO_PIN_MAP(0,6)} //CS0
+
+
+
