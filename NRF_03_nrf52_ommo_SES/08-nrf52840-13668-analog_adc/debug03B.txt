@@ -1,0 +1,67 @@
+
+nrfx_timer_t adc_sampling_timer = OMMO_ADC_SAMPLING_TIMER;
+
+ 
+
+#define OMMO_ADC_SAMPLING_TIMER          NRFX_TIMER_INSTANCE(0)
+#define OMMO_ADC_SAMPLING_TIMER_PRIORITY 0
+ 
+#define NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY 0
+#define NRFX_TIMER_DEFAULT_CONFIG_MODE 0
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    \
+{                                                                                    \
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\     // 0
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,          \     // 0
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,\
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                    \
+    .p_context          = NULL                                                       \
+}
+
+
+----
+
+#define ADC_MUX_SWITCH_CC_CHANNEL      NRF_TIMER_CC_CHANNEL0
+#define ADC_START_SAMPLE_CC_CHANNEL    NRF_TIMER_CC_CHANNEL1
+#define ADC_START_SAMPLE_CC_EVENT      NRF_TIMER_EVENT_COMPARE1
+
+#define ADC_SET_RESET_START_CC_CHANNEL NRF_TIMER_CC_CHANNEL2   
+#define ADC_SET_RESET_END_CC_CHANNEL   NRF_TIMER_CC_CHANNEL3
+
+#define ADC_SET_RESET_END_CC_SHORT_MASK (nrf_timer_short_mask_t)(NRF_TIMER_SHORT_COMPARE3_STOP_MASK | NRF_TIMER_SHORT_COMPARE3_CLEAR_MASK)
+
+---
+
+
+#define ADS127L11_MUX_SETTLING_TIME_US    60
+#define ADS127L11_SAMPLE_WINDOW_US        180
+#define ADS127L11_CHANNEL_PERIOD_US       (ADS127L11_MUX_SETTLING_TIME_US + ADS127L11_SAMPLE_WINDOW_US)  // 240
+
+#define ADC_MUX_SWITCH_TIME_US(x)   ((x) * ADS127L11_CHANNEL_PERIOD_US) 
+#define ADC_SET_RESET_START_TIME_US  ADC_MUX_SWITCH_TIME_US(3)             //3 * 240
+#define ADC_SET_RESET_DURATION_US    1
+
+
+
+#define ADC_START_SAMPLE_TIME_US(x) (ADS127L11_MUX_SETTLING_TIME_US + ADC_MUX_SWITCH_TIME_US(x))   // 60 + 240 * x
+
+-------------------
+
+typedef enum
+{
+    ADC_SAMPLING_STATE_IDLE,
+    ADC_SAMPLING_STATE_X_CHANNEL_PENDING,
+    ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE,
+    ADC_SAMPLING_STATE_Y_CHANNEL_PENDING,
+    ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE,
+    ADC_SAMPLING_STATE_Z_CHANNEL,
+    ADC_SAMPLING_STATE_ERROR,
+
+} adc_sampling_state_t;
+
+
+
+
+
+

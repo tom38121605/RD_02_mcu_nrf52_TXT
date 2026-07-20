@@ -1,0 +1,120 @@
+
+#define ADS127L11_RREG_CMD    0x40
+#define ADS127L11_WREG_CMD    0x80
+
+#define ADS127L11_ID_REG      0x00
+#define ADS127L11_ID_REG_VAL  0x00
+
+config1： 高参考电压区间，开启refp缓冲，VCM输出
+#define ADS127L11_CONFIG1_REG                 0x05
+#define ADS127L11_CONFIG1_REG_H_REF_RNG       (1<<6)  //high voltage refernce range
+#define ADS127L11_CONFIG1_REG_REFP_BUF        (1<<3)  //vref buffer
+#define ADS127L11_CONFIG1_REG_VCM_OUTPUT      (1<<4)
+#define ADS127L11_CONFIG1_VAL                 (ADS127L11_CONFIG1_REG_H_REF_RNG | ADS127L11_CONFIG1_REG_REFP_BUF | ADS127L11_CONFIG1_REG_VCM_OUTPUT)
+
+config2：正常供电 （无standy，无sleep，无shutdown）， one-shot，内部时钟25.6MHz
+#define ADS127L11_CONFIG2_REG                 0x06
+#define ADS127L11_CONFIG2_REG_ONESHOT_MODE    (1<<3)  //adc only sample once after START
+#define ADS127L11_CONFIG2_VAL                 ADS127L11_CONFIG2_REG_ONESHOT_MODE
+
+config3：osr512
+#define ADS127L11_CONFIG3_REG                           0x07
+#define ADS127L11_CONFIG3_REG_SIN4_OSR512               (0b01111)
+#define ADS127L11_CONFIG3_REG_SIN4_OSR32_SINC1_OSR40    (0b10111)
+#define ADS127L11_CONFIG3_VAL                           ADS127L11_CONFIG3_REG_SIN4_OSR512
+
+
+config4=00： 内部时钟25.6M/3.2M, 24bit数据，无CRC x 2
+
+
+
+-----------------------------------------------------------------------
+
+
+int main(void)
+
+
+     。。。。。。
+
+     adc_sensors_init(&sample_set_ready);
+
+
+----------------------
+
+void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+{
+
+     。。。。。。
+
+
+    OMMO_APP_ERROR_CHECK(adc_sensors_config_adc(), STRING("Failed to config ADC"), 0);
+}
+
+
+------------------------
+
+
+static uint32_t adc_sensors_config_adc()
+{
+    adc_sensors_disable();
+
+    //Reset device
+    nrf_gpio_pin_write(OMMO_ADC_RESET_PIN, 0);
+    nrf_delay_ms(5);   //need 10004 clk cycles, ~.6ms
+    nrf_gpio_pin_write(OMMO_ADC_RESET_PIN, 1);
+
+    adc_sensors_write_reg(ADS127L11_CONFIG1_REG, ADS127L11_CONFIG1_VAL);
+    adc_sensors_write_reg(ADS127L11_CONFIG2_REG, ADS127L11_CONFIG2_VAL);
+    adc_sensors_write_reg(ADS127L11_CONFIG3_REG, ADS127L11_CONFIG3_VAL);
+    uint8_t config1 = adc_sensors_read_reg(ADS127L11_CONFIG1_REG);
+    uint8_t config2 = adc_sensors_read_reg(ADS127L11_CONFIG2_REG);
+    uint8_t config3 = adc_sensors_read_reg(ADS127L11_CONFIG3_REG);
+
+    if (config1 == ADS127L11_CONFIG1_VAL &&
+        config2 == ADS127L11_CONFIG2_VAL &&
+        config3 == ADS127L11_CONFIG3_VAL)
+    {
+        return NRF_SUCCESS;
+    }
+
+    return NRF_ERROR_NOT_FOUND;
+}
+
+
+
+
+
+//cmd sent on first frame and reg data received on 2nd frame
+static uint8_t adc_sensors_read_reg(uint8_t reg)
+{
+    const uint8_t frame_size = 3;
+
+    //first frame
+    spi_tx_buffer[0] = 0x00;
+    spi_tx_buffer[1] = ADS127L11_RREG_CMD | reg;
+    spi_tx_buffer[2] = 0x00;
+    APP_ERROR_CHECK(comm_device_ptr->trx(spi_tx_buffer, frame_size, nullptr, 0));
+
+    //Give the cs pin same time to stay high, min 20ns
+    nrf_delay_us(1);
+
+    //2nd frame
+    APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, frame_size));
+
+    return spi_rx_buffer[0];    //first byte on 2nd frame
+}
+
+static void adc_sensors_write_reg(uint8_t reg, uint8_t val)
+{
+    const uint8_t frame_size = 3;
+
+    spi_tx_buffer[1] = ADS127L11_WREG_CMD | reg;
+    spi_tx_buffer[2] = val;
+    spi_tx_buffer[3] = 0x00;
+ 
+    APP_ERROR_CHECK(comm_device_ptr->trx(spi_tx_buffer, frame_size, nullptr, 0));
+}
+
+
+
+

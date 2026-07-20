@@ -1,0 +1,63 @@
+
+1. 问题： 在ses的v8.14中编译官网dtm例程，出现下面的错误提示
+      Linking 'direct_test_mode_pca10112.elf'
+        .text section is larger than specified size
+        .rodata section is larger than specified size
+        Build failed, exit status 0x1
+答： 要换成sesV5.42版本来开发
+
+
+2. 问题： 找不到.s文件中的中断入口函数UARTE0_UART0_IRQHandler的函数体
+
+
+答(方法1)：在ses中全文搜索UARTE0_UART0_IRQHandler时，要使用目录遍历搜索 （不要用普通的工程搜索）
+
+答(方法2)：直接在windows的目录里，用文本搜索UARTE0_UART0_IRQHandler时
+
+ 
+ 
+            #define nrfx_uarte_0_irq_handler    UARTE0_UART0_IRQHandler    //nrfx_irqs_nrf52840.h
+
+3.  问题： 提示不能强制转换为 uint32
+       converting a packed 'device_info_len_t' pointer (alignment 1) to a 'const uint32_t' {aka 'const long unsigned int'} 
+       pointer (alignment 4) may result in an unaligned pointer value [-Werror=address-of-packed-member]
+
+分析： 相关代码如下
+         typedef __PACKED_STRUCT // 16 bytes total
+         {
+             uint16_t perm_len;       /* Device info permanent length */
+             uint16_t man_len;        /* Device info manufacturer length */
+             uint16_t user_len;       /* Device info user length */
+             uint8_t  future_use[10]; /* Reserved for future use */
+         } device_info_len_t;
+
+         device_info_len_t empty_device_info __attribute__((aligned(4)));
+         memset(&empty_device_info, 0x00, sizeof(device_info_len_t));
+         nrf_nvmc_write_words(active_page_addr + sizeof(magic_data_t), (const uint32_t*)&empty_device_info, sizeof(device_info_len_t) >> 2);   //错误提示行
+
+解决： 使用 #pragma
+
+         #pragma GCC diagnostic push
+         #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
+
+                 // write device info len 0
+                 device_info_len_t empty_device_info __attribute__((aligned(4)));
+                 memset(&empty_device_info, 0x00, sizeof(device_info_len_t));
+                 nrf_nvmc_write_words(active_page_addr + sizeof(magic_data_t), (const uint32_t*)&empty_device_info, sizeof(device_info_len_t) >> 2);
+
+         #pragma GCC diagnostic pop
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

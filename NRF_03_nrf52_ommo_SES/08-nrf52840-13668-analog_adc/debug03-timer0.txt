@@ -1,0 +1,259 @@
+
+
+
+----------------------------------------------
+
+
+int main(void)
+
+   adc_sensors_init(&sample_set_ready);
+
+---------------------------------------
+
+
+void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+
+
+    。。。。。。
+
+    adc_ppi_init()
+
+
+    // Init sampling timer and propagate START task.
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+    APP_ERROR_CHECK(nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler));   // 回调函数 sampling_timer_event_handler
+
+
+
+    //计数器触发CC2后，继续计数
+    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
+
+    //计数器触发CC2后，停止计数，关闭计数器
+    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
+                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC3 -- 240 * 3 + 1
+
+
+
+    //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
+
+        nrfx_ppi_channel_alloc(&sample_trigger_ppi);
+
+
+        // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
+        nrfx_ppi_channel_assign(sample_trigger_ppi, timestamp_get_sample_event_address(), nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
+
+     
+
+    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group));
+
+
+    //TIMER3的函数设置
+    //timestamp_add_sample_event_callback(sample_timer_event_handler);
+        sample_event_callbacks[0] = sample_timer_event_handler
+        sample_event_callbacks[1] = sample_timer_event_handler
+        sample_event_callbacks[2] = sample_timer_event_handler
+        sample_event_callbacks[3] = sample_timer_event_handler
+
+
+
+------
+
+参数： timer_timestamp 定时器三
+
+uint32_t timestamp_get_sample_event_address()
+{
+    return nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel]);
+}
+
+
+
+---------------------------------------------
+
+ 
+
+
+参数： sampling_timer_event_handler
+
+nrfx_err_t nrfx_timer_init(nrfx_timer_t const * const  p_instance,
+                           nrfx_timer_config_t const * p_config,
+                           nrfx_timer_event_handler_t  timer_event_handler)
+{
+    timer_control_block_t * p_cb = &m_cb[p_instance->instance_id];
+
+
+    NRFX_ASSERT(p_config);
+    NRFX_ASSERT(timer_event_handler);
+
+    nrfx_err_t err_code;
+
+    if (p_cb->state != NRFX_DRV_STATE_UNINITIALIZED)
+    {
+        err_code = NRFX_ERROR_INVALID_STATE;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+    /* Warning 685: Relational operator '<=' always evaluates to 'true'"
+     * Warning in NRF_TIMER_IS_BIT_WIDTH_VALID macro. Macro validate timers resolution.
+     * Not necessary in nRF52 based systems. Obligatory in nRF51 based systems.
+     */
+
+    /*lint -save -e685 */
+
+    NRFX_ASSERT(NRF_TIMER_IS_BIT_WIDTH_VALID(p_instance->p_reg, p_config->bit_width));
+
+    //lint -restore
+
+    p_cb->handler = timer_event_handler;      //sampling_timer_event_handler
+    p_cb->context = p_config->p_context;
+
+    uint8_t i;
+    for (i = 0; i < p_instance->cc_channel_count; ++i)
+    {
+        nrf_timer_event_clear(p_instance->p_reg,
+                              nrf_timer_compare_event_get(i));
+    }
+
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),
+        p_config->interrupt_priority);
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+
+    nrf_timer_mode_set(p_instance->p_reg, p_config->mode);
+    nrf_timer_bit_width_set(p_instance->p_reg, p_config->bit_width);
+    nrf_timer_frequency_set(p_instance->p_reg, p_config->frequency);  //0
+
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+    err_code = NRFX_SUCCESS;
+    NRFX_LOG_INFO("Function: %s, error code: %s.",
+                  __func__,
+                  NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+}
+
+
+---
+
+__STATIC_INLINE void nrf_timer_frequency_set(NRF_TIMER_Type * p_reg,
+                                             nrf_timer_frequency_t frequency)
+{
+    p_reg->PRESCALER = (p_reg->PRESCALER & ~TIMER_PRESCALER_PRESCALER_Msk) |
+                         ((frequency << TIMER_PRESCALER_PRESCALER_Pos) &
+                              TIMER_PRESCALER_PRESCALER_Msk);
+}
+
+
+
+--------------------------------
+
+#define ADC_SET_RESET_START_CC_CHANNEL NRF_TIMER_CC_CHANNEL2   
+#define ADC_SET_RESET_END_CC_CHANNEL   NRF_TIMER_CC_CHANNEL3
+#define ADC_SET_RESET_END_CC_SHORT_MASK (nrf_timer_short_mask_t)(NRF_TIMER_SHORT_COMPARE3_STOP_MASK | NRF_TIMER_SHORT_COMPARE3_CLEAR_MASK)
+
+
+static void adc_ppi_init()
+
+
+    // Set PPI for external ADC sample/conversion start.        //timer0 
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_start_ppi,
+        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),
+        nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN)));
+
+
+    // Configure CC for set/reset.
+    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);   // 3*240
+
+    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), // 3*240 + 1
+                                  ADC_SET_RESET_END_CC_SHORT_MASK, false);
+
+
+------------------------
+
+
+#define ADC_MUX_SWITCH_CC_CHANNEL      NRF_TIMER_CC_CHANNEL0
+#define ADC_START_SAMPLE_CC_CHANNEL    NRF_TIMER_CC_CHANNEL1
+#define ADC_START_SAMPLE_CC_EVENT      NRF_TIMER_EVENT_COMPARE1
+
+
+#define ADC_SET_RESET_START_TIME_US  ADC_MUX_SWITCH_TIME_US(3)             //3 * 240
+#define ADC_SET_RESET_DURATION_US    1
+#define ADC_START_SAMPLE_TIME_US(x) (ADS127L11_MUX_SETTLING_TIME_US + ADC_MUX_SWITCH_TIME_US(x))   // 60 + 240 * x
+
+
+
+void sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
+{
+    UNUSED_PARAMETER(p_context);
+
+
+    //Called just after ADC start sample happens while ADC is sampling
+    if(event_type == ADC_START_SAMPLE_CC_EVENT)
+    {
+        // Actions in every case is preparations for next state, X is prepared at beginning.
+        // For the rbridge selection the task is used, fork is used for cleaning only.
+        switch(adc_sampling_state)
+        {
+            case ADC_SAMPLING_STATE_X_CHANNEL_PENDING:
+            {
+                // Set new sample time (Y channel)  //设置下一次的比较时间
+                nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(1)), false);      // 240 * 1 
+                nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(1)), true);   // 60 + 240*1
+
+ 
+                // Configure MUX select 0b00 (0b01 -> 0b00) for Y channel  //把闹铃PPI连上事件切换引脚电平 
+                nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
+                nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+ 
+
+                // Configure bridge select on for Y channel and bridge select off for X channel
+                adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Z_EN);
+                adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_Y_EN);
+                nrf_ppi_task_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_IO_Y_EN));
+                nrf_ppi_fork_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_IO_X_EN));
+                adc_sampling_state = ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE;
+                break;
+            }
+
+            case ADC_SAMPLING_STATE_Y_CHANNEL_PENDING:
+            {
+                // Set new sample time (Z channel)
+                nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(2)), false);
+                nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(2)), false);
+
+ 
+                // Configure MUX select 0b10 (0b00 -> 0b10) for Z channel
+                nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_ADC_MUX_A1_PIN));
+                nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+ 
+
+                // Configure bridge select on for Z channel and bridge select off for Y channel
+                adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_X_EN);
+                adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_Z_EN);
+                nrf_ppi_task_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_IO_Z_EN));
+                nrf_ppi_fork_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_IO_Y_EN));
+ 
+                adc_sampling_state = ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE;
+                break;
+            }
+
+            case ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE:
+            case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
+                // SPI RXEND ISR runs at a lower priority and did not complete in time
+                adc_sampling_state = ADC_SAMPLING_STATE_ERROR;
+                // Prevent any further interrupts until the state machine resets
+                nrfx_timer_compare_int_disable(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL);
+                break;
+
+            case ADC_SAMPLING_STATE_IDLE:
+                break;
+
+            default:
+                OMMO_APP_ERROR_CHECK(NRF_ERROR_INTERNAL, L(adc_sampling_state));
+        }
+    }
+
+}
+

@@ -1,0 +1,378 @@
+
+nrfx_timer_t adc_sampling_timer = OMMO_ADC_SAMPLING_TIMER;
+
+#define OMMO_ADC_DATA_READY_PIN  NRF_GPIO_PIN_MAP(1,15)
+#define OMMO_ADC_START_PIN       NRF_GPIO_PIN_MAP(0,1)
+#define OMMO_ADC_RESET_PIN       NRF_GPIO_PIN_MAP(1,11)
+
+#define OMMO_ADC_SAMPLING_TIMER          NRFX_TIMER_INSTANCE(0)
+#define OMMO_ADC_SAMPLING_TIMER_PRIORITY 0
+
+// Set/Rest defines
+#define OMMO_ADC_SET_RESET_ENABLED           true
+#define OMMO_ADC_SET_RESET_INA_PIN           NRF_GPIO_PIN_MAP(0,0)
+#define OMMO_ADC_SET_RESET_INB_PIN           NRF_GPIO_PIN_MAP(0,31)
+#define OMMO_ADC_SET_TO_RESET_TIME_US        1
+
+
+#define ADS127L11_SPI_READ_LENGTH           3
+static comm_device             *comm_device_ptr;
+
+
+-----------------------------------------------------------------------
+
+int main(void)
+
+   adc_sensors_init(&sample_set_ready);
+
+---------------------------------------
+
+
+void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+
+    // Init sampling timer and propagate START task.
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+    APP_ERROR_CHECK(nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler));
+
+    。。。。。。
+
+    adc_ppi_init()
+
+
+    //计数器触发CC2后，继续计数
+    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
+
+    //计数器触发CC2后，停止计数，关闭计数器
+    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
+                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
+
+
+
+
+--------------------
+
+static void adc_ppi_init()
+
+ 
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi));
+
+
+    // 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输）
+    //Once the ADC data is ready, start the SPI transfer.
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_ready_spi_read_ppi,
+        nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN),
+        ((spim_basic*)comm_device_ptr)->get_start_task()));
+
+
+
+
+------------
+
+[[nodiscard]] uint32_t spim_basic::get_start_task() const
+{
+    return nrfx_spim_start_task_get(spim_instance);
+}
+
+uint32_t nrfx_spim_start_task_get(nrfx_spim_t const * p_instance)
+{
+    NRF_SPIM_Type * p_spim = (NRF_SPIM_Type *)p_instance->p_reg;
+    return nrf_spim_task_address_get(p_spim, NRF_SPIM_TASK_START);
+}
+
+
+
+typedef enum
+{
+    NRF_SPIM_TASK_START   = offsetof(NRF_SPIM_Type, TASKS_START),   ///< Start SPI transaction.     //似乎只是开启SPI
+    NRF_SPIM_TASK_STOP    = offsetof(NRF_SPIM_Type, TASKS_STOP),    ///< Stop SPI transaction.
+    NRF_SPIM_TASK_SUSPEND = offsetof(NRF_SPIM_Type, TASKS_SUSPEND), ///< Suspend SPI transaction.
+    NRF_SPIM_TASK_RESUME  = offsetof(NRF_SPIM_Type, TASKS_RESUME)   ///< Resume SPI transaction.
+} nrf_spim_task_t;
+
+
+
+------------------
+
+static void adc_sensors_start_data_read_hold()
+{
+    if(!check_stop_statemachine_bit())
+        APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD));
+}
+
+
+
+-------------
+
+待索源
+void usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
+
+   。。。。。。
+
+   ret_code_t error_code = adc_sensors_enable();
+
+
+---
+
+ret_code_t adc_sensors_enable()
+{
+    //Make sure we are stopped
+    VERIFY_TRUE(adc_sampling_state == ADC_SAMPLING_STATE_IDLE, NRF_ERROR_INVALID_STATE);
+    VERIFY_TRUE(state_machine_configured, NRF_ERROR_INVALID_STATE);
+
+    
+    //Turn on a bridge
+
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Z_EN);
+
+    //Start with all three bridges on, then switch to desired bridge to avoid vbias overshoot
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Y_EN);
+    nrf_delay_us(100);
+
+    
+    //Turn on power, and let current source settle
+    overvoltage_triggered = false;
+
+    nrfx_gpiote_set_task_trigger(OMMO_VBRIDGE_EN);    
+    nrf_delay_us(100);
+
+    if(overvoltage_triggered)
+        return NRF_ERROR_INTERNAL;    
+
+
+    //Start state machine
+    adc_sensors_start_state_machine();
+    return NRF_SUCCESS;
+}
+
+
+---------
+
+static void adc_sensors_restart_state_machine()
+{
+    // Configure X channel time compare registers.
+    adc_sampling_state = ADC_SAMPLING_STATE_X_CHANNEL_PENDING;
+
+    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false); //+1 to trigger right at start
+    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);
+
+    // Restore default PPI anf GPIOTE configuration.
+    restore_default_sampling_ppi_config();
+
+    //Setup adc for next sample
+    nrf_saadc_task_trigger(NRF_SAADC_TASK_STOP);
+    rbridge_vbias_measure_state = !rbridge_vbias_measure_state;
+    if(rbridge_vbias_measure_state)
+    {
+        nrf_saadc_channel_init(0, &adc_config_vbias);
+        nrf_saadc_buffer_init(adc_vbias_buffer, 3);
+    }
+    else
+    {
+        nrf_saadc_channel_init(0, &adc_config_vsense);
+        nrf_saadc_buffer_init(adc_vsense_buffer, 3);
+    }
+    nrf_saadc_task_trigger(NRF_SAADC_TASK_START);
+
+    // Prepare SPI transfer.
+    adc_sensors_start_data_read_hold();
+}
+
+
+
+-----
+
+static void restore_default_sampling_ppi_config()
+{
+    nrfx_gpiote_clr_task_trigger(OMMO_ADC_START_PIN);
+
+    // Reset the bridge drive
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Y_EN);
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Z_EN);
+    adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_Z_EN);
+ 
+    // channel_bridge_select_ppi 切换通道电源到x通道
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Z_EN);
+    nrf_ppi_fork_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_IO_Z_EN));  // 拉低 IO_Z 引脚
+
+  
+    adc_sensors_intermittent_gpiote_pin_clear(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_clear(OMMO_IO_Y_EN);
+
+    nrf_ppi_task_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_IO_X_EN));   //拉高 IO_X 引脚
+ 
+    //切换mux到x通道
+    mux_select_ppi事件触发时，同步执行两个硬件动作，纯硬件自动执行，无需 CPU。
+    // 0b11(init)/0b10(z) -> 0b01 for x
+    nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));  //拉低 A1 引脚
+    nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_ADC_MUX_A0_PIN));  //拉高 A0 引脚
+ 
+}
+
+
+
+---------------
+
+static void adc_sensors_start_state_machine()
+{
+    // Stop and clear the timer.
+    APP_ERROR_CHECK(nrfx_ppi_group_disable(adc_sampling_ppi_group));
+    nrfx_timer_disable(&adc_sampling_timer);
+    nrfx_timer_clear(&adc_sampling_timer);
+
+    //Enable saadc
+    nrf_saadc_enable();
+
+    adc_sensors_restart_state_machine();
+    APP_ERROR_CHECK(nrfx_ppi_group_enable(adc_sampling_ppi_group));
+}
+
+
+
+----------------
+
+
+void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
+{
+    UNUSED_PARAMETER(comm_dev);
+    UNUSED_PARAMETER(p_context);
+
+
+    if (result == COMM_DEVICE_TRX_RESULT_SUCCESS)
+    {
+        bool state_machine_error = false;
+        switch(adc_sampling_state)
+        {
+            adc_sampling_state_t check_state;
+
+            case ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE:
+            {
+                // Setup for Y data read
+                adc_data_buffer[0] = read_spi_buf_i24(spi_rx_buffer, 0);
+                check_state = ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE;
+                if (__atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Y_CHANNEL_PENDING, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                    adc_sensors_start_data_read_hold();
+                else
+                    state_machine_error = true;
+                break;
+            }
+
+            case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
+            {
+                // Setup for Z data read
+                adc_data_buffer[1] = read_spi_buf_i24(spi_rx_buffer, 0);
+                check_state = ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE;
+                if (__atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Z_CHANNEL, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+                    adc_sensors_start_data_read_hold();
+                else
+                    state_machine_error = true;
+                break;
+            }
+
+            case ADC_SAMPLING_STATE_Z_CHANNEL:
+            {
+                adc_data_buffer[2] = read_spi_buf_i24(spi_rx_buffer, 0);
+
+                // Trigger STOP to update the ADC buffer later
+                nrf_saadc_task_trigger(NRF_SAADC_TASK_STOP);
+
+                //Scale new data
+                if(rbridge_vbias_measure_state)
+                {
+                    vbias_x = ((float)adc_vbias_buffer[0] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+                    vbias_y = ((float)adc_vbias_buffer[1] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+                    vbias_z = ((float)adc_vbias_buffer[2] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+                }
+                else
+                {
+                    vsense_x = (((float)adc_vsense_buffer[0]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+                    vsense_y = (((float)adc_vsense_buffer[1]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+                    vsense_z = (((float)adc_vsense_buffer[2]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+                }
+
+                //Recalculate rbridge
+                //rbridge = (vbias * ADC_SAADC_RBRIDGE_RSENSE / vsense) - ADC_SAADC_RBRIDGE_RSENSE;
+                float vsense3x = vsense_x + vsense_y + vsense_z;
+                float vbias3x = vbias_x + vbias_y + vbias_z;
+                if(vsense3x > 0)
+                    rbridge = ((vbias3x) * ADC_SAADC_RBRIDGE_RSENSE / (vsense3x)) - ADC_SAADC_RBRIDGE_RSENSE;
+                else
+                    rbridge = 0;
+                
+                //Save data
+                adc_data_buffer[3] = (int32_t)(rbridge * 10.0f); //Resistance * 10 for extra resolution
+
+
+                if (sampler_dry_run == 0)
+                {
+                    (*adc_sample_set_ready_callback)((uint8_t *)adc_data_buffer, adc_sample_data_size, curent_sample_timestamp, current_sample_timestamp_offest);
+                    adc_sensors_restart_state_machine();
+                }
+                else
+                {
+                    sampler_dry_run--;
+
+                    //Only add data to average every time BOTH vsense and vbias have been measured
+                    if((sampler_dry_run%2)==0x00)
+                    {
+                        rbridge_init_value += adc_data_buffer[3];
+                        if (sampler_dry_run == 0)
+                        {
+                            rbridge_init_value /= sampler_dry_run_total;
+
+                            // Stop the state machine
+                            stop_state_machine_bit = true;
+                            check_stop_statemachine_bit();
+                        }
+                        else
+                        {
+                            adc_sensors_restart_state_machine();
+                        }
+                    }
+                    else
+                    {
+                        adc_sensors_restart_state_machine();
+                    }
+                }
+                break;
+            }
+
+            case ADC_SAMPLING_STATE_ERROR:
+            default:
+                state_machine_error = true;
+                break;
+        }
+
+        if (state_machine_error)
+        {
+            adc_state_errors++;
+
+            stop_state_machine_bit = true;
+            check_stop_statemachine_bit();
+
+            adc_sensors_start_state_machine();
+        }
+    }
+
+
+}
+
+
+-----------
+
+
+用spi读取sensor数据3个 字节
+
+static void adc_sensors_start_data_read_hold()
+{
+    if(!check_stop_statemachine_bit())
+        APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD));
+}
+
+
+
+
+

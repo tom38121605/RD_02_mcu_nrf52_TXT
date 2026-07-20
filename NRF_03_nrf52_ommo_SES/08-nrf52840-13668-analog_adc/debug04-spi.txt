@@ -1,0 +1,381 @@
+
+
+
+//adc sampler
+#define OMMO_ADC_127L11
+#define OMMO_ADC_SPI_CS_PIN      (1,12)
+#define OMMO_ADC_SPI_MISO_PIN    NRF_GPIO_PIN_MAP(1,13)
+#define OMMO_ADC_SPI_MOSI_PIN    NRF_GPIO_PIN_MAP(1,14)
+#define OMMO_ADC_SPI_SCK_PIN     NRF_GPIO_PIN_MAP(1,10)
+#define OMMO_ADC_BUS_TYPE        IC_BUS_TYPE_SPI
+#define OMMO_ADC_PORT            0
+#define OMMO_ADC_SS_INDEX        0
+
+
+#define OMMO_PM_SPI_BUSSES  ( .miso_pin = OMMO_ADC_SPI_MISO_PIN, .mosi_pin = OMMO_ADC_SPI_MOSI_PIN, .sck_pin = OMMO_ADC_SPI_SCK_PIN, \
+                              .frequency = NRF_SPIM_FREQ_16M, .mode = NRF_SPIM_MODE_1 )
+
+const spi_bus_t port_master_spi_busses[] = {FOR_EACH(SPI_BUS_DEF, OMMO_PM_SPI_BUSSES)};
+
+
+#define GPIO_DEF(arg) NRF_GPIO_PIN_MAP arg,
+
+-------------------------------------------------------------------------------------
+
+
+void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+{
+
+    //Acquire SPI connection permanently
+    APP_ERROR_CHECK(port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr));   //here
+
+
+---------------------------
+
+static void adc_ppi_init()
+
+
+    。。。。。。
+
+    // 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输）
+    // ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_ready_spi_read_ppi,
+        nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), ((spim_basic*)comm_device_ptr)->get_start_task()));  // DRDY --> adc_ready_spi_read_ppi --> get_start_task
+
+
+
+
+------------------------
+
+ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location, comm_device ** comm_device_ptr, comm_device_config_t *config = nullptr);
+
+//看上面的声明，后面一个参数comm_dev_config可以不传
+ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location_ss_line, comm_device ** comm_device_ptr, comm_device_config_t *comm_dev_config)
+{
+    VERIFY_TRUE(port_master_initialized, NRF_ERROR_MODULE_NOT_INITIALIZED);
+    VERIFY_TRUE(port < OMMO_PM_PORTS_COUNT, NRF_ERROR_NOT_FOUND);
+
+    switch (bus_type)
+    {
+        case IC_BUS_TYPE_SPI:
+        {
+            // Verify SPI bus exists
+            spi_slice_index_t slice_index = port_master_decode_spi_slice_index(bus_location_ss_line);
+            spi_ss_index_t ss_index = port_master_decode_spi_ss_index(bus_location_ss_line);
+            if (slice_index >= port_master_ports[port].spi_count
+                || (ss_index != 0xFF
+                    && (ss_index >= port_master_ports[port].spi_buses[slice_index].ss_index_count
+                        || port_master_ports[port].spi_buses[slice_index].ss_index_list[ss_index] >= NRFX_ARRAY_SIZE(port_master_ss_pins))))
+            {
+                return NRF_ERROR_NOT_FOUND;
+            }
+
+            spi_bus_index_t spi_bus_index = port_master_ports[port].spi_buses[slice_index].spi_bus_index;
+
+            // Setup SPI config
+            nrfx_spim_config_t config;
+            VERIFY_SUCCESS(port_master_get_spi_bus_config(spi_bus_index, &config));
+            if (ss_index != 0xFF)
+                config.ss_pin = port_master_ss_pins[port_master_ports[port].spi_buses[slice_index].ss_index_list[ss_index]];
+            if(comm_dev_config != nullptr) port_master_apply_comm_device_config(&config, comm_dev_config);
+
+
+            for (spim_basic & spim_instance : spim_basic_instances)
+            {
+                if (!spim_instance.is_acquired())
+                {
+                    ret_code_t rvalue = spim_instance.acquire(&config);       // 初始化 spi
+                    if (rvalue == NRF_SUCCESS)
+                    {
+                        *comm_device_ptr = &spim_instance;
+                    }
+                    return rvalue;
+                }
+            }
+
+
+        }
+
+        case IC_BUS_TYPE_I2C:
+        {
+        {
+            。。。。。。
+        }
+
+
+           //Setup twi config
+            twi_basic_config_t config;
+            VERIFY_SUCCESS(port_master_get_twi_bus_config(port, bus_location_ss_line, &config));
+            if(comm_dev_config != nullptr) port_master_apply_comm_device_config(&config, comm_dev_config);
+
+
+            return NRF_ERROR_NO_MEM;f OMMOCOMM_ENABLED
+        case IC_BUS_TYPE_OMMOCOMM_I2C:
+        case IC_BUS_TYPE_OMMOCOMM_SPI:
+        case IC_BUS_TYPE_CUSTOM:
+        {
+            if (port_master_ports[port].supports_ommocomm_virtual_port_pin == 0xFF)
+            {
+                return NRF_ERROR_NOT_SUPPORTED;
+            }
+
+            // Verify pin is free
+            ommocomm_acqmode_t mode   = bus_type == IC_BUS_TYPE_OMMOCOMM_I2C   ? OMMOCOMM_ACQMODE_TWI
+                                        : bus_type == IC_BUS_TYPE_OMMOCOMM_SPI ? OMMOCOMM_ACQMODE_SPI
+                                                                               : OMMOCOMM_ACQMODE_DIRECT;
+            return port_master_acquire_ommocomm_internal(mode, port, true, bus_location_ss_line, (ommocomm_uarte**)comm_device_ptr);
+        }
+#endif
+
+        default:
+            return NRF_ERROR_NOT_SUPPORTED;
+    }
+}
+
+
+----
+
+
+------------
+
+
+ret_code_t spim_basic::acquire(const nrfx_spim_config_t * p_cfg, bool direct)
+{
+    if (acq != SPIMB_ACQ_NONE)
+    {
+        return NRF_ERROR_BUSY;
+    }
+
+    return reconfigure(p_cfg, direct);
+}
+
+
+------------
+
+ret_code_t spim_basic::reconfigure(const nrfx_spim_config_t * p_cfg, bool direct)
+{
+    // Uninitialize the SPIM instance and release pins if already acquired
+    if (acq != SPIMB_ACQ_NONE)
+    {
+        port_master_release_pins(get_pin_mask(&spim_config, acq == SPIMB_ACQ_DIRECT));
+        nrfx_spim_uninit(spim_instance);
+    }
+
+    const nrfx_spim_config_t * spim_cfg = p_cfg ? p_cfg : &spim_config;
+    if (port_master_acquire_pins(get_pin_mask(spim_cfg, direct)) != NRF_SUCCESS)
+    {
+        return NRF_ERROR_NOT_FOUND;
+    }
+
+    // Сannot be not used(NRFX_SPIM_PIN_NOT_USED), or spi will not function correctly
+    if (spim_cfg->sck_pin == NRFX_SPIM_PIN_NOT_USED)
+    {
+        return NRF_ERROR_INVALID_PARAM; // Ensure SCK pin is connected
+    }
+
+    const ret_code_t ret = nrfx_spim_init(spim_instance, spim_cfg, spim_handler, this);
+    if (ret == NRF_SUCCESS)
+    {
+        // Disable the SPIM instance to prevent unintended transfers
+        nrf_spim_disable(spim_instance->p_reg);
+
+        // Copy the configuration to the internal buffer
+        if (p_cfg)
+        {
+            spim_config = *p_cfg;
+        }
+
+        port_master_configure_high_speed_output(spim_config.sck_pin);
+        port_master_configure_high_speed_output(spim_config.mosi_pin);
+        nrf_gpio_pin_set(spim_config.mosi_pin); //Default to high while not in use
+        acq = direct ? SPIMB_ACQ_DIRECT : SPIMB_ACQ_NORMAL;
+    }
+    else
+    {
+        acq = SPIMB_ACQ_NONE;
+    }
+    return ret;
+}
+
+
+
+----------------
+
+参数：comm_dev_config
+ret_code_t port_master_get_spi_bus_config(spi_bus_index_t spi_bus_index, nrfx_spim_config_t * p_out_config)
+{
+    if (spi_bus_index >= OMMO_PM_SPI_BUSSES_COUNT)
+    {
+        return NRF_ERROR_NOT_FOUND;
+    }
+
+    if (p_out_config == NULL)
+    {
+        return NRF_ERROR_NULL;
+    }
+
+    *p_out_config = (nrfx_spim_config_t)                               //here
+    {
+        .sck_pin        = port_master_spi_busses[spi_bus_index].sck_pin,
+        .mosi_pin       = port_master_spi_busses[spi_bus_index].mosi_pin,
+        .miso_pin       = port_master_spi_busses[spi_bus_index].miso_pin,
+        .ss_pin         = NRFX_SPIM_PIN_NOT_USED,
+        .ss_active_high = false,
+        .irq_priority   = port_master_spi_busses[spi_bus_index].irq_priority,
+        .orc            = 0xFF,
+        .frequency      = port_master_spi_busses[spi_bus_index].frequency,
+        .mode           = port_master_spi_busses[spi_bus_index].mode,
+        .bit_order      = port_master_spi_busses[spi_bus_index].bit_order,
+        NRFX_SPIM_DEFAULT_EXTENDED_CONFIG
+    };
+
+    return NRF_SUCCESS;
+}
+
+
+
+
+
+
+
+-----------------------------------------------------------------------------
+
+
+int main(void)
+
+
+     。。。。。。
+
+  
+
+----------------
+
+static void adc_sensors_start_data_read_hold()
+{
+    if(!check_stop_statemachine_bit())
+        APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD));
+}
+
+
+    //2nd frame
+    APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, frame_size));
+
+
+------------------
+
+
+void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
+{
+
+
+            case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
+            {
+                   。。。。。。
+
+                    adc_sensors_start_data_read_hold();
+
+
+
+----------------------
+
+
+ret_code_t spim_basic::trx(const uint8_t * p_tx_buffer, const size_t tx_length, uint8_t * p_rx_buffer, const size_t rx_length,
+                           const comm_device_event_handler_t handler, void * p_context, const comm_device_trx_flags_t flags)
+{
+    evt_handler = handler;
+    evt_context = p_context;
+    trx_complete = false;
+    is_repeated = !!(flags & COMM_DEVICE_FLAGS_REPEATED);
+
+    switch (acq)
+    {
+        case SPIMB_ACQ_NORMAL:
+        {
+            if (rx_length + tx_length > SPIM_MAX_XFER_SIZE)
+            {
+                return NRF_ERROR_INVALID_LENGTH;
+            }
+
+            //Save output buffer to copy response to after SPI TRX
+            evt_rx_buffer = p_rx_buffer;
+
+            // Setup transfer
+            nrfx_spim_xfer_desc_t xfer_desc = NRFX_SPIM_XFER_TRX(p_tx_buffer, tx_length, io_buffer, tx_length + rx_length);
+            nrf_spim_enable(spim_instance->p_reg);
+            return nrfx_spim_xfer(spim_instance, &xfer_desc, cast_flags_to_nrf(flags));
+        }
+
+        case SPIMB_ACQ_DIRECT:
+        {
+            const nrfx_spim_xfer_desc_t xfer = NRFX_SPIM_XFER_TRX(p_tx_buffer, tx_length, p_rx_buffer, rx_length);
+            nrf_spim_enable(spim_instance->p_reg);
+            return nrfx_spim_xfer(spim_instance, &xfer, cast_flags_to_nrf(flags));
+        }
+
+        default:
+            return NRF_ERROR_INVALID_STATE;
+    }
+}
+
+
+
+================================================== 参考 ===========================================================
+
+
+
+
+main
+
+   port_master_init()
+
+
+
+void port_master_init()
+{
+
+    for (ommocomm_uarte & ommocomm: ommocomm_instances)
+    {
+        APP_ERROR_CHECK(ommocomm.init());
+    }
+
+
+    for (const uint8_t & pin: port_master_ss_pins)
+    {
+        nrf_gpio_pin_set(pin);
+        port_master_configure_high_speed_output(pin);
+    }
+ 
+    port_master_initialized = true;
+}
+
+================================================== 参考2 ===========================================================
+
+
+
+
+[[nodiscard]] uint32_t spim_basic::get_start_task() const
+{
+    return nrfx_spim_start_task_get(spim_instance);
+}
+
+
+uint32_t nrfx_spim_start_task_get(nrfx_spim_t const * p_instance)
+{
+    NRF_SPIM_Type * p_spim = (NRF_SPIM_Type *)p_instance->p_reg;
+    return nrf_spim_task_address_get(p_spim, NRF_SPIM_TASK_START);  //ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
+}
+
+
+typedef enum
+{
+    NRF_SPIM_TASK_START   = offsetof(NRF_SPIM_Type, TASKS_START),   ///< Start SPI transaction.    //开启 spi传输，这里是读3各adc数据
+    NRF_SPIM_TASK_STOP    = offsetof(NRF_SPIM_Type, TASKS_STOP),    ///< Stop SPI transaction.
+    NRF_SPIM_TASK_SUSPEND = offsetof(NRF_SPIM_Type, TASKS_SUSPEND), ///< Suspend SPI transaction.
+    NRF_SPIM_TASK_RESUME  = offsetof(NRF_SPIM_Type, TASKS_RESUME)   ///< Resume SPI transaction.
+} nrf_spim_task_t;
+
+
+
+
+
+
