@@ -4,25 +4,38 @@
         .text section is larger than specified size
         .rodata section is larger than specified size
         Build failed, exit status 0x1
-答： 要换成sesV5.42版本来开发
+   答： 要换成sesV5.42版本来开发
 
 
 2. 问题： 找不到.s文件中的中断入口函数UARTE0_UART0_IRQHandler的函数体
 
 
-答(方法1)：在ses中全文搜索UARTE0_UART0_IRQHandler时，要使用目录遍历搜索 （不要用普通的工程搜索）
+   答(方法1)：在ses中全文搜索UARTE0_UART0_IRQHandler时，要使用目录遍历搜索 （不要用普通的工程搜索）
 
-答(方法2)：直接在windows的目录里，用文本搜索UARTE0_UART0_IRQHandler时
+   答(方法2)：直接在windows的目录里，用文本搜索UARTE0_UART0_IRQHandler时
 
  
  
             #define nrfx_uarte_0_irq_handler    UARTE0_UART0_IRQHandler    //nrfx_irqs_nrf52840.h
 
-3.  问题： 提示不能强制转换为 uint32
+3. 问题：预编译 Pre-Building '13668-analog_adc_siu_3v3-standard'
+
+         分析： 主要是在魔法棒中有下面这一个批处理文件没有正常运行
+                右键单击 project \options \ 左上角的下拉选Common \code \user build step \pre-build command
+                 ../../../../../../../flash_files/generate_protobuf_lib.bat
+
+
+         解决1：可直接把上面的pre-build command里面的bat删除变成空白，然后再编译
+
+         解决2：generate_protobuf_lib.bat里面逐条打 echo 和pause单步调试，找运行出错的原因
+                发现是少了ommo_build_common的文件  （从外面的ommo_build_common库拷贝进去，ok）
+
+
+4.  问题： 提示不能强制转换为 uint32
        converting a packed 'device_info_len_t' pointer (alignment 1) to a 'const uint32_t' {aka 'const long unsigned int'} 
        pointer (alignment 4) may result in an unaligned pointer value [-Werror=address-of-packed-member]
 
-分析： 相关代码如下
+    分析： 相关代码如下
          typedef __PACKED_STRUCT // 16 bytes total
          {
              uint16_t perm_len;       /* Device info permanent length */
@@ -35,7 +48,7 @@
          memset(&empty_device_info, 0x00, sizeof(device_info_len_t));
          nrf_nvmc_write_words(active_page_addr + sizeof(magic_data_t), (const uint32_t*)&empty_device_info, sizeof(device_info_len_t) >> 2);   //错误提示行
 
-解决： 使用 #pragma
+    解决： 使用 #pragma
 
          #pragma GCC diagnostic push
          #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
