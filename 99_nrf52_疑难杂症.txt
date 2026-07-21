@@ -31,7 +31,7 @@
                 发现是少了ommo_build_common的文件  （从外面的ommo_build_common库拷贝进去，ok）
 
 
-4.  问题： 提示不能强制转换为 uint32
+4.  问题： 提示不能强制转换为 uint32   （nrf52840）
        converting a packed 'device_info_len_t' pointer (alignment 1) to a 'const uint32_t' {aka 'const long unsigned int'} 
        pointer (alignment 4) may result in an unaligned pointer value [-Werror=address-of-packed-member]
 
@@ -48,7 +48,7 @@
          memset(&empty_device_info, 0x00, sizeof(device_info_len_t));
          nrf_nvmc_write_words(active_page_addr + sizeof(magic_data_t), (const uint32_t*)&empty_device_info, sizeof(device_info_len_t) >> 2);   //错误提示行
 
-    解决： 使用 #pragma
+    解决： 在代码的前后加 #pragma，屏蔽编译错误 （意思是这里不需要编译器检查错误）
 
          #pragma GCC diagnostic push
          #pragma GCC diagnostic ignored "-Waddress-of-packed-member"
@@ -61,6 +61,16 @@
          #pragma GCC diagnostic pop
 
 
+5. 提示 unknown option after '#pragma GCC diagnostic' kind [-Werror=pragmas]
+#pragma GCC diagnostic ignored "-Wanalyzer-infinite-loop"  //nrf52840
+
+    分析：#pragma GCC diagnostic ignored "-Wanalyzer-infinite-loop"
+
+    解决1： 去掉GCC, 改成以下
+            #pragma diagnostic ignored "-Wanalyzer-infinite-loop"
+
+    解决2：  魔法棒中，右键单击 project \options \ 左上角的下拉选Common \code \compiler \Additional C/C++ Compiler Options
+                 填入值： -Wno-pragmas
 
 
 
