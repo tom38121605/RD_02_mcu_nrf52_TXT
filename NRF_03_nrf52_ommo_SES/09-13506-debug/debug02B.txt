@@ -1,0 +1,170 @@
+
+疑问1： NRF_UARTE_EVENT_RXDRDY 和 NRF_UARTE_EVENT_ENDRX区别
+
+        NRF_UARTE_EVENT_RXDRDY	“收到一个字节”——每收一个字节触发一次。
+        NRF_UARTE_EVENT_ENDRX	“收完一批”——当接收缓冲区收满时触发一次。
+
+
+
+====================================================
+
+疑问1： uarte_instance的值是怎么来的
+分析：        #define UARTE_BASIC_INTST(index) uarte_basic(&uarte_peripheral[index]),
+
+
+        //static uarte_basic uarte_basic_instances[] = { FOR_MACRO(COUNT_ARGS(OMMO_PM_UARTE_PERIPHERALS_IDS), UARTE_BASIC_INTST) };
+        //  static uarte_basic uarte_basic_instances[] = { FOR_MACRO(COUNT_ARGS(OMMO_PM_UARTE_PERIPHERALS_IDS),    uarte_basic(&uarte_peripheral[index]),  ) };
+            static uarte_basic uarte_basic_instances[] = { FOR_MACRO(COUNT_ARGS(OMMO_PM_UARTE_PERIPHERALS_IDS),   
+                                                           { uarte_basic(&uarte_peripheral[0]),uarte_basic(&uarte_peripheral[0]),}  ) };
+
+            static uarte_basic uarte_basic_instances[] = {
+            uarte_basic(&uarte_peripheral[0]),
+            uarte_basic(&uarte_peripheral[1]), 
+            };
+
+
+        ---
+
+        #define NRFX_UARTE_INSTANCE(id) \
+        { \
+            .p_reg = NRF_UARTE##id, \
+            .drv_inst_idx = NRFX_UARTE##id##_INST_IDX \
+        }
+
+        ----- 
+
+
+        uarte_basic::uarte_basic(   * p_instance,    * p_cfg)
+
+        //: uarte_instance(p_instance)                             //这里的“：”是进入函数体之前的操作
+           this->uarte_instance = p_instance;                      //把p_instance赋值给uarte_instance
+
+        , uarte_config(p_cfg ? *p_cfg : (nrfx_uarte_config_t)NRFX_UARTE_DEFAULT_CONFIG)
+
+        {
+        }
+
+答： 明白了，定义的时候，uarte_basic_instances[0]里面uarte_instance赋值为UARTE0 。uarte_basic_instances[1]里面uarte_instance赋值为UARTE1。 
+     后来选中的是uarte_basic_instances[0]，所以uarte_instance自然就 是UARTE0
+
+
+疑问2：p_box 是什么
+答：   p_box 是一个"资源登记本"，记录 UARTE0 当前被谁占用、中断交给谁处理，防止多个驱动抢同一个硬件
+
+       nrfx_prs_acquire(NRF_UARTE0, comms_uarte_handler)
+               ↓
+       prs_box_get(NRF_UARTE0) → 返回 &m_prs_box_4
+               ↓
+       p_box->handler = comms_uarte_handler   // 存中断函数
+       p_box->acquired = true                 // 标记占用
+               ↓
+       以后 UARTE0 中断发生时：
+       nrfx_prs_box_4_irq_handler()        //待验证
+               ↓
+       m_prs_box_4.handler() → comms_uarte_handler() → 你的 1-Wire 代码
+
+
+
+=======================================================================================
+
+
+#define OMMO_SENSOR_TO_VCON_PIN           NRF_GPIO_PIN_MAP(0,17)
+#define OMMO_DATA_EN_PIN                  NRF_GPIO_PIN_MAP(0,6)
+#define OMMOCOMM_UARTE_DATA_PIN           NRF_GPIO_PIN_MAP(0,7)
+
+
+class                    comms_uarte_siu_1wire;
+comms_uarte_siu_1wire    comms_1wire;
+
+#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
+
+APP_TIMER_DEF(comms_1wire_timer_timer_id);
+nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
+
+
+#define   __SEGGER_RTL_UINT32_MAX     __UINT32_MAX__
+#define   UINT32_MAX                  __SEGGER_RTL_UINT32_MAX         
+
+comms_packetizer packetizer;
+
+
+----------
+
+class uarte_basic : public comm_device
+
+class comms_uarte_siu_1wire : private comms_transport_interface
+
+    uarte_basic *uarte_resource;
+
+
+#define NRFX_UARTE_DEFAULT_CONFIG                                                   \
+{                                                                                   \
+    .pseltxd            = NRF_UARTE_PSEL_DISCONNECTED,                              \
+    .pselrxd            = NRF_UARTE_PSEL_DISCONNECTED,                              \
+    .pselcts            = NRF_UARTE_PSEL_DISCONNECTED,                              \
+    .pselrts            = NRF_UARTE_PSEL_DISCONNECTED,                              \
+    .p_context          = NULL,                                                     \
+    .hwfc               = (nrf_uarte_hwfc_t)NRFX_UARTE_DEFAULT_CONFIG_HWFC,         \
+    .parity             = (nrf_uarte_parity_t)NRFX_UARTE_DEFAULT_CONFIG_PARITY,     \
+    .baudrate           = (nrf_uarte_baudrate_t)NRFX_UARTE_DEFAULT_CONFIG_BAUDRATE, \
+    .interrupt_priority = NRFX_UARTE_DEFAULT_CONFIG_IRQ_PRIORITY,                   \
+}
+
+
+#define OMMO_PM_UARTE_PERIPHERALS_IDS     0, 1   // Use peripheral ID separated by commas
+
+// #define ARGS 1, 2, 3, 4
+// COUNT_ARGS(ARGS) // will expand to 4
+#define COUNT_ARGS(...) COUNT_ARGS_EXPAND(__VA_ARGS__)
+
+#define OMMO_PM_UARTE_COUNT          COUNT_ARGS(OMMO_PM_UARTE_PERIPHERALS_IDS)
+
+
+-----------
+
+
+class uarte_basic : public comm_device
+{
+    public:
+    private:
+ 
+        const nrfx_uarte_t * uarte_instance;
+
+
+
+
+#define UARTE_BASIC_INTST(index) uarte_basic(&uarte_peripheral[index]),
+
+
+-------------------
+
+    NRF_UARTE_EVENT_ENDRX     = offsetof(NRF_UARTE_Type, EVENTS_ENDRX), 
+
+
+    TRACE_1WIRE_DISCONNECTED_INITIAL_STATE                   = 0xB7,
+
+
+
+typedef __PACKED_STRUCT
+{
+    uint32_t timestamp;    
+    uint8_t flags;         
+} comms_1wire_timestamp_packet_t;
+
+comms_1wire_timestamp_packet_t rx_timestamp;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

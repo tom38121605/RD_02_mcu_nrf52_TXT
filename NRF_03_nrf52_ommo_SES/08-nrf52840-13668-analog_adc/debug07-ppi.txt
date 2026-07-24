@@ -1,5 +1,5 @@
-
-1.nrf_ppi_event_endpoint_setup的理解     //一般与 nrf_ppi_task_endpoint_setup 搭配使用
+﻿
+1.nrf_ppi_event_endpoint_setup的理解     2  -->  1   //一般与 nrf_ppi_task_endpoint_setup 搭配使用
 
    //CC0(6 点) --> channel_bridge_select_ppi(闹铃)  
 
@@ -9,7 +9,7 @@
         nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));  
 
 
-2. nrfx_ppi_channel_assign 的理解   
+2. nrfx_ppi_channel_assign 的理解      2  -->  1  -->  3
 
    //CC2 （6 点） --  set_reset_start_ppi (闹铃)  --   GPIO SET (set_reset_pin_a))（开灯）
 
@@ -34,10 +34,10 @@
    不能先放进组，再绑定闹钟（CC 事件）和开灯（GPIO 任务）。
 
 
-4. nrf_ppi_task_endpoint_setup  和 nrf_ppi_fork_endpoint_setup 的 理解
+4. nrf_ppi_task_endpoint_setup  和 nrf_ppi_fork_endpoint_setup 的 理解   1  -->  2
 
    mux_select_ppi (闹铃)   -->  A1脚置0   (开灯1
-                           -->  A0脚置0   (开灯2)
+                                    -->  A0脚置0   (开灯2)
 
    ppi_task_endpoint_setup( ppi, clr PIN-A1 )
    ppi_fork_endpoint_setup( ppi, clr PIN-A0 )
@@ -46,6 +46,10 @@
    nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
 
 
+5. nrfx_ppi_channel_fork_assign 的理解   1  -->  2    //底层实际就是 nrf_ppi_fork_endpoint_setup （同上面4.）
+
+   //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
+     nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND) );
 
 
 

@@ -1,4 +1,4 @@
-
+﻿
 timestamp_timer_event_handler:
 
 timestamp_init_with_no_sample_event
@@ -28,7 +28,7 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
 
 
 
-    //计数器触发CC2后，继续计数
+    //计数器触发CC2后，继续计数， 后面的false是不开cc2中断
     nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
 
     //计数器触发CC2后，停止计数，关闭计数器

@@ -1,0 +1,136 @@
+
+
+int main(void)
+
+    。。。。。。
+
+
+    app_timer_init();
+
+    rtc_timer_init();
+
+
+    gpio_init();
+
+    //timer3初始化
+    timestamp_init_with_internal_sample_event(3);
+
+
+    comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+    。。。。。。
+
+
+------------------------------------------------------
+
+
+参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
+
+void comms_uarte_siu_1wire::init( nrfx_timer_t                             *timer, 
+                                  app_timer_id_t const                     *app_timer_id,
+                                  comms_packetizer_packet_ready_handler    packet_ready_callback, 
+                                  const void                               *context,
+                                  uint8_t                                  rtx_pin, 
+                                  uint8_t                                  isr_priority
+                                 )
+{
+    this->timer = timer;
+    this->app_timer_id = app_timer_id;
+
+    
+    。。。。。。
+
+    //配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1）
+
+    //DS: UARTE 每次接收完一个数据包（ENDRX 事件）时，自动捕获当前计时器TIMER3（timestamp timer）的值，并把这个值存下来，用于计算数据包到达的精确时间
+    //timestamp_capture_channel = timestamp_add_capture_event(uarte_resource->get_endrx_event(), &ppi_channel_timestamp_capture);
+        capture_channel = timestamp_get_capture_compare_channel();  //或CC0 待验证
+        //nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel]))
+          nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, &NRF_UARTE0_ENDRX, nrfx_timer_task_address_get(&timer_timestamp, task_CC0 )) 
+        return capture_channel;
+
+
+    //timer0 初始化，  发送 或 接收超时
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.p_context = this;
+    timer_cfg.interrupt_priority = isr_priority;  //1
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);      //待完成，看完下面回头再看。。。
+
+
+    //ommocomm_uarte has already configured a PPI channel to capture the local timestamp time at the end of each packet received.  
+    //Also capture the uarte timer value.  Note that this captures at each RXEND, but only the values for the end of the timestamp packet are used.
+
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2）
+
+    //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
+       nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
+
+
+
+
+
+---------------------
+
+
+rfx_err_t nrfx_timer_init(nrfx_timer_t const * const  p_instance,
+                           nrfx_timer_config_t const * p_config,
+                           nrfx_timer_event_handler_t  timer_event_handler)
+{
+    timer_control_block_t * p_cb = &m_cb[p_instance->instance_id];
+#ifdef SOFTDEVICE_PRESENT
+    NRFX_ASSERT(p_instance->p_reg != NRF_TIMER0);
+#endif
+    NRFX_ASSERT(p_config);
+    NRFX_ASSERT(timer_event_handler);
+
+    nrfx_err_t err_code;
+
+    if (p_cb->state != NRFX_DRV_STATE_UNINITIALIZED)
+    {
+        err_code = NRFX_ERROR_INVALID_STATE;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+    /* Warning 685: Relational operator '<=' always evaluates to 'true'"
+     * Warning in NRF_TIMER_IS_BIT_WIDTH_VALID macro. Macro validate timers resolution.
+     * Not necessary in nRF52 based systems. Obligatory in nRF51 based systems.
+     */
+
+    /*lint -save -e685 */
+
+    NRFX_ASSERT(NRF_TIMER_IS_BIT_WIDTH_VALID(p_instance->p_reg, p_config->bit_width));
+
+    //lint -restore
+
+    p_cb->handler = timer_event_handler;
+    p_cb->context = p_config->p_context;
+
+    uint8_t i;
+    for (i = 0; i < p_instance->cc_channel_count; ++i)
+    {
+        nrf_timer_event_clear(p_instance->p_reg,
+                              nrf_timer_compare_event_get(i));
+    }
+
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),
+        p_config->interrupt_priority);
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+
+    nrf_timer_mode_set(p_instance->p_reg, p_config->mode);
+    nrf_timer_bit_width_set(p_instance->p_reg, p_config->bit_width);
+    nrf_timer_frequency_set(p_instance->p_reg, p_config->frequency);
+
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+    err_code = NRFX_SUCCESS;
+    NRFX_LOG_INFO("Function: %s, error code: %s.",
+                  __func__,
+                  NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+}
+
+
+

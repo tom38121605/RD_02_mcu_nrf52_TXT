@@ -1,0 +1,691 @@
+
+#define OMMO_SENSOR_TO_VCON_PIN           NRF_GPIO_PIN_MAP(0,17)
+#define OMMO_DATA_EN_PIN                  NRF_GPIO_PIN_MAP(0,6)
+#define OMMOCOMM_UARTE_DATA_PIN           NRF_GPIO_PIN_MAP(0,7)
+
+
+class                    comms_uarte_siu_1wire;
+comms_uarte_siu_1wire    comms_1wire;
+
+#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
+
+APP_TIMER_DEF(comms_1wire_timer_timer_id);
+nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
+
+ 
+
+
+=========================================== uart0 初始化 ===============================================
+
+
+int main(void)
+
+    。。。。。。
+
+
+    gpio_init();
+
+    comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+    。。。。。。
+
+
+
+---
+
+void gpio_init( void )
+
+    nrf_gpio_pin_write(OMMO_DATA_EN_PIN, 1);
+    nrf_gpio_cfg(OMMO_DATA_EN_PIN, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+
+
+------------------
+
+static void msiu_1wire_packet_received(uint8_t *buffer, uint16_t length, const void *context)
+{
+    // The 1-wire interface is intended to emulate a USB connection.  The device is connected to an
+    // adapter with a USB CDC instance that simply relays USB packets over 1-wire to the device.
+
+    //取得返回长度
+    uint32_t response_length = process_usb_serial_packet_received(buffer, length, tx_buffer, PACKET_RESPONSE_BUFFER_SIZE);
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(tx_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    //根据返回长度，发送返回字符串
+    comms_1wire.send_command_packet_async(tx_buffer, response_length);
+
+}
+
+------
+
+uint16_t process_usb_serial_packet_received(uint8_t data[], uint16_t length, uint8_t response_buffer[], uint16_t response_buffer_size)
+{
+uint16_t response_length = 0;
+
+    //Check for invalid packets
+    if(length == 0x00)
+        return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+
+    switch(data[0])
+    {
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+            if(data_mode != DATA_MODE_DISABLED || !sensors_is_state_machine_ready_to_run())
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+            }
+            else if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                //Try to start state machine
+                uint32_t rvalue = sensors_start_state_machine();
+
+                if(rvalue == NRF_SUCCESS)
+                {
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                }
+
+                //Return success/failure
+                set_leds();
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(rvalue));
+            }
+            break;
+
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+            if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                response_length = fill_in_ack_packet(response_buffer, comms_esb_set_synch_rx_channel(data[1]));
+            }
+            break;
+    }
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, response_buffer, response_buffer_size);
+
+    return response_length;
+}
+
+
+------
+
+inline void usb_serial_send_command_packet(const uint8_t * buffer, size_t length)
+{
+    usb_serial.send_command_packet(buffer, length);
+       send_command_packet_blocking(buffer, length, false);
+}
+
+
+-----
+
+参数： buffer, length, false
+
+comms_packetizer::send_command_packet_blocking(  * buffer,   length,   block)
+
+    uint16_t tx_write_location;
+    ret_code_t err_code = NRF_SUCCESS;
+ 
+    if (transport_device->is_connected())
+    {
+        // Reserve space in buffer if USB packet fits in USB buffer
+        const size_t max_possible_output_length = COBS_CMD_CRC_POST0_MAX_LEN(length);
+
+        CRITICAL_REGION_ENTER();
+        if (tx_buffer_active_top + max_possible_output_length < USB_SERIAL_TX_BUFFER_SIZE)
+        {
+            tx_write_location = tx_buffer_active_top;
+            tx_buffer_active_top += max_possible_output_length;
+        }
+        else
+        {
+            // Buffer full
+            tx_lost_packets++;
+            err_code = NRF_ERROR_BUSY;
+        }
+        CRITICAL_REGION_EXIT();
+
+        // If data fit into the buffer, copy into reserved buffer location
+        // Note: usb event queue processing is done at the lowest priority level so this process
+        // cannot be interrupted
+        if (err_code == NRF_SUCCESS)
+        {
+            cobs_encode_usb_command_crc_post0_zero_pad(buffer, length, tx_buffer_active + tx_write_location, max_possible_output_length);
+
+            err_code = flush_tx_buffers(block);
+        }
+    }
+    else    
+        tx_lost_packets++;
+
+
+---------------------------------------
+
+
+
+
+
+参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
+
+void comms_uarte_siu_1wire::init( nrfx_timer_t                             *timer, 
+                                  app_timer_id_t const                     *app_timer_id,
+                                  comms_packetizer_packet_ready_handler    packet_ready_callback, 
+                                  const void                               *context,
+                                  uint8_t                                  rtx_pin, 
+                                  uint8_t                                  isr_priority
+                                 )
+{
+    this->timer = timer;
+    this->app_timer_id = app_timer_id;
+    this->rtx_pin = rtx_pin;
+    this->ev_handler = nullptr;
+
+    state = STATE_RX_HANDSHAKE;
+    disconnected_count = DISCONNECTION_COUNT_LIMIT;  // initially disconnected
+    last_app_connection_status = false;
+
+    rx_buffer = nullptr;
+    tx_buffer = nullptr;
+
+    in_synch_count = 0;
+    lost_synch_count = 0;
+    acquiring_synch_count = 0;
+    
+    // Assume first timed loop might be <100ms after initialization
+    last_in_synch_count = UINT32_MAX;
+    last_lost_synch_count = UINT32_MAX;
+    last_acquiring_synch_count = UINT32_MAX;
+
+    packetizer.init(this, packet_ready_callback, context);
+
+    packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
+    packetizer_enabled_actual = false;
+    packetizer_enabled_target = false;
+
+    //uart参数配置值，单线半双工，只接rx引脚
+    nrfx_uarte_config_t m_uart0_drv_config = NRFX_UARTE_DEFAULT_CONFIG;
+    m_uart0_drv_config.pselrxd = rtx_pin;
+    m_uart0_drv_config.pseltxd = NRF_UARTE_PSEL_DISCONNECTED;     //0xFFFFFFFF
+    m_uart0_drv_config.baudrate = NRF_UARTE_BAUDRATE_1000000;
+    m_uart0_drv_config.interrupt_priority = isr_priority;    //1
+
+
+    //单线uart初始化之一
+    //APP_ERROR_CHECK(port_master_acquire_uarte_direct(&m_uart0_drv_config, comms_uarte_handler, this, &uarte_resource));   //here
+
+            //uarte_basic_instances[0].acquire(m_uart0_drv_config,  comms_uarte_handler,  this);
+
+                 //单线uart初始化之二
+                 reconfigure(m_uart0_drv_config,  comms_uarte_handler,  this);                  
+
+            uarte_resource = &uarte_basic_instances[0];
+
+
+    //uarte = uarte_resource->get_nrfx_uarte_instance();
+       uarte = uarte_instance;    // uarte_basic_instances
+
+
+    // 初始化ommocom为rx脚，第二次配置，更详细
+    nrf_gpio_cfg(rtx_pin,
+                 NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT,
+                 NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
+
+
+    //配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1）
+
+    //DS: UARTE 每次接收完一个数据包（ENDRX 事件）时，自动捕获当前计时器TIMER3（timestamp timer）的值，并把这个值存下来，用于计算数据包到达的精确时间
+    //timestamp_capture_channel = timestamp_add_capture_event(uarte_resource->get_endrx_event(), &ppi_channel_timestamp_capture);
+        capture_channel = timestamp_get_capture_compare_channel();  //或CC0 待验证
+        //nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel]))
+          nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, &NRF_UARTE0_ENDRX, nrfx_timer_task_address_get(&timer_timestamp, task_CC0 )) 
+        return capture_channel;
+
+
+    //timer0 初始化，  发送 或 接收超时
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.p_context = this;
+    timer_cfg.interrupt_priority = isr_priority;  //1
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);      //待完成，以后在定时器中再看。。。
+
+
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2）
+
+    //ommocomm_uarte has already configured a PPI channel to capture the local timestamp time at the end of each packet received.  
+    //Also capture the uarte timer value.  Note that this captures at each RXEND, but only the values for the end of the timestamp packet are used.
+    //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
+       nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
+
+
+
+    //TMER0_CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃)  
+
+    //Data packet transmission is triggered by the state machine timer
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_schedule_rx_tx));
+    nrf_ppi_event_endpoint_setup(ppi_channel_schedule_rx_tx, nrfx_timer_event_address_get(timer, TIMER_EVENT_SCHEDULE_RX_TX));
+
+
+    //哪个定时器？初始化为100ms     //待完成，以后在定时器中再看。。。
+    //Init 100ms timer for disconnection watchdog, etc.
+    APP_ERROR_CHECK(app_timer_create(app_timer_id, APP_TIMER_MODE_REPEATED, timed_loop_100ms));
+    APP_ERROR_CHECK(app_timer_start(*app_timer_id, APP_TIMER_TICKS(100), this));
+
+
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+    //DS: 1-Wire 通信进入“握手”状态，也就是让设备开始监听来自主机的握手包，以建立或恢复通信连接
+    //Set up initial handshake rx to start state machine
+    initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
+
+
+
+--------
+
+参数：TRACE_1WIRE_DISCONNECTED_INITIAL_STATE
+
+comms_uarte_siu_1wire::initiate_handshake_now(  reason )
+
+    lost_synch_count++;
+    state = STATE_RX_HANDSHAKE;
+
+    //标记当前已断开，并记录断开的次数
+    on_disconnection(reason);
+
+    //stop停止timer0计数器
+    nrfx_timer_pause(timer);
+
+    //关闭ppi_channel_schedule_rx_tx，不让它触发
+    nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
+
+    //写入CC2的阈值64640，使能CC2中断
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT, COMMS_1WIRE_MAX_PERIOD_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS, true);   // 64640
+
+    nrfx_timer_clear(timer);    //计数器清0
+    nrfx_timer_resume(timer);   //重新计数
+
+    //rx_now(&rx_timestamp, sizeof(rx_timestamp));
+       rx_with_optional_hold(&rx_timestamp, 5, false)
+
+
+---
+
+参数： &rx_timestamp, 5, false
+
+comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
+
+    //空函数  //忽略
+    TRACE_1WIRE(TRACE_1WIRE_RX);
+
+    //设置uart为单线rx
+    //uarte_resource->switch_to_rx_only();
+       setup_pins(NRF_UARTE_PSEL_DISCONNECTED, uarte_config.pselrxd);                                     //TX 引脚断开，RX 引脚设为输入    
+       nrf_uarte_txrx_pins_set(uarte_instance->p_reg, NRF_UARTE_PSEL_DISCONNECTED, uarte_config.pselrxd); //UARTE 硬件：TX断开，RX连P0.7
+
+    //清空rx里面的垃圾数据  easy
+    uarte_resource->uarte_rx_flush_fifo();
+
+
+    //设置
+    nrfx_uarte_rx_with_hold(uarte, *buffer, length, with_hold);
+ 
+
+
+---
+
+nrfx_err_t nrfx_uarte_rx_with_hold(nrfx_uarte_t const * p_instance,
+                                   uint8_t *            p_data,
+                                   size_t               length,
+                                   bool                 hold_rx)
+{
+    uarte_control_block_t * p_cb = &m_cb[p_instance->drv_inst_idx];
+
+    NRFX_ASSERT(m_cb[p_instance->drv_inst_idx].state == NRFX_DRV_STATE_INITIALIZED);
+    NRFX_ASSERT(p_data);
+    NRFX_ASSERT(length > 0);
+    NRFX_ASSERT(UARTE_LENGTH_VALIDATE(p_instance->drv_inst_idx, length));
+
+    nrfx_err_t err_code;
+
+    // EasyDMA requires that transfer buffers are placed in DataRAM,
+    // signal error if the are not.
+    if (!nrfx_is_in_ram(p_data))
+    {
+        err_code = NRFX_ERROR_INVALID_ADDR;
+        NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                         __func__,
+                         NRFX_LOG_ERROR_STRING_GET(err_code));
+        return err_code;
+    }
+
+    bool second_buffer = false;
+
+    if (p_cb->handler)
+    {
+        nrf_uarte_int_disable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
+                                                 NRF_UARTE_INT_ENDRX_MASK);
+    }
+    if (p_cb->rx_buffer_length != 0)
+    {
+        if (p_cb->rx_secondary_buffer_length != 0)
+        {
+            if (p_cb->handler)
+            {
+                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
+                                                        NRF_UARTE_INT_ENDRX_MASK);
+            }
+            err_code = NRFX_ERROR_BUSY;
+            NRFX_LOG_WARNING("Function: %s, error code: %s.",
+                             __func__,
+                             NRFX_LOG_ERROR_STRING_GET(err_code));
+            return err_code;
+        }
+        second_buffer = true;
+    }
+
+    if (!second_buffer)
+    {
+        p_cb->rx_buffer_length = length;
+        p_cb->p_rx_buffer      = p_data;
+        p_cb->rx_secondary_buffer_length = 0;
+    }
+    else
+    {
+        p_cb->p_rx_secondary_buffer = p_data;
+        p_cb->rx_secondary_buffer_length = length;
+    }
+
+    NRFX_LOG_INFO("Transfer rx_len: %d.", length);
+
+    err_code = NRFX_SUCCESS;
+
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
+    nrf_uarte_rx_buffer_set(p_instance->p_reg, p_data, length);
+    if (!hold_rx)
+    {
+        if (!second_buffer)
+        {
+            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
+        }
+        else
+        {
+            nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
+        }
+    }
+
+    if (m_cb[p_instance->drv_inst_idx].handler == NULL)
+    {
+        bool endrx;
+        bool rxto;
+        bool error;
+        do {
+            endrx  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
+            rxto   = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
+            error  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ERROR);
+        } while ((!endrx) && (!rxto) && (!error));
+
+        m_cb[p_instance->drv_inst_idx].rx_buffer_length = 0;
+
+        if (error)
+        {
+            err_code = NRFX_ERROR_INTERNAL;
+        }
+
+        if (rxto)
+        {
+            err_code = NRFX_ERROR_FORBIDDEN;
+        }
+    }
+    else
+    {
+        nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
+                                                NRF_UARTE_INT_ENDRX_MASK);
+    }
+    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
+    return err_code;
+}
+
+---
+
+//清空rx里面的垃圾数据 easy
+
+uarte_basic::uarte_rx_flush_fifo() const
+ 
+    if (nrf_uarte_event_check(uarte_instance->p_reg, NRF_UARTE_EVENT_RXDRDY))  //如果有数据 （垃圾）
+ 
+        uint8_t empty_buff[8];
+        nrf_uarte_rx_buffer_set(uarte_instance->p_reg, empty_buff, sizeof(empty_buff));  //准备一个水桶
+ 
+        nrf_uarte_event_clear(uarte_instance->p_reg, NRF_UARTE_EVENT_RXTO);      //清除 rx超时事件标记
+        nrf_uarte_event_clear(uarte_instance->p_reg, NRF_UARTE_EVENT_ENDRX);     //清除 rx结束事件标记
+
+        nrf_uarte_task_trigger(uarte_instance->p_reg, NRF_UARTE_TASK_FLUSHRX);   //把水桶里的水，冲到rx里（替代掉原来的垃圾）
+
+
+        //等待rx被冲洗干净
+        uint32_t iter_count = 0;
+        while (!nrf_uarte_event_check(uarte_instance->p_reg, NRF_UARTE_EVENT_RXTO) &&    //“冲完了吗？”（RXTO）
+               !nrf_uarte_event_check(uarte_instance->p_reg, NRF_UARTE_EVENT_ENDRX) &&   // “rx满了吗”（ENDRX）
+               iter_count < 150)                                                         //等太久了，强制退出（防止卡死）
+        {
+            iter_count++;
+        }
+         
+        nrf_uarte_event_clear(uarte_instance->p_reg, NRF_UARTE_EVENT_RXDRDY);    // 清除rx收到数据标记
+ 
+
+    //清除rx的err事件标记
+    nrf_uarte_event_clear(uarte_instance->p_reg, NRF_UARTE_EVENT_ERROR);
+ 
+
+
+---------
+
+
+//单线串口初始化之二，
+
+参数：m_uart0_drv_config,   comms_uarte_handler,   this
+
+uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
+
+    direct_mode = (event_handler != nullptr);  //1， 有回调函数
+
+
+    // 当重新配置时，先取消初始化，再释放引脚
+    if (acq != UARTEB_ACQ_NONE)
+    {
+        nrfx_uarte_uninit(uarte_instance);
+        port_master_release_pins(get_pin_mask(&uarte_config));
+        acq = UARTEB_ACQ_NONE;
+    }
+
+    //取得配置
+    uarte_config = *p_cfg;
+
+
+    // 向系统申请占用这批 GPIO 引脚  （看是否已被占用）
+    ret_code_t err = poruarte_instancet_master_acquire_pins(get_pin_mask(&uarte_config));
+    if (err != NRF_SUCCESS)
+        return err;
+
+
+    if(direct_mode) //yes
+
+        event_handler = event_handler;        //comms_uarte_handler
+        uarte_config.p_context = p_context;   //this
+
+    else  //no
+        event_handler = static_uarte_basic_handler;
+        uarte_config.p_context = this;
+
+
+    //单线串口初始化之三，
+    nrfx_uarte_init(uarte_instance, &uarte_config, event_handler);
+
+
+    // Configure state
+    step = UARTEB_STEP_IDLE;
+    acq =  UARTEB_ACQ_DIRECT 
+
+    // 把p0.7配置成uart的rx引脚
+    switch_to_normal_trx();
+
+
+-----------
+
+//单线串口初始化之三，
+
+参数：uarte_instance (for UARTE0) ,  m_uart0_drv_config,   comms_uarte_handler    //uarte_basic_instances[0]
+
+nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
+ 
+ 
+    uarte_control_block_t * p_cb = &m_cb[p_instance->drv_inst_idx ]; 
+
+    static nrfx_irq_handler_t const irq_handlers[2] = {
+        nrfx_uarte_0_irq_handler,
+        nrfx_uarte_1_irq_handler
+    };
+
+    //申请使用该路uart0，并打占用标志
+    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[p_instance->drv_inst_idx]);
+       p_box->handler  = irq_handler;    //m_prs_box_4
+       p_box->acquired = true;
+
+
+    //UART0 初始化
+    //apply_config(p_instance, p_config);    //uarte_instance(for UARTE0) , m_uart0_drv_config
+       
+       nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                        //初始化P0.7为输入
+       nrf_uarte_baudrate_set(p_instance->p_reg, p_config->baudrate);                     //设置波特率
+       nrf_uarte_configure(p_instance->p_reg, p_config->parity, p_config->hwfc);          //设置奇偶校验
+       nrf_uarte_txrx_pins_set(p_instance->p_reg, p_config->pseltxd, p_config->pselrxd);  //设置uart0的tx，rx引脚
+
+
+    p_cb->handler   = event_handler;         // comms_uarte_handler
+    p_cb->p_context = p_config->p_context;   // this
+
+    //设置uart0的中断优先级为1，并使能uart0中断
+    interrupts_enable(p_instance, p_config->interrupt_priority);
+ 
+    //启动uart0
+    nrf_uarte_enable(p_instance->p_reg);
+
+    p_cb->rx_buffer_length           = 0;
+    p_cb->rx_secondary_buffer_length = 0;
+    p_cb->tx_buffer_length           = 0;
+    p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
+
+ 
+
+
+
+
+
+---
+
+uarte_basic::switch_to_normal_trx() 
+
+    //setup_pins(uarte_config.pseltxd, uarte_config.pselrxd);
+         nrf_gpio_cfg_input(uarte_config.pselrxd, NRF_GPIO_PIN_PULLUP);
+
+    //nrf_uarte_txrx_pins_set(uarte_instance->p_reg, uarte_config.pseltxd, uarte_config.pselrxd);
+         p_reg->PSEL.TXD = pseltxd;
+         p_reg->PSEL.RXD = pselrxd;
+
+
+
+---
+
+void comms_uarte_siu_1wire::comms_uarte_handler(nrfx_uarte_event_t const *p_event, void *p_context)
+{
+    OMMO_TRACE_ISR_ENTER(TRACE_ISR_UARTE_1WIRE);
+    ((comms_uarte_siu_1wire*)p_context)->on_comms_uarte_event(p_event);
+    OMMO_TRACE_ISR_EXIT(TRACE_ISR_UARTE_1WIRE);
+}
+
+
+
+----------------
+
+comms_transport_interface               *transport_device;
+comms_packetizer_packet_ready_handler   packet_handler;
+
+参数：this, msiu_1wire_packet_received, context
+
+void comms_packetizer::init(comms_transport_interface *transport, const comms_packetizer_packet_ready_handler   packet_ready_callback, const void *p_context)
+{
+
+    transport_device = transport;               // this
+    packet_handler = packet_ready_callback;     // msiu_1wire_packet_received
+    packet_handler_context = p_context;         // NULL
+
+    // Init buffers
+    rx_cobs_buffer_in_use = 0;
+    rx_cobs_buffer_top    = 0;
+    rx_cobs_buffer_bottom = 0;
+    in_comms_transport_rx = false;
+    rx_data_ready         = false;
+    rx_failed             = false;
+
+    flush_flag             = false;
+    tx_retry_count         = 0;
+    in_comms_transport_tx  = false;
+    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
+    tx_buffer_base         = 0;
+    tx_buffer_active_top   = 0;
+    tx_buffer_active       = tx_buffer_primary;
+    tx_buffer_transport    = nullptr; 
+    tx_buffer_transport_end= nullptr;
+
+    // Misc
+    rx_lost_packets = 0;
+    tx_lost_packets = 0;
+    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;
+
+    // Set transport up to call us back on rx/tx complete
+    transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
+}
+
+
+
+
+
+
+
+
+=========================================== uart0 中断进来 ===============================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,89 @@
+
+疑问1：NRF_TIMER_TASK_CAPTURE0 和 NRF_TIMER_EVENT_COMPARE0   区别
+
+答：NRF_TIMER_TASK_CAPTURE0	“拍照”   -- 立刻把当前 COUNTER 快照复制到 CC[0]               //easy，外部 → Timer（存数）            
+    NRF_TIMER_EVENT_COMPARE0	“闹铃响” -- 当 COUNTER == CC[0]，硬件自动产生 COMPARE0 事件   //easy，Timer → 向外发出信号
+
+
+
+
+
+=============================================================
+
+------------ timer0 ------------
+
+#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
+nrfx_timer_t comms_1wire_timer  =   OMMOCOMM_1WIRE_TIMER;
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    
+{                                                                                    
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,  // 默认 1MHz，即每微秒加 1  
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,            // 定时器模式（不是计数器）
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,  // 默认 32 位
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                      // 6
+    .p_context          = NULL                                                       
+}
+
+
+NRF_TIMER_TASK_CAPTURE0 = offsetof(NRF_TIMER_Type, TASKS_CAPTURE[0]),
+#define TIMER_TASK_CAPTURE_RXEND  NRF_TIMER_TASK_CAPTURE0   //CC0
+
+NRF_TIMER_EVENT_COMPARE1 = offsetof(NRF_TIMER_Type, EVENTS_COMPARE[1]),
+#define TIMER_EVENT_SCHEDULE_RX_TX  NRF_TIMER_EVENT_COMPARE1  //CC1
+
+#define TIMER_CHANNEL_RX_TIMEOUT    NRF_TIMER_CC_CHANNEL2
+
+
+
+
+#define COMMS_1WIRE_BYTE_TX_US      10
+#define COMMS_1WIRE_BYTE_TX_TICKS   US_TO_TICKS_16MHZ(COMMS_1WIRE_BYTE_TX_US)  //  10 * 16
+
+#define COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS (COMMS_1WIRE_BYTE_TX_TICKS * sizeof(comms_1wire_timestamp_packet_t))  // 5 * 16 * 10
+
+//合计： 64320
+#define COMMS_1WIRE_MAX_PERIOD_TICKS (COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS +        // 10 * 16 * 5   = 800   
+                                      COMMS_1WIRE_DATA_PACKET_DELAY_TICKS +          // 300 * 16      = 4800
+                                      COMMS_1WIRE_DATA_PACKET_TX_TICKS +             // 10 * 16 * 320 = 51200
+                                      COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS)  // 470 * 16      = 7520
+
+#define COMMS_1WIRE_RX_TIMEOUT_TICKS US_TO_TICKS_16MHZ(20)  //20 * 16 =320
+
+
+
+----------- timer0 end ----------
+
+
+
+------------ timer3 ------------
+
+
+#define OMMO_TIMESTAMP_TIMER           NRFX_TIMER_INSTANCE(3)
+
+static nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+
+----------- timer3 end ----------
+
+
+
+
+
+-------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
