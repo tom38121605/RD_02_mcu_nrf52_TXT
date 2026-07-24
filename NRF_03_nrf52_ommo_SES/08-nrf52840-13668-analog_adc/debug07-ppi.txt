@@ -1,46 +1,51 @@
 
+1.nrf_ppi_event_endpoint_setup的理解     //一般与 nrf_ppi_task_endpoint_setup 搭配使用
 
-1.nrf_ppi_event_endpoint_setup的理解 
+   //CC0(6 点) --> channel_bridge_select_ppi(闹铃)  
+
+    ppi_event_endpoint(ppi, CC0)
 
     nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,
         nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));  
 
-   //CC0(6 点) --> channel_bridge_select_ppi(闹铃)  
 
+2. nrfx_ppi_channel_assign 的理解   
 
-2. nrfx_ppi_channel_assign 的理解
+   //CC2 （6 点） --  set_reset_start_ppi (闹铃)  --   GPIO SET (set_reset_pin_a))（开灯）
+
+   ppi_channel_assign(ppi, CC2, GPIO SET)  
 
    nrfx_ppi_channel_assign(set_reset_start_ppi,
         nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL), 
         nrfx_gpiote_set_task_addr_get(set_reset_pin_a));
 
-   //CC2 （6 点） --  set_reset_start_pp (闹铃)  --   GPIO SET (set_reset_pin_a))（开灯）
-
 
 3. group的理解
 
+    CC2（6 点闹钟响） → group（总闸） →  set_reset_start_ppi（这条独立线路） → GPIO SET（开灯）
+
+    ppi_channel_include_in_group( ppi, group)
 
     APP_ERROR_CHECK(nrfx_ppi_group_alloc(&adc_sampling_ppi_group));
     APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(adc_start_ppi, adc_sampling_ppi_group));
 
 
-   CC2（6 点闹钟响） → group（总闸） →  set_reset_start_ppi（这条独立线路） → GPIO SET（开灯）
-
    必须先把每一条 PPI 通道的【EEP 事件、TEP 任务】全部配置完成，再把通道加入 group。
    不能先放进组，再绑定闹钟（CC 事件）和开灯（GPIO 任务）。
 
-4. nrf_ppi_fork_endpoint_setup的理解
 
-   CC1 (6点) --> adc_start_ppi (闹铃) --> start置高电平，开启adc数据转换 (开灯1)
-                                      --> NRF_SAADC_TASK_SAMPLE          (开灯2)
+4. nrf_ppi_task_endpoint_setup  和 nrf_ppi_fork_endpoint_setup 的 理解
 
-5. nrf_ppi_task_endpoint_setup  和 nrf_ppi_fork_endpoint_setup 的 理解
+   mux_select_ppi (闹铃)   -->  A1脚置0   (开灯1
+                           -->  A0脚置0   (开灯2)
+
+   ppi_task_endpoint_setup( ppi, clr PIN-A1 )
+   ppi_fork_endpoint_setup( ppi, clr PIN-A0 )
 
    nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
    nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
 
-   //mux_select_ppi (闹铃) -->  A1脚置0   (开灯1
-                           -->  A10脚置0  (开灯2)
+
 
 
 
