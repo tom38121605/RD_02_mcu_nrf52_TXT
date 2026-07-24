@@ -1,4 +1,39 @@
 
+
+
+
+
+
+
+uarte_irq_handler/comms_uarte_handler   --  on_comms_uarte_event  -- uarte0  
+    msiu_1wire_packet_received
+
+timer_event_handler   --  on_timer_event   -- timer0
+
+timestamp_timer_event_handler  -- timer3
+comms_esb_timer_handler        -- timer4
+
+
+
+无论数据从哪来，最终都会调用 timestamp_synch_recieved 来提取同步信息。
+TIMESTAMP_SYNCH_SOURCE_1WIRE
+TIMESTAMP_SYNCH_SOURCE_ESB
+
+
+timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
+
+if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_UART) {
+    // 收到有线同步，忽略 ESB 同步一段时间
+    timestamp_synch_esb_ignore_count = 16;  // 16 个 ESB 周期内忽略无线同步
+    if (was_wireless) {
+        timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
+    }
+}
+
+
+
+
+
 疑问1： NRF_UARTE_EVENT_RXDRDY 和 NRF_UARTE_EVENT_ENDRX区别
 
         NRF_UARTE_EVENT_RXDRDY	“收到一个字节”——每收一个字节触发一次。

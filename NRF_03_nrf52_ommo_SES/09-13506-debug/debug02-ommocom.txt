@@ -330,76 +330,66 @@ comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
     uarte_resource->uarte_rx_flush_fifo();
 
 
-    //设置
+    //设置rx的接收字符串为 rx_timestamp，长度为5，先不开启 （或等ppi触发）
     nrfx_uarte_rx_with_hold(uarte, *buffer, length, with_hold);
  
 
 
 ---
 
-nrfx_err_t nrfx_uarte_rx_with_hold(nrfx_uarte_t const * p_instance,
-                                   uint8_t *            p_data,
-                                   size_t               length,
-                                   bool                 hold_rx)
-{
-    uarte_control_block_t * p_cb = &m_cb[p_instance->drv_inst_idx];
+//设置rx的接收字符串为 rx_timestamp，长度为5，先不开启 （或等ppi触发）
 
-    NRFX_ASSERT(m_cb[p_instance->drv_inst_idx].state == NRFX_DRV_STATE_INITIALIZED);
-    NRFX_ASSERT(p_data);
-    NRFX_ASSERT(length > 0);
-    NRFX_ASSERT(UARTE_LENGTH_VALIDATE(p_instance->drv_inst_idx, length));
+参数： uarte， &rx_timestamp, 5, false
 
-    nrfx_err_t err_code;
-
-    // EasyDMA requires that transfer buffers are placed in DataRAM,
-    // signal error if the are not.
-    if (!nrfx_is_in_ram(p_data))
-    {
-        err_code = NRFX_ERROR_INVALID_ADDR;
-        NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                         __func__,
-                         NRFX_LOG_ERROR_STRING_GET(err_code));
-        return err_code;
-    }
+nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
 
     bool second_buffer = false;
+ 
+    p_cb = &m_cb[0];
 
-    if (p_cb->handler)
-    {
-        nrf_uarte_int_disable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
-                                                 NRF_UARTE_INT_ENDRX_MASK);
-    }
-    if (p_cb->rx_buffer_length != 0)
-    {
-        if (p_cb->rx_secondary_buffer_length != 0)
-        {
-            if (p_cb->handler)
-            {
-                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
-                                                        NRF_UARTE_INT_ENDRX_MASK);
-            }
+    NRFX_ASSERT(UARTE_LENGTH_VALIDATE(p_instance->drv_inst_idx, length));   // 检查长度是否在范围内，忽略跳过
+ 
+
+    // 检查 p_data 指针指向的地址是否在 RAM 范围内  //肯定是，忽略跳过
+    if (!nrfx_is_in_ram(p_data))
+        return err_code;
+    
+
+    //关闭中断叫快递员先别按门铃（正在洗漱） （有回调函数，说明每次中断你要处理事情，中断是开的。如果没有回调函数，中断没有开，下面就免了）
+      不关uart，是在换收货地址为仓库二时，不能中止往仓库一的运货和卸货
+      会不会丢失一次ENDRX中断，不会，因为ENDRX事件标志一直都在，一开中断马上就响应了
+    if (p_cb->handler)  //comms_uarte_handler    
+        nrf_uarte_int_disable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK | NRF_UARTE_INT_ENDRX_MASK);  //关闭接收完成中断和err中断
+    
+
+    if (p_cb->rx_buffer_length != 0)  //buf1正在使用吗
+    
+        if (p_cb->rx_secondary_buffer_length != 0) //buf2正在使用吗
+        
+            if (p_cb->handler)            
+                nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);   //打开接收完成中断和err中断
+            
             err_code = NRFX_ERROR_BUSY;
-            NRFX_LOG_WARNING("Function: %s, error code: %s.",
-                             __func__,
-                             NRFX_LOG_ERROR_STRING_GET(err_code));
-            return err_code;
-        }
-        second_buffer = true;
-    }
 
-    if (!second_buffer)
-    {
+        
+        second_buffer = true;  // buf2没有使用，请换buf2
+    
+
+    //换接收仓库
+    if (!second_buffer)  //用buf1
+    
         p_cb->rx_buffer_length = length;
         p_cb->p_rx_buffer      = p_data;
         p_cb->rx_secondary_buffer_length = 0;
-    }
-    else
-    {
+    
+    else // 用buf2，这里不能把 buf1的length置为0，因为里面有数据
+    
         p_cb->p_rx_secondary_buffer = p_data;
         p_cb->rx_secondary_buffer_length = length;
-    }
+    
+ 
+//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-    NRFX_LOG_INFO("Transfer rx_len: %d.", length);
 
     err_code = NRFX_SUCCESS;
 
@@ -449,6 +439,7 @@ nrfx_err_t nrfx_uarte_rx_with_hold(nrfx_uarte_t const * p_instance,
     NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
     return err_code;
 }
+
 
 ---
 
@@ -664,6 +655,96 @@ void comms_packetizer::init(comms_transport_interface *transport, const comms_pa
 
 
 
+
+
+nrfx_uarte_0_irq_handler( )
+ 
+    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+ 
+
+-------------
+
+uarte_irq_handler(   *p_uarte,   *p_cb  )
+{
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))
+    {
+        nrfx_uarte_event_t event;
+
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
+
+        event.type                   = NRFX_UARTE_EVT_ERROR;
+        event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
+        event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
+        event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
+
+        // Abort transfer.
+        p_cb->rx_buffer_length = 0;
+        p_cb->rx_secondary_buffer_length = 0;
+
+        p_cb->handler(&event, p_cb->p_context);
+    }
+    else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);
+        size_t amount = nrf_uarte_rx_amount_get(p_uarte);
+        // If the transfer was stopped before completion, amount of transfered bytes
+        // will not be equal to the buffer length. Interrupted transfer is ignored.
+        if (amount == p_cb->rx_buffer_length)
+        {
+            if (p_cb->rx_secondary_buffer_length != 0)
+            {
+                uint8_t * p_data = p_cb->p_rx_buffer;
+                nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);
+                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
+                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
+                p_cb->rx_secondary_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_data);
+            }
+            else
+            {
+                p_cb->rx_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);
+            }
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
+
+        if (p_cb->rx_buffer_length != 0)
+        {
+            p_cb->rx_buffer_length = 0;
+            // In case of using double-buffered reception both variables storing buffer length
+            // have to be cleared to prevent incorrect behaviour of the driver.
+            p_cb->rx_secondary_buffer_length = 0;
+            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
+
+        // Transmitter has to be stopped by triggering STOPTX task to achieve
+        // the lowest possible level of the UARTE power consumption.
+        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
+
+        if (p_cb->tx_buffer_length != 0)
+        {
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        }
+    }
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))
+    {
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
+        if (p_cb->tx_buffer_length != 0)
+        {
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        }
+    }
+ 
 
 
 
