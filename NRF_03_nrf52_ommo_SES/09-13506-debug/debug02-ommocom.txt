@@ -33,142 +33,14 @@ int main(void)
 
 ---
 
+//io口初始化
 void gpio_init( void )
 
     nrf_gpio_pin_write(OMMO_DATA_EN_PIN, 1);
     nrf_gpio_cfg(OMMO_DATA_EN_PIN, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
 
 
-------------------
-
-static void msiu_1wire_packet_received(uint8_t *buffer, uint16_t length, const void *context)
-{
-    // The 1-wire interface is intended to emulate a USB connection.  The device is connected to an
-    // adapter with a USB CDC instance that simply relays USB packets over 1-wire to the device.
-
-    //取得返回长度
-    uint32_t response_length = process_usb_serial_packet_received(buffer, length, tx_buffer, PACKET_RESPONSE_BUFFER_SIZE);
-
-    if(response_length == 0) //No response, must be an unknown command
-        response_length = fill_in_ack_packet(tx_buffer, OMMO_ACK_UNKNOWN_COMMAND);
-
-    //根据返回长度，发送返回字符串
-    comms_1wire.send_command_packet_async(tx_buffer, response_length);
-
-}
-
-------
-
-uint16_t process_usb_serial_packet_received(uint8_t data[], uint16_t length, uint8_t response_buffer[], uint16_t response_buffer_size)
-{
-uint16_t response_length = 0;
-
-    //Check for invalid packets
-    if(length == 0x00)
-        return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-
-    switch(data[0])
-    {
-        case OMMO_COMMAND_USB_DATA_ENABLE:
-            if(data_mode != DATA_MODE_DISABLED || !sensors_is_state_machine_ready_to_run())
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
-            else if(length != 2)
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                //Try to start state machine
-                uint32_t rvalue = sensors_start_state_machine();
-
-                if(rvalue == NRF_SUCCESS)
-                {
-                    packet_id = data[1];
-                    data_mode = DATA_MODE_USB;
-                }
-
-                //Return success/failure
-                set_leds();
-                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(rvalue));
-            }
-            break;
-
-        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
-            if(length != 2)
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                response_length = fill_in_ack_packet(response_buffer, comms_esb_set_synch_rx_channel(data[1]));
-            }
-            break;
-    }
-
-    if(response_length == 0) //No response, try protocol agnostic commands
-        response_length = process_packet_received(data, length, response_buffer, response_buffer_size);
-
-    return response_length;
-}
-
-
-------
-
-inline void usb_serial_send_command_packet(const uint8_t * buffer, size_t length)
-{
-    usb_serial.send_command_packet(buffer, length);
-       send_command_packet_blocking(buffer, length, false);
-}
-
-
------
-
-参数： buffer, length, false
-
-comms_packetizer::send_command_packet_blocking(  * buffer,   length,   block)
-
-    uint16_t tx_write_location;
-    ret_code_t err_code = NRF_SUCCESS;
- 
-    if (transport_device->is_connected())
-    {
-        // Reserve space in buffer if USB packet fits in USB buffer
-        const size_t max_possible_output_length = COBS_CMD_CRC_POST0_MAX_LEN(length);
-
-        CRITICAL_REGION_ENTER();
-        if (tx_buffer_active_top + max_possible_output_length < USB_SERIAL_TX_BUFFER_SIZE)
-        {
-            tx_write_location = tx_buffer_active_top;
-            tx_buffer_active_top += max_possible_output_length;
-        }
-        else
-        {
-            // Buffer full
-            tx_lost_packets++;
-            err_code = NRF_ERROR_BUSY;
-        }
-        CRITICAL_REGION_EXIT();
-
-        // If data fit into the buffer, copy into reserved buffer location
-        // Note: usb event queue processing is done at the lowest priority level so this process
-        // cannot be interrupted
-        if (err_code == NRF_SUCCESS)
-        {
-            cobs_encode_usb_command_crc_post0_zero_pad(buffer, length, tx_buffer_active + tx_write_location, max_possible_output_length);
-
-            err_code = flush_tx_buffers(block);
-        }
-    }
-    else    
-        tx_lost_packets++;
-
-
 ---------------------------------------
-
-
-
 
 
 参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
@@ -308,6 +180,7 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
     nrfx_timer_clear(timer);    //计数器清0
     nrfx_timer_resume(timer);   //重新计数
 
+    //？
     //rx_now(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(&rx_timestamp, 5, false)
 
@@ -330,14 +203,14 @@ comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
     uarte_resource->uarte_rx_flush_fifo();
 
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，先不开启 （或等ppi触发）
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 （或不等ppi触发）
     nrfx_uarte_rx_with_hold(uarte, *buffer, length, with_hold);
  
 
 
 ---
 
-//设置rx的接收字符串为 rx_timestamp，长度为5，先不开启 （或等ppi触发）
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 （或不等ppi触发）
 
 参数： uarte， &rx_timestamp, 5, false
 
@@ -347,13 +220,15 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
  
     p_cb = &m_cb[0];
 
-    NRFX_ASSERT(UARTE_LENGTH_VALIDATE(p_instance->drv_inst_idx, length));   // 检查长度是否在范围内，忽略跳过
- 
+    // 检查长度是否在范围内，忽略跳过
+    NRFX_ASSERT(UARTE_LENGTH_VALIDATE(p_instance->drv_inst_idx, length));  
 
     // 检查 p_data 指针指向的地址是否在 RAM 范围内  //肯定是，忽略跳过
     if (!nrfx_is_in_ram(p_data))
         return err_code;
     
+
+    //---------------------------------------  buf1和buf2 轮流接收  ------------------------------------------------
 
     //关闭中断叫快递员先别按门铃（正在洗漱） （有回调函数，说明每次中断你要处理事情，中断是开的。如果没有回调函数，中断没有开，下面就免了）
       不关uart，是在换收货地址为仓库二时，不能中止往仓库一的运货和卸货
@@ -361,7 +236,6 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
     if (p_cb->handler)  //comms_uarte_handler    
         nrf_uarte_int_disable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK | NRF_UARTE_INT_ENDRX_MASK);  //关闭接收完成中断和err中断
     
-
     if (p_cb->rx_buffer_length != 0)  //buf1正在使用吗
     
         if (p_cb->rx_secondary_buffer_length != 0) //buf2正在使用吗
@@ -369,79 +243,60 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
             if (p_cb->handler)            
                 nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);   //打开接收完成中断和err中断
             
-            err_code = NRFX_ERROR_BUSY;
-
-        
+            err_code = NRFX_ERROR_BUSY;        
         second_buffer = true;  // buf2没有使用，请换buf2
-    
 
-    //换接收仓库
+    //轮换接收仓库
     if (!second_buffer)  //用buf1
     
         p_cb->rx_buffer_length = length;
         p_cb->p_rx_buffer      = p_data;
-        p_cb->rx_secondary_buffer_length = 0;
+        p_cb->rx_secondary_buffer_length = 0;          // 这里两个buf为什么不对称 （这里应该只是初始化）
     
-    else // 用buf2，这里不能把 buf1的length置为0，因为里面有数据
+    else   // 用buf2  （这里不能把 buf1的length置为0，因为里面有数据？）
     
         p_cb->p_rx_secondary_buffer = p_data;
         p_cb->rx_secondary_buffer_length = length;
-    
- 
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 
     err_code = NRFX_SUCCESS;
 
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
-    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
-    nrf_uarte_rx_buffer_set(p_instance->p_reg, p_data, length);
-    if (!hold_rx)
-    {
-        if (!second_buffer)
-        {
-            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);
-        }
-        else
-        {
-            nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);
-        }
-    }
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);    //清ENDRX结束接收事件标志
+    nrf_uarte_event_clear(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);     //清RXTO接收超时事件标志
 
-    if (m_cb[p_instance->drv_inst_idx].handler == NULL)
-    {
-        bool endrx;
-        bool rxto;
-        bool error;
+    nrf_uarte_rx_buffer_set(p_instance->p_reg, p_data, length);
+
+    //---------------------------------------  buf1和buf2 轮流接收  ----end--------------------------------------------
+ 
+
+
+    //开启接收
+    if (!hold_rx)   // yes
+    
+        if (!second_buffer)        
+            nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);      // 直接启动接收
+        
+        else        
+            nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);    // 设置硬件“自动接力”：当前接收完成后，自动开始下一个接收
+        
+
+    if (m_cb[0].handler == NULL)    //no,  comms_uarte_handler  
+    
+        //等待，直到发生以下三种情况之一才退出循环
         do {
-            endrx  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);
-            rxto   = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);
-            error  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ERROR);
+            endrx  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ENDRX);    //接收完成
+            rxto   = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_RXTO);         //接收超时
+            error  = nrf_uarte_event_check(p_instance->p_reg, NRF_UARTE_EVENT_ERROR);      //通讯错误
+
         } while ((!endrx) && (!rxto) && (!error));
 
-        m_cb[p_instance->drv_inst_idx].rx_buffer_length = 0;
+        m_cb[0].rx_buffer_length = 0;   //len_buf1 =0   
+    
+    else    //yes
+        nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |   NRF_UARTE_INT_ENDRX_MASK);  //打开 UARTE 的“接收完成”和“错误”中断
+   
 
-        if (error)
-        {
-            err_code = NRFX_ERROR_INTERNAL;
-        }
-
-        if (rxto)
-        {
-            err_code = NRFX_ERROR_FORBIDDEN;
-        }
-    }
-    else
-    {
-        nrf_uarte_int_enable(p_instance->p_reg, NRF_UARTE_INT_ERROR_MASK |
-                                                NRF_UARTE_INT_ENDRX_MASK);
-    }
-    NRFX_LOG_INFO("Function: %s, error code: %s.", __func__, NRFX_LOG_ERROR_STRING_GET(err_code));
-    return err_code;
-}
-
-
----
+------
 
 //清空rx里面的垃圾数据 easy
 
@@ -505,7 +360,7 @@ uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
         return err;
 
 
-    if(direct_mode) //yes
+    if(direct_mode) //yes， 有回调函数
 
         event_handler = event_handler;        //comms_uarte_handler
         uarte_config.p_context = p_context;   //this
@@ -524,7 +379,11 @@ uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
     acq =  UARTEB_ACQ_DIRECT 
 
     // 把p0.7配置成uart的rx引脚
-    switch_to_normal_trx();
+    //switch_to_normal_trx();
+         nrf_gpio_cfg_input(uarte_config.pselrxd, NRF_GPIO_PIN_PULLUP);
+         p_reg->PSEL.TXD = pseltxd;
+         p_reg->PSEL.RXD = pselrxd;
+
 
 
 -----------
@@ -578,31 +437,476 @@ nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
 
 
 
----
-
-uarte_basic::switch_to_normal_trx() 
-
-    //setup_pins(uarte_config.pseltxd, uarte_config.pselrxd);
-         nrf_gpio_cfg_input(uarte_config.pselrxd, NRF_GPIO_PIN_PULLUP);
-
-    //nrf_uarte_txrx_pins_set(uarte_instance->p_reg, uarte_config.pseltxd, uarte_config.pselrxd);
-         p_reg->PSEL.TXD = pseltxd;
-         p_reg->PSEL.RXD = pselrxd;
+=========================================== uart0 中断接收 ===============================================
 
 
 
----
 
-void comms_uarte_siu_1wire::comms_uarte_handler(nrfx_uarte_event_t const *p_event, void *p_context)
+
+
+nrfx_uarte_0_irq_handler( )
+ 
+    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+ 
+
+-------------
+
+uarte_irq_handler(   *p_uarte,   *p_cb  )
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR)       //错误中断
+        。。。。。。
+
+    
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))    // 接收超时中断
+        。。。。。。
+
+
+    else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))   // 接收完成中断
+    
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);    //清零ENDRX标记
+
+        size_t amount = nrf_uarte_rx_amount_get(p_uarte);  收到了多少个字节
+
+        // If the transfer was stopped before completion, amount of transfered bytes
+        // will not be equal to the buffer length. Interrupted transfer is ignored.
+
+        if (amount == p_cb->rx_buffer_length)    // 收满了（不是超时，是正常收满）
+        
+            if (p_cb->rx_secondary_buffer_length != 0)      //轮到buf2
+            
+                uint8_t * p_data = p_cb->p_rx_buffer;
+
+                nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);  //关闭快捷
+
+                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
+                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
+
+                p_cb->rx_secondary_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_data);
+            
+            else                                                                        // 轮到buf1
+            
+                p_cb->rx_buffer_length = 0;
+                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   // rx_timestamp
+            
+    
+
+ -----
+
+参数： p_cb,   amount,   rx_timestamp
+
+rx_done_event(  *p_cb,    bytes,    p_data)
+
+    event.type             = NRFX_UARTE_EVT_RX_DONE;
+    event.data.rxtx.bytes  = bytes;
+    event.data.rxtx.p_data = p_data;
+
+    //p_cb->handler(&event, p_cb->p_context);
+    //  comms_uarte_handler(&event, this);
+            this->on_comms_uarte_event(p_event);
+
+
+------
+
+void comms_uarte_siu_1wire::on_comms_uarte_event(nrfx_uarte_event_t const *p_event)
 {
-    OMMO_TRACE_ISR_ENTER(TRACE_ISR_UARTE_1WIRE);
-    ((comms_uarte_siu_1wire*)p_context)->on_comms_uarte_event(p_event);
-    OMMO_TRACE_ISR_EXIT(TRACE_ISR_UARTE_1WIRE);
+    if (p_event->type == NRFX_UARTE_EVT_ERROR)
+        TRACE_1WIRE(TRACE_1WIRE_ERROR);
+    else if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
+        TRACE_1WIRE(TRACE_1WIRE_RX_DONE);
+    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
+        TRACE_1WIRE(TRACE_1WIRE_TX_DONE);
+
+    if (p_event->type == NRFX_UARTE_EVT_ERROR)
+    {
+        // After aborting rx, event may be ERROR or RX_DONE.  ERROR has priority, and only one of
+        // ERROR or RXEND will be processed by the ISR, i.e. if ERROR occurts, RXEND is left
+        // pending and causes a second interrupt.
+        nrf_uarte_event_clear(uarte->p_reg, NRF_UARTE_EVENT_ENDRX);
+    }
+
+    if (state == STATE_ERROR || state == STATE_UNINITIALIZED)
+        return;
+
+    if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
+    {
+        NRFX_ASSERT(!uarte_resource->tx_in_progress());
+        NRFX_ASSERT(state >= STATE_FIRST_RX);
+
+        // Handshake packet reception should be handled the same way during handshake restart
+        // or randomly receiving a handshake request while connected
+        if (state == STATE_RX_RESTART_HANDSHAKE &&
+            (rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE))
+        {
+            state = STATE_RX_TIMESTAMP;
+        }
+
+        // Force handshake if the timestamp doesn't make sense
+        if (state == STATE_RX_TIMESTAMP &&
+            !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE) &&
+            disconnected_count == 0)
+        {
+            uint32_t ts_delta = rx_timestamp.timestamp - last_rx_timestamp;
+            //             ticks/sec  * sec/ms * ms/synch + 10% tolerance = ~70k ticks/synch
+            if (ts_delta > HFCLK_FREQ / 1000   * 4        * 110/100)
+            {
+#ifdef DEBUG_NRF
+                ts_delta_abnormal_count++;
+#endif
+                on_disconnection(TRACE_1WIRE_DISCONNECTED_BAD_TIMESTAMP);
+                state = STATE_RX_RESTART_HANDSHAKE;
+            }
+#ifdef DEBUG_NRF
+            else
+            {
+                if (ts_delta < ts_delta_min)
+                    ts_delta_min = ts_delta;
+                if (ts_delta > ts_delta_min)
+                    ts_delta_max = ts_delta;
+            }
+#endif
+        }
+
+        // Expecting a handshake packet, but packet timing is unknown?
+        if (state == STATE_RX_HANDSHAKE)
+        {
+            handle_handshake_packet(TRACE_1WIRE_DISCONNECTED_SLAVE_INITIATING_HANDSHAKE);
+        }
+        // Expecting a handshake packet, but master is transmitting a series of packets?
+        else if (state == STATE_RX_RESTART_HANDSHAKE)
+        {
+            comms_1wire_state_t new_state;
+            if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)
+            {
+                // Remain in this state until master permits slave to transmit
+                new_state = STATE_RX_RESTART_HANDSHAKE;
+            }
+            else
+            {
+                // Deliberately disobey the master's request for slave to transmit to force
+                // master to re-initiate the handshake
+                new_state = STATE_RX_HANDSHAKE;
+            }
+            acquiring_synch_count++;
+            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,
+                                  new_state);
+        }
+        // Expecting a timestamp packet?
+        else if (state == STATE_RX_TIMESTAMP)
+        {
+            // Expected a timestamp packet, but actually got a handshake packet.  Master may have
+            // reset or didn't receive last slave transmission.
+            if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE)
+            {
+                handle_handshake_packet(TRACE_1WIRE_DISCONNECTED_MASTER_INITIATED_HANDSHAKE);
+            }
+            else
+            {
+                in_synch_count++;
+                last_rx_timestamp = rx_timestamp.timestamp;
+                if (disconnected_count != 0)
+                    on_connection();
+
+                uint32_t rxend_timestamp = timestamp_read_capture(timestamp_capture_channel);
+
+#ifdef DEBUG_NRF
+                connection_duration++;
+                if (connection_duration > connection_max_duration)
+                    connection_max_duration = connection_duration;
+#endif
+
+                //Process timestamp
+                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_EXT_SYNCH)
+                    timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
+
+                //RX/TX under the direction of the master
+                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)
+                {
+                    //If the application isn't expecting any data, simply ignore the incoming data,
+                    //and schedule receipt of the next timestamp packet
+                    if (rx_buffer == nullptr)
+                    {
+#ifdef DEBUG_NRF
+                        lost_packets++;
+#endif
+                        schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,
+                                              STATE_RX_TIMESTAMP);
+                    }
+                    else
+                    {
+                        rx_data_now();
+                    }
+                }
+                else
+                {
+                    //Master has directed the slave to transmit.  The slave MUST transmit to
+                    //maintain a connection.  If the master requested a ping (ex. TEST_PATTERN_MODE
+                    //enabled), or if the application has nothing to transmit, then send a ping
+                    //packet.
+                    if (tx_buffer != nullptr && !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_PING))
+                        schedule_tx_data(tx_buffer, STATE_TX_DATA);
+                    else
+                        schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK);
+                }
+            }
+        }
+        // Expecting master to transmit a data packet?
+        else if (state == STATE_RX_DATA)
+        {
+            if (on_rx_complete_in_isr())
+                rx_timestamp_now();
+            else
+                initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CALLBACK_ERROR);
+        }
+        else /*if (state == COMMS_1WIRE_STATE_RX_TIMEOUT)*/
+        {
+            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CANCELLED);
+        }
+    }
+    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
+    {
+        NRFX_ASSERT(!uarte_resource->rx_in_progress());
+        NRFX_ASSERT(state < STATE_FIRST_RX);
+
+        if (state == STATE_TX_DATA)
+            on_tx_complete_in_isr();
+
+        rx_timestamp_now();
+    }
+    else /*if (p_event->type == NRFX_UARTE_EVT_ERROR)*/
+    {
+        // Prevent a timeout interrupt while processing a framing error
+        nrf_timer_event_clear(timer->p_reg, nrf_timer_compare_event_get(TIMER_CHANNEL_RX_TIMEOUT));
+
+        if (state == STATE_RX_TIMEOUT)
+        {
+            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT);
+        }
+        else
+        {
+            if (state >= STATE_FIRST_RX)
+            {
+                on_disconnection(TRACE_1WIRE_DISCONNECTED_RX_ERROR);
+
+#ifdef DEBUG_NRF
+                if (state == STATE_RX_HANDSHAKE)
+                    rx_handshake_error_count++;
+                else
+                    rx_other_error_count++;
+#endif
+
+                uarte_resource->uarte_rx_flush_fifo();
+
+                // Framing errors indicate reception was initiated during a timestamp or data
+                // packet.  Schedule the next read where it is likely to land in a window where
+                // the master is listening for a response from the slave.  Note that the callee
+                // adds a bit of time, so that this is not an even multiple of the period.  In
+                // other words, future reads will not occur at the exact same time relative to
+                // the timestamp packet.
+                schedule_rx_timestamp(COMMS_1WIRE_MAX_PERIOD_TICKS / 2, STATE_RX_HANDSHAKE);
+            }
+            else
+            {
+#ifdef DEBUG_NRF
+                // A framing error is inexplicably reported after the first successful reception
+                // following a cold boot
+                tx_error_count++;
+#endif
+            }
+        }
+    }
 }
 
 
 
-----------------
+
+
+
+
+
+=========================================== uart0 中断发送 ===============================================
+
+
+
+
+nrfx_uarte_0_irq_handler( )
+ 
+    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+ 
+
+-------------
+
+uarte_irq_handler(   *p_uarte,   *p_cb  )
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR)       //错误中断
+        。。。。。。
+
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))    //发送停止
+    
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
+
+        if (p_cb->tx_buffer_length != 0)
+        
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))   // 发送结束
+    
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
+
+        // Transmitter has to be stopped by triggering STOPTX task to achieve
+        // the lowest possible level of the UARTE power consumption.
+        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
+
+        if (p_cb->tx_buffer_length != 0)        
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+
+    
+
+
+ -----
+
+
+
+
+
+==================================== 参考 ==================================
+
+
+------------------
+
+                                     
+
+static void msiu_1wire_packet_received(    *buffer,     length,      *context)
+{
+    // The 1-wire interface is intended to emulate a USB connection.  The device is connected to an
+    // adapter with a USB CDC instance that simply relays USB packets over 1-wire to the device.
+
+    //取得返回长度
+    uint32_t response_length = process_usb_serial_packet_received(buffer, length, tx_buffer, PACKET_RESPONSE_BUFFER_SIZE);
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(tx_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    //根据返回长度，发送返回字符串
+    comms_1wire.send_command_packet_async(tx_buffer, response_length);
+
+}
+
+------
+
+uint16_t process_usb_serial_packet_received(uint8_t data[], uint16_t length, uint8_t response_buffer[], uint16_t response_buffer_size)
+{
+uint16_t response_length = 0;
+
+    //Check for invalid packets
+    if(length == 0x00)
+        return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+
+    switch(data[0])
+    {
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+            if(data_mode != DATA_MODE_DISABLED || !sensors_is_state_machine_ready_to_run())
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+            }
+            else if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                //Try to start state machine
+                uint32_t rvalue = sensors_start_state_machine();
+
+                if(rvalue == NRF_SUCCESS)
+                {
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                }
+
+                //Return success/failure
+                set_leds();
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(rvalue));
+            }
+            break;
+
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+            if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                response_length = fill_in_ack_packet(response_buffer, comms_esb_set_synch_rx_channel(data[1]));
+            }
+            break;
+    }
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, response_buffer, response_buffer_size);
+
+    return response_length;
+}
+
+
+------
+
+inline void usb_serial_send_command_packet(const uint8_t * buffer, size_t length)
+{
+    usb_serial.send_command_packet(buffer, length);
+       send_command_packet_blocking(buffer, length, false);
+}
+
+
+-----
+
+参数： buffer, length, false
+
+comms_packetizer::send_command_packet_blocking(  * buffer,   length,   block)
+
+    uint16_t tx_write_location;
+    ret_code_t err_code = NRF_SUCCESS;
+ 
+    if (transport_device->is_connected())
+    {
+        // Reserve space in buffer if USB packet fits in USB buffer
+        const size_t max_possible_output_length = COBS_CMD_CRC_POST0_MAX_LEN(length);
+
+        CRITICAL_REGION_ENTER();
+        if (tx_buffer_active_top + max_possible_output_length < USB_SERIAL_TX_BUFFER_SIZE)
+        {
+            tx_write_location = tx_buffer_active_top;
+            tx_buffer_active_top += max_possible_output_length;
+        }
+        else
+        {
+            // Buffer full
+            tx_lost_packets++;
+            err_code = NRF_ERROR_BUSY;
+        }
+        CRITICAL_REGION_EXIT();
+
+        // If data fit into the buffer, copy into reserved buffer location
+        // Note: usb event queue processing is done at the lowest priority level so this process
+        // cannot be interrupted
+        if (err_code == NRF_SUCCESS)
+        {
+            cobs_encode_usb_command_crc_post0_zero_pad(buffer, length, tx_buffer_active + tx_write_location, max_possible_output_length);
+
+            err_code = flush_tx_buffers(block);
+        }
+    }
+    else    
+        tx_lost_packets++;
+
+
+
+
+
+
+============================= 参考2 =========================================
 
 comms_transport_interface               *transport_device;
 comms_packetizer_packet_ready_handler   packet_handler;
@@ -642,122 +946,6 @@ void comms_packetizer::init(comms_transport_interface *transport, const comms_pa
     // Set transport up to call us back on rx/tx complete
     transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
 }
-
-
-
-
-
-
-
-
-=========================================== uart0 中断进来 ===============================================
-
-
-
-
-
-
-nrfx_uarte_0_irq_handler( )
- 
-    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
- 
-
--------------
-
-uarte_irq_handler(   *p_uarte,   *p_cb  )
-{
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR))
-    {
-        nrfx_uarte_event_t event;
-
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
-
-        event.type                   = NRFX_UARTE_EVT_ERROR;
-        event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
-        event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
-        event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
-
-        // Abort transfer.
-        p_cb->rx_buffer_length = 0;
-        p_cb->rx_secondary_buffer_length = 0;
-
-        p_cb->handler(&event, p_cb->p_context);
-    }
-    else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);
-        size_t amount = nrf_uarte_rx_amount_get(p_uarte);
-        // If the transfer was stopped before completion, amount of transfered bytes
-        // will not be equal to the buffer length. Interrupted transfer is ignored.
-        if (amount == p_cb->rx_buffer_length)
-        {
-            if (p_cb->rx_secondary_buffer_length != 0)
-            {
-                uint8_t * p_data = p_cb->p_rx_buffer;
-                nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);
-                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
-                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
-                p_cb->rx_secondary_buffer_length = 0;
-                rx_done_event(p_cb, amount, p_data);
-            }
-            else
-            {
-                p_cb->rx_buffer_length = 0;
-                rx_done_event(p_cb, amount, p_cb->p_rx_buffer);
-            }
-        }
-    }
-
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
-
-        if (p_cb->rx_buffer_length != 0)
-        {
-            p_cb->rx_buffer_length = 0;
-            // In case of using double-buffered reception both variables storing buffer length
-            // have to be cleared to prevent incorrect behaviour of the driver.
-            p_cb->rx_secondary_buffer_length = 0;
-            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);
-        }
-    }
-
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
-
-        // Transmitter has to be stopped by triggering STOPTX task to achieve
-        // the lowest possible level of the UARTE power consumption.
-        nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
-
-        if (p_cb->tx_buffer_length != 0)
-        {
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
-        }
-    }
-
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))
-    {
-        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
-        if (p_cb->tx_buffer_length != 0)
-        {
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
-        }
-    }
- 
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
