@@ -81,14 +81,24 @@
       拍照确实会改变门槛值，因为本来就是要重新设置门槛值 （如当前拍照值 + 1000），所有临时改变没有关系
 
 
-7 . 在“find in files..." 全文查找RTC1_IRQn时， 选择”Folder and sub-folder“查找时不能找到定义的问题的解决
+7 .  在“find in files..." 全文查找RTC1_IRQn时， 选择”Folder and sub-folder“查找时不能找到定义的问题的解决
 答： 方法1： 。需重新点击”Browse“按键，重新再选一遍要查找的目录“c:\workspace\ommo_nrf", 即使它已经早已显示在文本框，也要重新选一遍
                    。等待10秒左右
 
        方法2： 把该变量RTC1_IRQ写在程序中， 然后 右键 -- go to definition
 
 
+8.  问：为什么timer3的中断程序中有，而在timer0的中断程序中没有进入/退出临界区的宏
 
+       NRFX_CRITICAL_SECTION_ENTER();   //关闭全局中断（__disable_irq()）
+       NRFX_CRITICAL_SECTION_EXIT();     //恢复关闭前状态
+
+   答：TIMER3 中断需要保护多步操作的共享变量，TIMER0 中断只是单步设置状态标志，不会被打断导致数据错乱，所以不需要临界区
+
+          对比项	          TIMER3 中断                                                                     TIMER0 中断
+          共享变量                sample_event_trigger_value、synch_event_trigger_value        state
+          操作复杂度            多步操作（读 → 计算 → 写）                                                单步赋值
+          是否需要临界区      需要                                                                                  不需要
 
 
 
