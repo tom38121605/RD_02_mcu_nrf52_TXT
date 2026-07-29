@@ -73,6 +73,13 @@
                  填入值： -Wno-pragmas
 
 
+6：NRF_TIMER_TASK_CAPTURE0 和 NRF_TIMER_EVENT_COMPARE0   区别
+
+答： NRF_TIMER_TASK_CAPTURE0	“拍照”   -- 立刻把当前 COUNTER 快照复制到 CC[0]               //easy，外部 → Timer（存数）            
+       NRF_TIMER_EVENT_COMPARE0	“闹铃响” -- 当 COUNTER == CC[0]，硬件自动产生 COMPARE0 事件   //easy，Timer → 向外发出信号
+
+
+
 
 
 
