@@ -1,0 +1,14 @@
+
+
+
+
+------------ rtc2 ------------
+
+#define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY 32768
+#define RTC_TIMEOUT_GEN_FREQUENCY NRFX_RTC_DEFAULT_CONFIG_FREQUENCY
+#define MS_TO_RTC_TIMEOUT_GEN(x)  ((uint32_t)(((uint64_t)(x) * RTC_TIMEOUT_GEN_FREQUENCY) / 1000UL))  //x 代表x毫秒， x * 32768 个 ticks
+
+
+
+------------ rtc2 end ------------
+

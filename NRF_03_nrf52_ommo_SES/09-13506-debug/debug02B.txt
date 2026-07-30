@@ -2,9 +2,6 @@
 
 
 
-
-
-
 uarte_irq_handler/comms_uarte_handler   --  on_comms_uarte_event  -- uarte0  
     msiu_1wire_packet_received
 
@@ -18,6 +15,7 @@ comms_esb_timer_handler        -- timer4
 无论数据从哪来，最终都会调用 timestamp_synch_recieved 来提取同步信息。
 TIMESTAMP_SYNCH_SOURCE_1WIRE
 TIMESTAMP_SYNCH_SOURCE_ESB
+
 
 
 timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
@@ -34,14 +32,15 @@ if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_U
 
 
 
-疑问1： NRF_UARTE_EVENT_RXDRDY 和 NRF_UARTE_EVENT_ENDRX区别
+====================================================
+
+
+疑问0： NRF_UARTE_EVENT_RXDRDY 和 NRF_UARTE_EVENT_ENDRX区别
 
         NRF_UARTE_EVENT_RXDRDY	“收到一个字节”——每收一个字节触发一次。
         NRF_UARTE_EVENT_ENDRX	“收完一批”——当接收缓冲区收满时触发一次。
 
 
-
-====================================================
 
 疑问1： uarte_instance的值是怎么来的
 分析：        #define UARTE_BASIC_INTST(index) uarte_basic(&uarte_peripheral[index]),
@@ -100,6 +99,8 @@ if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_U
 
 
 
+
+
 =======================================================================================
 
 
@@ -111,10 +112,7 @@ if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_U
 class                    comms_uarte_siu_1wire;
 comms_uarte_siu_1wire    comms_1wire;
 
-#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
 
-APP_TIMER_DEF(comms_1wire_timer_timer_id);
-nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
 
 
 #define   __SEGGER_RTL_UINT32_MAX     __UINT32_MAX__
@@ -179,16 +177,100 @@ class uarte_basic : public comm_device
     TRACE_1WIRE_DISCONNECTED_INITIAL_STATE                   = 0xB7,
 
 
+----------------------------------
+
+这个是通讯步骤状态机 
+
+STATE_UNINITIALIZED	            “关机状态”——还没初始化，啥都没干。调用 uninit() 后也会回到这个状态 
+STATE_TX_DATA	                    “正在发数据”—— 正在发送真正的 sensor 数据包 //谁在发送？是sensor 12668吗   //待理解
+
+STATE_TX_PING_ACK	            “正在发心跳包”——发一个空包（ping） //谁在发送？是sensor 12668吗    //待理解
+
+STATE_ERROR	                    “出事了”——UARTE 卡死了或长时间没动静，背景循环（100ms 定时器）发现后强行切到这个状态，准备重启通信  //待理解
+
+STATE_RX_HANDSHAKE	            “等主机喊我”——从机不知道当前时间窗口，正在等主机发握手包来建立/恢复同步。这是初始状态  
+
+STATE_RX_RESTART_HANDSHAKE          “主机在说话，但我想重新握手”——从机收到了主机数据，但时间戳对不上，想重新协商连接。此时主机还在发数据，从机先听着，等主机停下来再重握手
+
+STATE_RX_TIMEOUT	            “主机超时了”——从机等了半天没等到主机在预期时间发数据，一般是连接断了或被其他中断干扰了。从机会切到 STATE_RX_HANDSHAKE 重新等握手
+
+STATE_RX_TIMESTAMP	            “等主机报时”——握手成功后，从机知道时间窗口了，正在等主机发 timestamp 包（同步包）
+
+STATE_RX_DATA	                     “等主机发数据”——主机在 timestamp 包里说了“我要发数据”，从机正在等着收数据包。
+
+STATE_FIRST_RX = STATE_RX_HANDSHAKE  只是个标记，表示“第一个接收状态是 STATE_RX_HANDSHAKE”，方便代码判断。 //= STATE_RX_HANDSHAKE
+
+
+
+
+//flags常数定义： 这个是数据包（第5字节）里面的 指令标记
+
+#define COMMS_1WIRE_FLAGS_HANDSHAKE 0x80  // 区分是握手数据包，还是时间戳数据包  1 -- “这是握手包”（不是时间戳包）  //已验证
+#define COMMS_1WIRE_FLAGS_EXT_SYNCH 0x08  // 主时间戳，与外部输入信号同步        1 -- 这个时间戳可用来同步            //待验证
+
+#define COMMS_1WIRE_FLAGS_OPEN      0x04  // bit2=1，app里open了该从机     easy    
+#define COMMS_1WIRE_FLAGS_PING      0x02  // bit1=1，从机将返回0长度数据包 easy
+#define COMMS_1WIRE_FLAGS_MASTER_TX 0x01  // bit0=1 -- 收到主机发来的包, bit0=0 -- 请求从机发送包到主机去 easy
+
+
+
 
 typedef __PACKED_STRUCT
 {
     uint32_t timestamp;    
-    uint8_t flags;         
+    uint8_t flags;                      //见上面常数定义
 } comms_1wire_timestamp_packet_t;
 
-comms_1wire_timestamp_packet_t rx_timestamp;
+comms_1wire_timestamp_packet_t  rx_timestamp;
+
+#define COMMS_1WIRE_TIMESTAMP_DURING_HANDSHAKE 0xfffefdfc
 
 
+typedef enum
+{
+    TIMESTAMP_SYNCH_SOURCE_NONE,
+    TIMESTAMP_SYNCH_SOURCE_UART,
+    TIMESTAMP_SYNCH_SOURCE_1WIRE,   //here
+    TIMESTAMP_SYNCH_SOURCE_ESB,
+    TIMESTAMP_SYNCH_SOURCE_ESB_NO_TS
+} timestamp_source_t;
+
+
+---
+
+#define __COMMS_1WIRE_TEST_DATA_PLUS_1(x) 1+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_33(x) 33+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_65(x) 65+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_97(x) 97+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_129(x) 129+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_161(x) 161+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_193(x) 193+x,
+#define __COMMS_1WIRE_TEST_DATA_PLUS_225(x) 225+x,
+#define __COMMS_1WIRE_TEST_DATA_254_MINUS(x) 254-x,
+#define __COMMS_1WIRE_TEST_DATA_222_MINUS(x) 222-x,
+#define __COMMS_1WIRE_TEST_DATA_190_MINUS(x) 190-x,
+
+#define COMMS_1WIRE_TEST_DATA FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_1)     /*   1.. 32   32       */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_33)    /*  33.. 64 + 32 =  64 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_65)    /*  65.. 96 + 32 =  96 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_97)    /*  97..128 + 32 = 128 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_129)   /* 129..160 + 32 = 160 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_161)   /* 161..192 + 32 = 192 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_PLUS_193)   /* 193..224 + 32 = 224 */ \
+                              FOR_MACRO_31(__COMMS_1WIRE_TEST_DATA_PLUS_225)   /* 225..255 + 31 = 255 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_254_MINUS)  /* 254..223 + 32 = 287 */ \
+                              FOR_MACRO_32(__COMMS_1WIRE_TEST_DATA_222_MINUS)  /* 222..191 + 32 = 319 */ \
+                              FOR_MACRO_1 (__COMMS_1WIRE_TEST_DATA_190_MINUS)  /* 190..190 +  1 = 320 */
+
+static comms_1wire_slave_tx_data_packet_t tx_no_data =
+{
+    .length = 0,
+    .flags = 0,
+    .data = { COMMS_1WIRE_TEST_DATA },
+};
+
+
+#define TIMESTAMP_SYNCH_1WIRE_TX_DELAY     (5*10*16 + 1 + (16-4)) 
 
 
 

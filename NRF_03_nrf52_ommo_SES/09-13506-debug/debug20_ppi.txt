@@ -1,0 +1,381 @@
+﻿
+1.nrf_ppi_event_endpoint_setup的理解     2  -->  1   //一般与 nrf_ppi_task_endpoint_setup 搭配使用
+
+   //CC0(6 点) --> channel_bridge_select_ppi(闹铃)  
+
+    ppi_event_endpoint(ppi, CC0)
+
+    nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,
+        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));  
+
+
+2. nrfx_ppi_channel_assign 的理解      2  -->  1  -->  3
+
+   //CC2 （6 点） --  set_reset_start_ppi (闹铃)  --   GPIO SET (set_reset_pin_a))（开灯）
+
+   ppi_channel_assign(ppi, CC2, GPIO SET)  
+
+   nrfx_ppi_channel_assign(set_reset_start_ppi,
+        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL), 
+        nrfx_gpiote_set_task_addr_get(set_reset_pin_a));
+
+
+3. group的理解
+
+    CC2（6 点闹钟响） → group（总闸） →  set_reset_start_ppi（这条独立线路） → GPIO SET（开灯）
+
+    ppi_channel_include_in_group( ppi, group)
+
+    APP_ERROR_CHECK(nrfx_ppi_group_alloc(&adc_sampling_ppi_group));
+    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(adc_start_ppi, adc_sampling_ppi_group));
+
+
+   必须先把每一条 PPI 通道的【EEP 事件、TEP 任务】全部配置完成，再把通道加入 group。
+   不能先放进组，再绑定闹钟（CC 事件）和开灯（GPIO 任务）。
+
+
+4. nrf_ppi_task_endpoint_setup  和 nrf_ppi_fork_endpoint_setup 的 理解   1  -->  2
+
+   mux_select_ppi (闹铃)   -->  A1脚置0   (开灯1
+                                    -->  A0脚置0   (开灯2)
+
+   ppi_task_endpoint_setup( ppi, clr PIN-A1 )
+   ppi_fork_endpoint_setup( ppi, clr PIN-A0 )
+
+   nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
+   nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+
+
+5. nrfx_ppi_channel_fork_assign 的理解   1  -->  2    //底层实际就是 nrf_ppi_fork_endpoint_setup （同上面4.）
+
+   //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
+     nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND) );
+
+
+
+
+
+
+
+------------------------------------------------
+ 
+
+
+//timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M，开启timer3开始计数
+//写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
+//写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
+//分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组
+//分配和建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group），使能该ppi
+
+参数： 3 
+timestamp_init_with_internal_sample_event( isr_priority)
+ 
+    //Init timer
+    timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;         //初始配置： 1M，定时器模式，32位，优先级6
+    timer_cfg.interrupt_priority = isr_priority;   //3
+
+    //设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M
+    nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler);
+
+    nrfx_timer_enable(&timer_timestamp);           //开启timer3开始计数
+
+
+    //---取得timer3第一个未使用的通道，即CC0
+    sample_event_compare_channel = timestamp_get_capture_compare_channel();   //timer3 cc0
+
+
+    //手动触发 TIMER3 的 CAPTURE 任务，把当前定时器的计数值捕获到指定的 CC0 通道寄存器里
+    nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);
+
+    //读取timer3 cc0的当前计数值 + 15984 * 4
+    sample_event_trigger_value = nrfx_timer_capture_get(&timer_timestamp, sample_event_compare_channel) + OMMO_TIMESTAMP_SAMPLE_PERIOD*4;
+
+    //写入timer3 CC0的阈值 当前计数值 + 15984 * 4，使能timer3 CC0中断
+    nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
+
+
+    //---取得timer3第二个未使用的通道，即CC1
+    timestamp_synch_event_compare_channel = timestamp_get_capture_compare_channel();
+
+    //写入timer3 CC1的阈值 当前计数值 + 15984 * 4(初始值相同)，不使能timer3 CC1中断
+    nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, sample_event_trigger_value, false);
+
+    //清timer3 CC1的比较事件标记
+    nrf_timer_event_clear(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]);
+
+
+    //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组   //在哪里用到group？
+    nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);
+    nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture);
+
+ 
+
+    //分配ppi通道ppi_channel_disable_timestamp_capture
+    nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);
+
+
+    //建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group）
+    //AAA = nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)  //关闭ppi group通道
+       AAA = nrf_ppi_task_group_disable_address_get(group);
+
+    //BBB = timestamp_get_sample_event_address()  //timer3 cc0 发生比较事件
+       BBB = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel])   //NRF_TIMER_EVENT_COMPARE0
+
+    nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, BBB, AAA );
+
+
+    //使能ppi_channel_disable_timestamp_capture
+    nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture);
+
+
+    //调试备用空函数，忽略
+    timestamp_debug_init(isr_priority);  //3
+
+    initialized = true;
+
+
+
+-----------------------------
+
+
+//分配和配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1 -- 拍照1）
+//timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+//配置PPI：ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+
+
+参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
+
+comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callback,    *context,    rtx_pin,   isr_priority   )
+
+    this->timer = timer;   // comms_1wire_timer
+
+    
+    。。。。。。
+
+
+     //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture -------------
+
+    //DS: UARTE 每次接收完一个数据包（ENDRX 事件）时，自动捕获当前计时器TIMER3（timestamp timer）的值，并把这个值存下来，用于计算数据包到达的精确时间
+    //分配和配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1 -- 拍照1）
+    //timestamp_capture_channel = timestamp_add_capture_event(uarte_resource->get_endrx_event(), &ppi_channel_timestamp_capture);        
+        timestamp_capture_channel = timestamp_get_capture_compare_channel();  //或CC0 
+        nrfx_ppi_channel_alloc(&ppi_channel_timestamp_capture)
+        nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, &NRF_UARTE0_ENDRX, nrfx_timer_task_address_get(&timer_timestamp, task_CC0 )) 
+
+
+
+    //timer0 初始化，  发送 或 接收超时
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.p_context = this;
+    timer_cfg.interrupt_priority = isr_priority;  //1
+
+    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);  
+
+
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+
+    //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
+       nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
+
+
+     //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture ----end---------
+
+
+
+
+
+
+
+
+------------
+
+
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收，state为STATE_RX_HANDSHAKE
+
+参数：TRACE_1WIRE_DISCONNECTED_INITIAL_STATE
+
+comms_uarte_siu_1wire::initiate_handshake_now(  reason )
+
+    lost_synch_count++;
+    state = STATE_RX_HANDSHAKE;
+
+    //在log中标记当前已断开，并记录断开的次数
+    on_disconnection(reason);
+
+    //stop停止timer0计数器
+    nrfx_timer_pause(timer);
+
+    //关闭ppi_channel_schedule_rx_tx，不让它触发
+    nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
+
+    //写入CC2的阈值64640(4040us)，使能CC2中断
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT, COMMS_1WIRE_MAX_PERIOD_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS, true);   // 64640
+
+    nrfx_timer_clear(timer);    //计数器清0
+    nrfx_timer_resume(timer);   //重新计数
+
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //rx_now(&rx_timestamp, sizeof(rx_timestamp));
+       rx_with_optional_hold(&rx_timestamp, 5, false)
+
+
+
+-----
+
+//总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+//取得timer0的cc0的计数值，即rxend的时间点
+//写入CC1的阈值 rxend_time + data_end_offset +7520，不使能CC1中断
+//设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+//写入CC2的阈值 rxend_time + data_end_offset +8640，使能CC2中断  
+//设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+
+参数： 56000 ， RESTART_HANDSHAKE / RX_HANDSHAKE
+
+comms_uarte_siu_1wire::schedule_rx_timestamp(  data_end_offset,  new_state )
+
+    state = new_state;
+
+    //取得timer0的cc0的计数值，即rxend的时间点
+    rxend_time = nrf_timer_cc_read(timer->p_reg, TIMER_CHANNEL_CAPTURE_RXEND);
+
+    //写入CC1的阈值 rxend_time + data_end_offset +7520，不使能CC1中断 （或后面由ppi触发）
+    nrfx_timer_compare(timer, TIMER_CHANNEL_SCHEDULE_RX_TX,
+                       rxend_time + data_end_offset + COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS / 2, false);
+
+    //ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) 
+    nrf_ppi_task_endpoint_setup(ppi_channel_schedule_rx_tx, uarte_resource->get_startrx_task());
+
+    //使能ppi
+    nrfx_ppi_channel_enable(ppi_channel_schedule_rx_tx);
+
+
+    //在定时器（TIMER0）上设置一个“接收超时闹钟”——如果从预期的 timestamp 包开始接收后，超过 540us 还没收到完整数据，就触发超时中断
+    //写入CC2的阈值 rxend_time + data_end_offset +8640，使能CC2中断  
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT,
+                       rxend_time + data_end_offset + COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS +
+                       COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS,
+                       true);
+
+
+    ////设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //triggered_rx(&rx_timestamp, sizeof(rx_timestamp));
+       rx_with_optional_hold(buffer, length, true)
+
+
+
+------
+
+
+//总功能：规划uart的发送数据
+//取得timer0的cc0的计数值，即rxend的时间点
+//写入CC1的阈值4800(300us)，不使能CC1中断 （后面由ppi触发）
+//建立ppi：starttx(6 点) --> ppi_channel_schedule_rx_tx(闹铃) ，使能ppi
+//关闭timer0 cc2的超时中断
+
+//把单线引脚从rx变成tx
+//把发送数据放到uart的tx的缓冲区，暂不发送，或等ppi触发
+
+参数： tx_no_data, STATE_TX_PING_ACK
+
+comms_uarte_siu_1wire::schedule_tx_data(   *buffer,  new_state)
+ 
+    state = new_state;
+
+    //取得timer0的cc0的计数值，即rxend的时间点
+    //rxend_time = nrf_timer_cc_read(timer->p_reg, TIMER_CHANNEL_CAPTURE_RXEND);   //TIMER0 CC0
+       rxend_time = NRF_TIMER0->CC0;
+
+    //写入CC1的阈值4800(300us)，不使能CC1中断 （后面由ppi触发）
+    nrfx_timer_compare( timer, TIMER_CHANNEL_SCHEDULE_RX_TX,  rxend_time + COMMS_1WIRE_DATA_PACKET_DELAY_TICKS,  false );
+
+//ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) 
+
+    //建立ppi：ppi_channel_schedule_rx_tx(闹铃)   -->  starttx(开灯) 
+    nrf_ppi_task_endpoint_setup(ppi_channel_schedule_rx_tx, uarte_resource->get_starttx_task());
+
+    //使能ppi_channel_schedule_rx_tx
+    nrfx_ppi_channel_enable(ppi_channel_schedule_rx_tx);
+
+
+    //禁用timer0 cc2的超时中断（发送期间不需要超时检测）
+    nrfx_timer_compare_int_disable(timer, TIMER_CHANNEL_RX_TIMEOUT);
+
+
+    //把单线引脚从rx变成tx
+    //把发送数据放到uart的tx的缓冲区，暂不发送，或等ppi触发
+    tx_with_hold(buffer, sizeof(comms_1wire_slave_tx_data_packet_t));
+ 
+
+
+
+
+
+============================== ppi group 参考==========================================
+
+ sensors_init(  sample_set_ready_callback_function )
+
+    //分配一个ppi组 sampling_ppi_start_group
+    nrfx_ppi_group_alloc(&sampling_ppi_start_group);
+
+
+-----------
+
+
+timestamp_add_capture_event_with_disable
+
+nrf_timer_cc_channel_t timestamp_add_capture_event_with_disable(uint32_t trigger_event_addr)
+{
+nrf_timer_cc_channel_t capture_channel;
+
+    capture_channel = timestamp_get_capture_compare_channel();
+
+    //Actually add capture event
+    timestamp_add_capture_event_with_disable(trigger_event_addr, capture_channel);
+
+    return capture_channel;
+}
+
+void timestamp_add_capture_event_with_disable(uint32_t trigger_event_addr, nrf_timer_cc_channel_t capture_channel)
+{
+nrf_ppi_channel_t ppi_channel_timestamp_capture;
+
+    //Setup PPI for capturing timestamp at encoder edge event
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_timestamp_capture));
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel])));
+    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_timestamp_capture));
+
+    //Include in disable group
+    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(ppi_channel_timestamp_capture, ppi_group_disable_timestamp_capture));
+}
+
+nrf_timer_cc_channel_t timestamp_add_capture_event_with_disable(nrf_ppi_channel_t ppi_channel_timestamp_capture, uint32_t trigger_event_addr)
+{
+nrf_timer_cc_channel_t capture_channel;
+
+    capture_channel = timestamp_get_capture_compare_channel();
+
+    //Actually add capture event to the existing ppi channel
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel])));
+    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_timestamp_capture));
+
+    //Include in disable group
+    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(ppi_channel_timestamp_capture, ppi_group_disable_timestamp_capture));
+
+    return capture_channel;
+}
+
+void timestamp_add_capture_event_with_disable(nrf_ppi_channel_t ppi_channel_timestamp_capture, uint32_t trigger_event_addr, nrf_timer_cc_channel_t capture_channel)
+{
+    //Actually add capture event to the existing ppi channel
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel])));
+    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_timestamp_capture));
+
+    //Include in disable group
+    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(ppi_channel_timestamp_capture, ppi_group_disable_timestamp_capture));
+}
+
+
+
+

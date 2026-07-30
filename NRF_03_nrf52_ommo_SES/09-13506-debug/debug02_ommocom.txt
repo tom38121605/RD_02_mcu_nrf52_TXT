@@ -1,16 +1,5 @@
 
-#define OMMO_SENSOR_TO_VCON_PIN           NRF_GPIO_PIN_MAP(0,17)
-#define OMMO_DATA_EN_PIN                  NRF_GPIO_PIN_MAP(0,6)
-#define OMMOCOMM_UARTE_DATA_PIN           NRF_GPIO_PIN_MAP(0,7)
 
-
-class                    comms_uarte_siu_1wire;
-comms_uarte_siu_1wire    comms_1wire;
-
-#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
-
-APP_TIMER_DEF(comms_1wire_timer_timer_id);
-nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
 
  
 
@@ -25,13 +14,18 @@ int main(void)
 
     gpio_init();
 
+
     comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+
 
     。。。。。。
 
 
 
----
+
+
+-----
 
 //io口初始化
 void gpio_init( void )
@@ -45,21 +39,15 @@ void gpio_init( void )
 
 参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
 
-void comms_uarte_siu_1wire::init( nrfx_timer_t                             *timer, 
-                                  app_timer_id_t const                     *app_timer_id,
-                                  comms_packetizer_packet_ready_handler    packet_ready_callback, 
-                                  const void                               *context,
-                                  uint8_t                                  rtx_pin, 
-                                  uint8_t                                  isr_priority
-                                 )
-{
-    this->timer = timer;
-    this->app_timer_id = app_timer_id;
-    this->rtx_pin = rtx_pin;
-    this->ev_handler = nullptr;
+comms_uarte_siu_1wire::init(    *timer,     *app_timer_id,   packet_ready_callback,    *context,      rtx_pin,   isr_priority   )
+ 
+    this->timer                   = timer;                    //comms_1wire_timer
+    this->app_timer_id     = app_timer_id;       //comms_1wire_timer_timer_id
+    this->rtx_pin               = rtx_pin;                   //P0.7
+    this->ev_handler         = nullptr;                  //NULL
 
     state = STATE_RX_HANDSHAKE;
-    disconnected_count = DISCONNECTION_COUNT_LIMIT;  // initially disconnected
+    disconnected_count = DISCONNECTION_COUNT_LIMIT;     //100
     last_app_connection_status = false;
 
     rx_buffer = nullptr;
@@ -69,12 +57,120 @@ void comms_uarte_siu_1wire::init( nrfx_timer_t                             *time
     lost_synch_count = 0;
     acquiring_synch_count = 0;
     
-    // Assume first timed loop might be <100ms after initialization
     last_in_synch_count = UINT32_MAX;
     last_lost_synch_count = UINT32_MAX;
     last_acquiring_synch_count = UINT32_MAX;
 
-    packetizer.init(this, packet_ready_callback, context);
+    packetizer.init(this,  packet_ready_callback,  context);
+
+
+
+
+***1-------------------------------------------------
+
+comms_transport_interface               *transport_device;
+comms_packetizer_packet_ready_handler   packet_handler;
+
+功能：“给数据包处理器配好‘快递员’（通信接口）和‘收件人’（回调函数）
+
+参数：this,    msiu_1wire_packet_received,    NULL
+
+comms_packetizer::init(    *transport,      packet_ready_callback,    *p_context)
+
+    transport_device = transport;                         // this
+    packet_handler = packet_ready_callback;     // msiu_1wire_packet_received
+    packet_handler_context = p_context;            // NULL
+
+    // Init buffers
+    rx_cobs_buffer_in_use = 0;
+    rx_cobs_buffer_top    = 0;
+    rx_cobs_buffer_bottom = 0;
+    in_comms_transport_rx = false;
+    rx_data_ready         = false;
+    rx_failed             = false;
+
+    flush_flag             = false;
+    tx_retry_count         = 0;
+    in_comms_transport_tx  = false;
+    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
+    tx_buffer_base         = 0;
+    tx_buffer_active_top   = 0;
+    tx_buffer_active       = tx_buffer_primary;
+    tx_buffer_transport    = nullptr; 
+    tx_buffer_transport_end= nullptr;
+
+    // Misc
+    rx_lost_packets = 0;
+    tx_lost_packets = 0;
+    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;   //0xFF
+
+    // 设置读完了和写完了的回调函数
+    //transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
+        rx_complete_callback = (rx_cb);     // static_transport_read_complete
+        tx_complete_callback = (tx_cb);     // static_transport_write_complete
+        p_context = (p_context_g);             // this
+
+
+***2-------------------------------------------------
+
+UARTE 硬件收到字节
+    ↓
+nrfx 驱动触发中断 → 调用用户回调
+    ↓
+comms_uarte_siu_1wire 状态机处理（识别 timestamp 包还是 data 包）
+    ↓
+如果是 data 包 → 调用 transport_device 的读完成回调
+    ↓
+packetizer 收到字节 → COBS 解码 → 拼包
+    ↓
+拼好完整包 → 调用 msiu_1wire_packet_received()
+    ↓
+业务处理（解析命令、发回复）
+
+comms_packetizer::static_transport_read_complete(   actual_rx_length,    failed,    *p_context)
+
+    ((comms_packetizer*)p_context)->transport_read_complete(actual_rx_length, failed);
+
+---
+
+comms_packetizer::transport_read_complete(   actual_rx_length,   failed)
+{
+    uint16_t i_raw;
+    uint16_t i_cobs;
+
+    // Note that errors may be reported synchronously
+    if (failed)
+    {
+        // Retry from the main event queue
+        rx_failed = true;
+        return;
+    }
+
+    OMMO_APP_ERROR_CHECK(in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous call of transport_read_complete"), 0);
+
+    if (rx_cobs_buffer_top + actual_rx_length > sizeof(rx_cobs_buffer))
+    {
+        rx_lost_packets++;
+        rx_cobs_buffer_top = rx_cobs_buffer_in_use;
+    }
+    else
+    {
+        memcpy(&rx_cobs_buffer[rx_cobs_buffer_top], rx_raw_buffer, actual_rx_length);
+        rx_cobs_buffer_top += actual_rx_length;
+
+        rx_data_ready = true;
+    }
+
+    // Set up next transfer (if opened and not suspended)
+    if (transport_device->is_connected())
+        setup_next_rx();
+}
+
+
+
+（返回原函数2）
+
+（返回原函数1）
 
     packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
     packetizer_enabled_actual = false;
@@ -123,16 +219,14 @@ void comms_uarte_siu_1wire::init( nrfx_timer_t                             *time
     nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
     timer_cfg.p_context = this;
     timer_cfg.interrupt_priority = isr_priority;  //1
-    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);      //待完成，以后在定时器中再看。。。
+
+    //设置timer0的中断优先级1，使能timer1中断,设置timer1为定时器模式，32位，1M
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);     
 
 
     //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2）
-
-    //ommocomm_uarte has already configured a PPI channel to capture the local timestamp time at the end of each packet received.  
-    //Also capture the uarte timer value.  Note that this captures at each RXEND, but only the values for the end of the timestamp packet are used.
     //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
        nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
-
 
 
     //TMER0_CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃)  
@@ -142,21 +236,28 @@ void comms_uarte_siu_1wire::init( nrfx_timer_t                             *time
     nrf_ppi_event_endpoint_setup(ppi_channel_schedule_rx_tx, nrfx_timer_event_address_get(timer, TIMER_EVENT_SCHEDULE_RX_TX));
 
 
-    //哪个定时器？初始化为100ms     //待完成，以后在定时器中再看。。。
-    //Init 100ms timer for disconnection watchdog, etc.
-    APP_ERROR_CHECK(app_timer_create(app_timer_id, APP_TIMER_MODE_REPEATED, timed_loop_100ms));
-    APP_ERROR_CHECK(app_timer_start(*app_timer_id, APP_TIMER_TICKS(100), this));
+    。。。。。。
 
 
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-    //DS: 1-Wire 通信进入“握手”状态，也就是让设备开始监听来自主机的握手包，以建立或恢复通信连接
     //Set up initial handshake rx to start state machine
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收，state为STATE_RX_HANDSHAKE
     initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
 
+---------
+
+参数： static_transport_read_complete,   static_transport_write_complete,    this
+comms_transport_interface::set_callbacks(   rx_cb,   tx_cb,  *p_context_g)
+
+    rx_complete_callback = (rx_cb);     // static_transport_read_complete
+    tx_complete_callback = (tx_cb);     // static_transport_write_complete
+    p_context = (p_context_g);             // this
 
 --------
+
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收，state为STATE_RX_HANDSHAKE
 
 参数：TRACE_1WIRE_DISCONNECTED_INITIAL_STATE
 
@@ -165,7 +266,7 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
     lost_synch_count++;
     state = STATE_RX_HANDSHAKE;
 
-    //标记当前已断开，并记录断开的次数
+    //在log中标记当前已断开，并记录断开的次数
     on_disconnection(reason);
 
     //stop停止timer0计数器
@@ -174,18 +275,21 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
     //关闭ppi_channel_schedule_rx_tx，不让它触发
     nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
 
-    //写入CC2的阈值64640，使能CC2中断
+    //写入CC2的阈值64640(4040us)，使能CC2中断
     nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT, COMMS_1WIRE_MAX_PERIOD_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS, true);   // 64640
 
     nrfx_timer_clear(timer);    //计数器清0
     nrfx_timer_resume(timer);   //重新计数
 
-    //？
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
     //rx_now(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(&rx_timestamp, 5, false)
 
 
 ---
+
+
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
 
 参数： &rx_timestamp, 5, false
 
@@ -199,7 +303,7 @@ comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
        setup_pins(NRF_UARTE_PSEL_DISCONNECTED, uarte_config.pselrxd);                                     //TX 引脚断开，RX 引脚设为输入    
        nrf_uarte_txrx_pins_set(uarte_instance->p_reg, NRF_UARTE_PSEL_DISCONNECTED, uarte_config.pselrxd); //UARTE 硬件：TX断开，RX连P0.7
 
-    //清空rx里面的垃圾数据  easy
+    //清空rx fifo里面的垃圾数据  easy
     uarte_resource->uarte_rx_flush_fifo();
 
 
@@ -298,7 +402,7 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
 
 ------
 
-//清空rx里面的垃圾数据 easy
+//清空rx fifo里面的垃圾数据 easy
 
 uarte_basic::uarte_rx_flush_fifo() const
  
@@ -437,10 +541,40 @@ nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
 
 
 
-=========================================== uart0 中断接收 ===============================================
+=========================================== uart0 接收中断 ===============================================
 
 
-
+[1-Wire 总线收到数据]
+    ↓
+[硬件] UARTE 接收完成 → 触发 ENDRX 中断
+    ↓
+[中断向量表] UARTE0_IRQHandler()
+    ↓
+[nrfx_uarte.c] nrfx_uarte_0_irq_handler()
+    ↓
+[nrfx_uarte.c] uarte_irq_handler()  → 判断事件类型（ENDRX / ERROR / RXTO）
+    ↓
+[nrfx_uarte.c] rx_done_event()  → 打包事件，调用用户回调
+    ↓
+[comms_uarte_siu_1wire.cpp] comms_uarte_handler()  ← 静态转发函数
+    ↓
+[comms_uarte_siu_1wire.cpp] on_comms_uarte_event()  ← C++ 成员函数
+    ↓
+[comms_uarte_siu_1wire.cpp] 根据状态机处理：
+    - 如果是 STATE_RX_DATA → on_rx_complete_in_isr()
+    - 如果是 STATE_RX_TIMESTAMP → 处理 timestamp 包
+    ↓
+[comms_uarte_siu_1wire.cpp] on_rx_complete_in_isr()
+    ↓
+[comms_uarte_siu_1wire.cpp] rx_complete_callback()  ← 调用 packetizer 的回调
+    ↓
+[comms_packetizer.cpp] packetizer 收到数据，开始解析协议
+    ↓
+[comms_packetizer.cpp] 识别出完整数据包（COBS 解码完成）
+    ↓
+[comms_packetizer.cpp] m_packet_ready_handler()  ← 调用注册的包就绪回调
+    ↓
+[main.cpp] msiu_1wire_packet_received()  ← ★ 最终业务处理 ★
 
 
 
@@ -467,9 +601,6 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
 
         size_t amount = nrf_uarte_rx_amount_get(p_uarte);  收到了多少个字节
 
-        // If the transfer was stopped before completion, amount of transfered bytes
-        // will not be equal to the buffer length. Interrupted transfer is ignored.
-
         if (amount == p_cb->rx_buffer_length)    // 收满了（不是超时，是正常收满）
         
             if (p_cb->rx_secondary_buffer_length != 0)      //轮到buf2
@@ -484,7 +615,7 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
                 p_cb->rx_secondary_buffer_length = 0;
                 rx_done_event(p_cb, amount, p_data);
             
-            else                                                                        // 轮到buf1
+            else                                        // 轮到buf1
             
                 p_cb->rx_buffer_length = 0;
                 rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   // rx_timestamp
@@ -508,214 +639,15 @@ rx_done_event(  *p_cb,    bytes,    p_data)
 
 ------
 
-void comms_uarte_siu_1wire::on_comms_uarte_event(nrfx_uarte_event_t const *p_event)
-{
-    if (p_event->type == NRFX_UARTE_EVT_ERROR)
-        TRACE_1WIRE(TRACE_1WIRE_ERROR);
-    else if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
-        TRACE_1WIRE(TRACE_1WIRE_RX_DONE);
-    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
-        TRACE_1WIRE(TRACE_1WIRE_TX_DONE);
 
-    if (p_event->type == NRFX_UARTE_EVT_ERROR)
-    {
-        // After aborting rx, event may be ERROR or RX_DONE.  ERROR has priority, and only one of
-        // ERROR or RXEND will be processed by the ISR, i.e. if ERROR occurts, RXEND is left
-        // pending and causes a second interrupt.
-        nrf_uarte_event_clear(uarte->p_reg, NRF_UARTE_EVENT_ENDRX);
-    }
+参数：event.type             = RXDONE;
+      event.data.rxtx.bytes  = amount 
+      event.data.rxtx.p_data = rx_timestamp
 
-    if (state == STATE_ERROR || state == STATE_UNINITIALIZED)
-        return;
-
-    if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
-    {
-        NRFX_ASSERT(!uarte_resource->tx_in_progress());
-        NRFX_ASSERT(state >= STATE_FIRST_RX);
-
-        // Handshake packet reception should be handled the same way during handshake restart
-        // or randomly receiving a handshake request while connected
-        if (state == STATE_RX_RESTART_HANDSHAKE &&
-            (rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE))
-        {
-            state = STATE_RX_TIMESTAMP;
-        }
-
-        // Force handshake if the timestamp doesn't make sense
-        if (state == STATE_RX_TIMESTAMP &&
-            !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE) &&
-            disconnected_count == 0)
-        {
-            uint32_t ts_delta = rx_timestamp.timestamp - last_rx_timestamp;
-            //             ticks/sec  * sec/ms * ms/synch + 10% tolerance = ~70k ticks/synch
-            if (ts_delta > HFCLK_FREQ / 1000   * 4        * 110/100)
-            {
-#ifdef DEBUG_NRF
-                ts_delta_abnormal_count++;
-#endif
-                on_disconnection(TRACE_1WIRE_DISCONNECTED_BAD_TIMESTAMP);
-                state = STATE_RX_RESTART_HANDSHAKE;
-            }
-#ifdef DEBUG_NRF
-            else
-            {
-                if (ts_delta < ts_delta_min)
-                    ts_delta_min = ts_delta;
-                if (ts_delta > ts_delta_min)
-                    ts_delta_max = ts_delta;
-            }
-#endif
-        }
-
-        // Expecting a handshake packet, but packet timing is unknown?
-        if (state == STATE_RX_HANDSHAKE)
-        {
-            handle_handshake_packet(TRACE_1WIRE_DISCONNECTED_SLAVE_INITIATING_HANDSHAKE);
-        }
-        // Expecting a handshake packet, but master is transmitting a series of packets?
-        else if (state == STATE_RX_RESTART_HANDSHAKE)
-        {
-            comms_1wire_state_t new_state;
-            if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)
-            {
-                // Remain in this state until master permits slave to transmit
-                new_state = STATE_RX_RESTART_HANDSHAKE;
-            }
-            else
-            {
-                // Deliberately disobey the master's request for slave to transmit to force
-                // master to re-initiate the handshake
-                new_state = STATE_RX_HANDSHAKE;
-            }
-            acquiring_synch_count++;
-            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,
-                                  new_state);
-        }
-        // Expecting a timestamp packet?
-        else if (state == STATE_RX_TIMESTAMP)
-        {
-            // Expected a timestamp packet, but actually got a handshake packet.  Master may have
-            // reset or didn't receive last slave transmission.
-            if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_HANDSHAKE)
-            {
-                handle_handshake_packet(TRACE_1WIRE_DISCONNECTED_MASTER_INITIATED_HANDSHAKE);
-            }
-            else
-            {
-                in_synch_count++;
-                last_rx_timestamp = rx_timestamp.timestamp;
-                if (disconnected_count != 0)
-                    on_connection();
-
-                uint32_t rxend_timestamp = timestamp_read_capture(timestamp_capture_channel);
-
-#ifdef DEBUG_NRF
-                connection_duration++;
-                if (connection_duration > connection_max_duration)
-                    connection_max_duration = connection_duration;
-#endif
-
-                //Process timestamp
-                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_EXT_SYNCH)
-                    timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
-
-                //RX/TX under the direction of the master
-                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)
-                {
-                    //If the application isn't expecting any data, simply ignore the incoming data,
-                    //and schedule receipt of the next timestamp packet
-                    if (rx_buffer == nullptr)
-                    {
-#ifdef DEBUG_NRF
-                        lost_packets++;
-#endif
-                        schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,
-                                              STATE_RX_TIMESTAMP);
-                    }
-                    else
-                    {
-                        rx_data_now();
-                    }
-                }
-                else
-                {
-                    //Master has directed the slave to transmit.  The slave MUST transmit to
-                    //maintain a connection.  If the master requested a ping (ex. TEST_PATTERN_MODE
-                    //enabled), or if the application has nothing to transmit, then send a ping
-                    //packet.
-                    if (tx_buffer != nullptr && !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_PING))
-                        schedule_tx_data(tx_buffer, STATE_TX_DATA);
-                    else
-                        schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK);
-                }
-            }
-        }
-        // Expecting master to transmit a data packet?
-        else if (state == STATE_RX_DATA)
-        {
-            if (on_rx_complete_in_isr())
-                rx_timestamp_now();
-            else
-                initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CALLBACK_ERROR);
-        }
-        else /*if (state == COMMS_1WIRE_STATE_RX_TIMEOUT)*/
-        {
-            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CANCELLED);
-        }
-    }
-    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
-    {
-        NRFX_ASSERT(!uarte_resource->rx_in_progress());
-        NRFX_ASSERT(state < STATE_FIRST_RX);
-
-        if (state == STATE_TX_DATA)
-            on_tx_complete_in_isr();
-
-        rx_timestamp_now();
-    }
-    else /*if (p_event->type == NRFX_UARTE_EVT_ERROR)*/
-    {
-        // Prevent a timeout interrupt while processing a framing error
-        nrf_timer_event_clear(timer->p_reg, nrf_timer_compare_event_get(TIMER_CHANNEL_RX_TIMEOUT));
-
-        if (state == STATE_RX_TIMEOUT)
-        {
-            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT);
-        }
-        else
-        {
-            if (state >= STATE_FIRST_RX)
-            {
-                on_disconnection(TRACE_1WIRE_DISCONNECTED_RX_ERROR);
-
-#ifdef DEBUG_NRF
-                if (state == STATE_RX_HANDSHAKE)
-                    rx_handshake_error_count++;
-                else
-                    rx_other_error_count++;
-#endif
-
-                uarte_resource->uarte_rx_flush_fifo();
-
-                // Framing errors indicate reception was initiated during a timestamp or data
-                // packet.  Schedule the next read where it is likely to land in a window where
-                // the master is listening for a response from the slave.  Note that the callee
-                // adds a bit of time, so that this is not an even multiple of the period.  In
-                // other words, future reads will not occur at the exact same time relative to
-                // the timestamp packet.
-                schedule_rx_timestamp(COMMS_1WIRE_MAX_PERIOD_TICKS / 2, STATE_RX_HANDSHAKE);
-            }
-            else
-            {
-#ifdef DEBUG_NRF
-                // A framing error is inexplicably reported after the first successful reception
-                // following a cold boot
-                tx_error_count++;
-#endif
-            }
-        }
-    }
-}
+comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
+ 
+  
+    正在拆解。。。
 
 
 
@@ -723,8 +655,7 @@ void comms_uarte_siu_1wire::on_comms_uarte_event(nrfx_uarte_event_t const *p_eve
 
 
 
-
-=========================================== uart0 中断发送 ===============================================
+=========================================== uart0 发送中断 ===============================================
 
 
 
@@ -766,6 +697,45 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
 
 
  -----
+
+
+参数：event.type             = RXDONE;
+      event.data.rxtx.bytes  = amount 
+      event.data.rxtx.p_data = rx_timestamp
+
+
+comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
+ 
+
+    if (p_event->type == NRFX_UARTE_EVT_ERROR)
+        nrf_uarte_event_clear(uarte->p_reg, NRF_UARTE_EVENT_ENDRX);
+  
+
+    if (state == STATE_ERROR || state == STATE_UNINITIALIZED)
+        return;
+
+
+
+    if (p_event->type == NRFX_UARTE_EVT_RX_DONE) 
+
+        。。。。。。
+
+
+
+    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
+
+        if (state == STATE_TX_DATA)
+            on_tx_complete_in_isr();
+
+        rx_timestamp_now();
+    
+
+
+ 
+            
+ 
+
+
 
 
 

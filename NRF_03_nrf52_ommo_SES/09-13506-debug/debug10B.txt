@@ -1,0 +1,58 @@
+
+class event_queue_manager
+{
+   。。。。。。
+}
+event_queue_manager    main_event_queue;
+
+
+
+
+
+------------ rtc1 ------------
+
+
+
+#define CREATE_STATIC_WRAPPER(ClassName, MemberFunctionName, ReturnType, ...) 
+
+  static inline ReturnType MemberFunctionName(void* obj, ##__VA_ARGS__)                                                                                
+  {    return ((ClassName*)obj)->MemberFunctionName(__VA_ARGS__);    }          
+  
+            
+
+
+---
+
+
+class comms_uarte_siu_1wire : private comms_transport_interface
+ 
+
+private:
+
+    void timed_loop_100ms();
+
+    //CREATE_STATIC_WRAPPER(comms_uarte_siu_1wire, timed_loop_100ms, void); //生成静态的“包装函数”，把 C++ 成员函数伪装成C风格函数，以便传给 app_timer
+       static inline void timed_loop_100ms(void* obj )                                                                                
+          { return ((comms_uarte_siu_1wire*)obj)->timed_loop_100ms( );  }
+ 
+
+---
+
+
+#define _APP_TIMER_DEF(timer_id)                                                              \
+    NRF_LOG_INSTANCE_REGISTER(APP_TIMER_LOG_NAME, timer_id,                                   \
+                              APP_TIMER_CONFIG_INFO_COLOR,                                    \
+                              APP_TIMER_CONFIG_DEBUG_COLOR,                                   \
+                              APP_TIMER_CONFIG_INITIAL_LOG_LEVEL,                             \
+                              APP_TIMER_CONFIG_LOG_ENABLED ?                                  \
+                                         APP_TIMER_CONFIG_LOG_LEVEL : NRF_LOG_SEVERITY_NONE); \
+
+#define APP_TIMER_DEF(timer_id) _APP_TIMER_DEF(timer_id)
+
+APP_TIMER_DEF(comms_1wire_timer_timer_id);    //定义100ms， 1-Wire 通信的“软件看门狗”
+
+
+
+
+------------ rtc1 end ------------
+

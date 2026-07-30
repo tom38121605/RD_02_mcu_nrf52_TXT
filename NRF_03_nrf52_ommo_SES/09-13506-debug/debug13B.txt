@@ -1,0 +1,95 @@
+
+
+TIMER3 是系统主时钟 
+
+    产生 1ms 采样事件（触发传感器采集）  //CC0
+    4ms 同步事件（与主机对时）           //CC1
+
+
+
+
+
+疑问1：NRF_TIMER_TASK_CAPTURE0 和 NRF_TIMER_EVENT_COMPARE0   区别
+
+答：NRF_TIMER_TASK_CAPTURE0	“拍照”   -- 立刻把当前 COUNTER 快照复制到 CC[0]               //easy，外部 → Timer（存数）            
+    NRF_TIMER_EVENT_COMPARE0	“闹铃响” -- 当 COUNTER == CC[0]，硬件自动产生 COMPARE0 事件   //easy，Timer → 向外发出信号
+
+
+
+
+
+=============================================================
+
+
+
+
+
+
+------------ timer3 ------------
+
+
+
+
+class comms_uarte_siu_1wire : private comms_transport_interface
+ 
+private:
+
+
+   nrf_timer_cc_channel_t timestamp_capture_channel;
+
+
+
+
+--------
+
+
+#define TIMER3_CC_NUM 6
+
+#define OMMO_TIMESTAMP_TIMER           NRFX_TIMER_INSTANCE(3)
+
+static nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+
+-----
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    
+{                                                                                    
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,  // 默认 1MHz，即每微秒加 1  
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,            // 定时器模式（不是计数器）
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,  // 默认 32 位
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                      // 6
+    .p_context          = NULL                                                       
+}
+
+
+
+
+----------- timer3 end ----------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

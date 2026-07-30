@@ -1,0 +1,263 @@
+sensors_init(&sample_set_ready)
+    ↓
+timestamp_add_sample_event_callback(sample_timer_event_handler)   // 注册传感器自己的定时器回调
+    ↓
+[每次 TIMER3 CC0 采样事件触发]
+    ↓
+timestamp_timer_event_handler()
+    ↓
+遍历 sample_event_callbacks[]
+    ↓
+sample_timer_event_handler()   // ← 被调用
+    ↓
+内部调用 sample_set_ready()   // ← 采集传感器数据
+
+
+
+================================================
+
+
+int main(void)
+
+    。。。。。。
+ 
+
+    //
+    sensors_init(&sample_set_ready);
+ 
+    。。。。。。
+
+
+
+
+-----------------------------------
+
+
+参数：sample_set_ready
+sensors_init(  sample_set_ready_callback_function )
+
+
+    //使能 GPIOTE 外设的中断 （房间开关），使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+    if (!nrfx_gpiote_is_init())    
+       nrfx_gpiote_init();
+
+
+    // 做一个配置模板：IRQ 引脚配置为输入，上升沿触发 GPIOTE 中断，无上下拉，高精度模式
+    in_config = NRFX_GPIOTE_CONFIG_IN_SENSE_LOTOHI(true);
+       .sense = NRF_GPIOTE_POLARITY_LOTOHI,            
+       .pull = NRF_GPIO_PIN_NOPULL,                    
+       .is_watcher = false,                            
+       .hi_accuracy = hi_accu,     // true                    
+       .skip_gpio_setup = false,     
+
+
+    // //设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
+    //nrfx_gpiote_in_init(OMMO_IMU_IRQ_PIN, &in_config, imu_irq_pin_handler);
+        nrfx_gpiote_in_init_errata155(pin, p_config, evt_handler, NULL, true);
+ 
+
+    sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
+        
+
+    //DS  每次 1ms 心跳到来时，sample_timer_event_handler 被调用，检查是否需要采集传感器数据?
+    timestamp_add_sample_event_callback(sample_timer_event_handler);
+       sample_event_callbacks[0] = sample_timer_event_handler;
+
+
+    //变量初始化
+    current_output_data = output_data_1;
+    next_output_data = output_data_2;
+    next_next_output_data = output_data_3;
+    memset(output_data_1, 0x55, sizeof(output_data_1));
+    memset(output_data_2, 0x55, sizeof(output_data_2));
+    memset(output_data_3, 0x55, sizeof(output_data_3));
+
+    current_state = STATE_MACHINE_STOPPED;
+
+    timing_check_failed_count = 0;
+    total_num_ics = 0;
+
+    mag_calibration_mode = false;
+    onboard_sensors_enabled = true;
+
+    i2c_current_state_index = 0;
+    hot_plug_current_state_index = 0;
+    hot_unplug_double_check = false;
+    sensors_event_callbacks_num = 0;
+    execute_sample_ready_callback = false;
+
+    memset(ss_map, 0, sizeof(ss_map));
+    ss_pins_with_mag.clear();
+    ss_pins_with_imu.clear();
+
+    last_timestamp = current_timestamp = 0;
+    last_timestamp_offset = current_timestamp_offset = 0;
+
+    current_output_data_timestamp = 0;
+    current_output_data_timestamp_offset = 0;
+
+    
+    //初始化 sensor_event_fifo
+    //ommo_fifo_init(&sensor_event_fifo,  sensor_event_buffer, OMMO_SENSOR_EVENT_FIFO_LEN) ;
+
+        p_fifo->p_buf         = p_buf;         //sensor_event_buffer
+        p_fifo->buf_size_mask = buf_size - 1;  //3
+        p_fifo->read_pos      = 0;
+        p_fifo->write_pos     = 0;
+
+
+    //分配一个ppi组 sampling_ppi_start_group
+    nrfx_ppi_group_alloc(&sampling_ppi_start_group);
+
+
+    //TIMER3 的 CC2 通道负责在每次采样事件后延迟 700us，触发磁力计（MMC5983）的 SET/RESET 命令 （cc0和cc1不受要偏移数组管）
+    //sensor_set_sample_time_offset_event = timestamp_create_sample_event_offset_event(OMMO_SENSOR_MAG_SET_TIME);
+        sample_time_offset_cc_channel[0] = CC2;
+        sample_time_offset_time[0] = offset;   //11200
+        sensor_set_sample_time_offset_event = nrf_timer_event_address_get( TIMER3, compare_events[CC2]);
+
+ 
+    sensors_twi_basic_config.frequency = NRF_TWIM_FREQ_100K;
+    sensors_twi_basic_config.scl_push_pull = true;
+
+ 
+    i2c_interval_count = 0; //OMMO_SENSOR_I2C_TRX_INTERVAL;
+    prev_cmd_reset = false; //for MEMSIC_BIPOLAR_EXCITATION: Apply reset current first
+
+
+
+-----
+
+//TIMER3 的 CC2 通道负责在每次采样事件后延迟 700us，触发磁力计（MMC5983）的 SET/RESET 命令  （cc0和cc1不受要偏移数组管）
+
+参数： 11200
+timestamp_create_sample_event_offset_event( offset)
+
+    sample_time_offset_index = next_free_sample_time_offset_index;  //0
+
+    //sample_time_offset_cc_channel[sample_time_offset_index] = timestamp_get_capture_compare_channel();
+        sample_time_offset_cc_channel[0] = CC2;
+
+    //sample_time_offset_time[sample_time_offset_index] = offset;
+        sample_time_offset_time[0] = offset;   //11200
+
+    next_free_sample_time_offset_index++;
+
+    
+    //AAA = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_time_offset_cc_channel[sample_time_offset_index]]);
+        AAA = nrf_timer_event_address_get(p_instance->p_reg, compare_events[CC2]);
+
+
+    return AAA;
+ 
+
+
+----------
+
+
+//设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
+
+参数： pin,   p_config,   imu_irq_pin_handler,   NULL,   true
+
+nrfx_gpiote_in_init_errata155(   pin,   *p_config,   evt_handler,   context,   apply_fix_for_fast_signal_transitions  )
+
+
+        if (p_config->hi_accuracy)  //yes
+            channel = channel_port_alloc_event(pin, evt_handler, context);
+        else
+            channel = channel_port_alloc_low_power(pin, evt_handler, context);
+
+
+        if (channel != NO_CHANNELS)      //0xffffffff
+        {
+            if (!p_config->skip_gpio_setup)
+            {
+                if (p_config->is_watcher)
+                {
+                    nrf_gpio_cfg_watcher(pin);
+                }
+                else
+                {
+                    nrf_gpio_cfg_input(pin, p_config->pull);
+                }
+                pin_configured_set(pin);
+            }
+
+            if (p_config->hi_accuracy)
+            {
+                nrf_gpiote_event_configure((uint32_t)channel, pin, p_config->sense);
+            }
+            else
+            {
+                m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<
+                                                                    POLARITY_FIELD_POS;
+            }
+                    
+            //Fix for 52840 Errata 155: increases current consumption
+            //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
+            if (apply_fix_for_fast_signal_transitions)
+            {
+                *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;
+            }
+        }
+        else
+        {
+            err_code = NRFX_ERROR_NO_MEM;
+        }
+     
+
+
+-----------
+
+//使能 GPIOTE 外设的中断 （房间开关），使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+
+nrfx_gpiote_init()
+
+
+    if (m_cb.state != NRFX_DRV_STATE_UNINITIALIZED)  //m_cb是GPIOE的结构体
+        return err_code;
+    
+
+    //把所有存在的 GPIO 引脚都标记为‘空闲可用  （只是防止gpio自己重复，固即使p0.7已配置了为RXD引脚也没关系）
+    for (i = 0; i < MAX_PIN_NUMBER; i++)   //42    
+
+        if (nrf_gpio_pin_present_check(i))  // 检查引脚是否存在      
+  
+           //pin_in_use_clear(i);
+             m_cb.pin_assignments[pin] = PIN_NOT_USED;
+
+        
+    // 清空回调函数，清空上下文
+    for (i = 0; i < (GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS); i++)   // 8 + 1    
+
+        //channel_free(i);
+            m_cb.handlers[i]                =  FORBIDDEN_HANDLER_ADDRESS;   // 清空回调函数
+            m_cb.handlers_context[i]        =  NULL;                        // 清空上下文
+
+            if (8)
+               m_cb.port_handlers_pins[8 - 8]  =  PIN_NOT_USED;     // 如果是低功耗通道，清空引脚号
+        
+    //把 GPIOTE 驱动中所有已配置引脚的记录全部清零
+    memset(m_cb.configured_pins, 0, sizeof(m_cb.configured_pins));
+    m_cb.event_channels = 0;
+
+
+    //设置 GPIOTE 外设的中断优先级为6
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_GPIOTE), NRFX_GPIOTE_CONFIG_IRQ_PRIORITY);
+
+    //使能 GPIOTE 外设的中断 （房间开关）
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_GPIOTE)); 
+
+    //清除 GPIOTE PORT 引脚变化外部中断事件标志位
+    nrf_gpiote_event_clear(NRF_GPIOTE_EVENTS_PORT);
+
+    //使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+    nrf_gpiote_int_enable(GPIOTE_INTENSET_PORT_Msk);
+
+
+    m_cb.state = NRFX_DRV_STATE_INITIALIZED;
+
+
+
+
+

@@ -1,0 +1,77 @@
+
+
+TIMER0 的三个主要功能
+
+   捕获 RX 完成时间	CC0	记录上一次 UARTE 接收完成的时刻，作为后续调度的基准
+
+   调度 RX/TX 切换	CC1	在精确的时间点触发 PPI，自动启动 UARTE 接收或发送
+
+   接收超时检测	CC2	如果没在规定时间内收到数据，触发超时中断，重新握手
+
+
+
+
+
+
+------------ timer0 ------------
+
+
+#define TIMER0_CC_NUM 4
+
+
+#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
+
+APP_TIMER_DEF(comms_1wire_timer_timer_id);
+nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
+
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    
+{                                                                                    
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,  // 默认 1MHz，即每微秒加 1  
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,            // 定时器模式（不是计数器）
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,  // 默认 32 位
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                      // 6
+    .p_context          = NULL                                                       
+}
+
+
+
+#define TIMER_CHANNEL_CAPTURE_RXEND   NRF_TIMER_CC_CHANNEL0     //CC0
+#define TIMER_TASK_CAPTURE_RXEND      NRF_TIMER_TASK_CAPTURE0   //CC0  拍照
+
+
+#define TIMER_CHANNEL_SCHEDULE_RX_TX  NRF_TIMER_CC_CHANNEL1       //CC1
+#define TIMER_EVENT_SCHEDULE_RX_TX    NRF_TIMER_EVENT_COMPARE1    //CC1  闹铃
+
+ 
+#define TIMER_CHANNEL_RX_TIMEOUT       NRF_TIMER_CC_CHANNEL2     //CC2
+
+
+
+---
+
+#define COMMS_1WIRE_BYTE_TX_US      10
+#define COMMS_1WIRE_BYTE_TX_TICKS   US_TO_TICKS_16MHZ(COMMS_1WIRE_BYTE_TX_US)  //  10 * 16
+
+#define COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS (COMMS_1WIRE_BYTE_TX_TICKS * sizeof(comms_1wire_timestamp_packet_t))  // 5 * 16 * 10
+
+//合计： 64320
+#define COMMS_1WIRE_MAX_PERIOD_TICKS (COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS +        // 10 * 16 * 5   = 800   
+                                      COMMS_1WIRE_DATA_PACKET_DELAY_TICKS +          // 300 * 16      = 4800
+                                      COMMS_1WIRE_DATA_PACKET_TX_TICKS +             // 10 * 16 * 320 = 51200
+                                      COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS)  // 470 * 16      = 7520
+
+#define COMMS_1WIRE_RX_TIMEOUT_TICKS US_TO_TICKS_16MHZ(20)  //20 * 16 =320
+ 
+
+
+
+
+
+----------- timer0 end ----------
+
+
+
+
+

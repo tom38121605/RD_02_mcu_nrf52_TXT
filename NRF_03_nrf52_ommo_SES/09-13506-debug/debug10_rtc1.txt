@@ -1,0 +1,262 @@
+
+作用：这个 100ms 定时器是 1-Wire 通信的“软件看门狗”，用来检测通信是否卡死，并在卡死时自动恢复
+
+
+rtc1和rtc2的区别：
+
+   主机还在发数据，但从机软件卡死了	RTC1（检测到计数器不变）
+   主机完全不发数据了（断线、断电）	RTC2（500ms 没收到同步包）
+
+
+
+
+
+
+┌─────────────────────────────────┐
+│                    初始化阶段                                    │
+│  APP_TIMER_DEF() → app_timer_init() → app_timer_create()      │
+│  → app_timer_start()                                          │
+└────────────────────────────────┘
+                              ↓
+┌────────────────────────────────┐
+│                    注册阶段                                      │
+│  comms_1wire.add_tasks_to_event_queue()                       │
+│  → event_queue->register_task(this, timed_loop_100ms_pending, │
+│                               timed_loop_100ms)               │
+└───────────────────────────────┘
+                              ↓
+┌──────────────────────────────────┐
+│                    调用阶段（每 100ms）                          │
+│  RTC1 中断 → RTC1_IRQHandler()                                │
+│  → timer_timeouts_check() → timeout_handler_exec()            │
+│  → one_hundred_ms_timer_handler() → 设置标志                   │
+│  → 主循环检测标志 → one_hundred_ms_event_process()             │
+│  → event_queue.execute_once() → 遍历任务                       │
+│  → timed_loop_100ms_pending() → true                          │
+│  → timed_loop_100ms(this) → this->timed_loop_100ms()          │
+│  → [真正的看门狗逻辑]                                          │
+└─────────────────────────────────┘
+
+
+
+
+[main] app_timer_init()
+    ↓
+rtc1_init() + rtc1_stop()
+    ↓
+[app_timer_start()] 启动第一个软件定时器
+    ↓
+rtc1_start() → RTC1 TASKS_START = 1  ★ RTC1 开始跑 ★
+    ↓
+RTC1 计数器从 0 开始递增（32kHz）
+    ↓
+┌──────────────────────────┐
+│  每次计数到 CC[0] 时：                              │
+│      ↓                                             │
+│  RTC1_IRQHandler()                                 │
+│      ↓                                             │
+│  timer_timeouts_check() → 遍历链表                 │
+│      ↓                                             │
+│  执行到期定时器的回调函数                           │
+│      ↓                                             │
+│  重复模式 → 重新插入链表                           │
+│      ↓                                             │
+│  更新 CC[0] = 下一个超时时间                       │
+└──────────────────────────┘
+    ↓
+如果所有定时器都停了 → rtc1_stop() → 停止 RTC1
+
+
+
+步骤	函数	作用
+初始化	rtc1_init()	设置分频，配置中断优先级
+启动	rtc1_start()	启用 COMPARE0 中断，触发 TASKS_START
+软件定时器管理	timer_list_handler()（SWI）	插入/移除定时器节点，更新 CC[0]
+超时检测	timer_timeouts_check()	遍历链表，执行到期回调
+更新比较值	compare_reg_update()	设置 RTC1->CC[0] 为下一个超时时间
+停止	rtc1_stop()	停 RTC1，清空计数器
+
+
+
+
+
+
+=========================================== rtc1 初始化 ===============================================
+
+
+main()
+  ├─ app_timer_init()
+  │     ├─ rtc1_stop()                // 先停掉 RTC1，防止残留干扰
+  │     ├─ 初始化操作队列（op_queue）  // 存放 start/stop 操作请求
+  │     ├─ 清空定时器链表（mp_timer_id_head = NULL）
+  │     ├─ 启用 SWI 中断（用于异步处理定时器列表更新）
+  │     ├─ rtc1_init(PRESCALER)       // ★ RTC1 硬件初始化 ★
+  │     └─ m_ticks_latest = rtc1_counter_get()  // 记录起始时间
+  │
+  └─ app_timer_create() / app_timer_start()  // 创建并启动软件定时器
+
+
+
+-------------
+
+ 
+
+int main(void)
+
+    。。。。。
+
+
+    app_timer_init();  //rtc1，软件定时器系统
+
+
+    comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+ 
+    。。。。。。
+
+
+
+-----
+
+
+参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
+
+comms_uarte_siu_1wire::init(    *timer,     *app_timer_id,   packet_ready_callback,    *context,      rtx_pin,   isr_priority   )
+ 
+    this->app_timer_id = app_timer_id;
+
+    //把comms_1wire_timer_timer_id初始化为100ms，作为  1-Wire 通信的“软件看门狗”   
+    //Init 100ms timer for disconnection watchdog, etc.
+    app_timer_create(app_timer_id, APP_TIMER_MODE_REPEATED, timed_loop_100ms);
+    app_timer_start(*app_timer_id, APP_TIMER_TICKS(100), this);
+
+
+
+
+ 
+
+
+=========================================== RTC1 中断触发 实现看门狗功能 =====待完善==========================================
+
+
+
+     待完成
+
+
+[系统初始化] main()
+    ↓
+APP_TIMER_DEF(comms_1wire_timer_timer_id)   // 定义定时器句柄
+    ↓
+comms_1wire.init()
+    ↓
+app_timer_create(comms_1wire_timer_timer_id, APP_TIMER_MODE_REPEATED, timed_loop_100ms)
+    ↓
+app_timer_start(comms_1wire_timer_timer_id, APP_TIMER_TICKS(100), this)
+    ↓
+┌─────────────────────────────────┐
+│                   每 100ms 执行一次                              │
+│                                                                 │
+│  timed_loop_100ms() 被调用                                      │
+│       ↓                                                         │
+│  检查三个计数器是否在 100ms 内都没变化：                         │
+│  ├─ in_synch_count        （成功收到 timestamp 包的次数）       │
+│  ├─ lost_synch_count      （丢失同步的次数）                    │
+│  └─ acquiring_synch_count （正在获取同步的次数）                │
+│       ↓                                                         │
+│  如果三个都没变 → 通信卡死                                      │
+│       ↓                                                         │
+│  state = STATE_ERROR                                            │
+│       ↓                                                         │
+│  initiate_handshake_now(TRACE_1WIRE_SW_WATCHDOG)               │
+│       ↓                                                         │
+│  重新发起握手，尝试恢复通信                                     │
+│       ↓                                                         │
+│  如果有任何一个变了 → 通信正常                                  │
+│       ↓                                                         │
+│  更新 last_xxx_count = xxx_count（准备下一次检查）              │
+└──────────────────────────────-──┘
+
+
+
+[RTC1 硬件计数到 CC[0] 值]（100ms 到了）
+    ↓
+RTC1_IRQHandler()   [app_timer.c]
+    ↓
+timer_timeouts_check()   [检查到期的定时器]
+    ↓
+timeout_handler_exec()   [执行超时回调]
+    ↓
+p_timer->p_timeout_handler(p_timer->p_context)
+    ↓
+timed_loop_100ms()   [comms_uarte_siu_1wire.cpp]  ★ 在这里被调用 ★
+    ↓
+[执行完，返回]
+    ↓
+更新 RTC1 CC[0] = 当前值 + 100ms
+    ↓
+[等待下一个 100ms 中断]
+
+ 
+  
+
+
+
+
+
+--------------------------------------------------------------
+
+
+//待查看
+
+void comms_uarte_siu_1wire::timed_loop_100ms()
+{
+    if (state == STATE_UNINITIALIZED)
+        return;
+
+    if (last_in_synch_count == in_synch_count &&
+        last_lost_synch_count == lost_synch_count &&
+        last_acquiring_synch_count == acquiring_synch_count)
+    {
+ 
+        state = STATE_ERROR;
+
+        sw_watchdog_count++;
+
+    }
+    else
+    {
+        last_in_synch_count = in_synch_count;
+        last_lost_synch_count = lost_synch_count;
+        last_acquiring_synch_count = acquiring_synch_count;
+    }
+
+    if (state == STATE_ERROR)
+    {
+        nrfx_timer_compare_int_disable(timer, TIMER_CHANNEL_RX_TIMEOUT);
+        if (uarte_resource->rx_in_progress())
+        {
+ 
+            uarte_resource->rx_abort();
+        }
+        else if (uarte_resource->tx_in_progress())
+        {
+  
+            uarte_resource->tx_abort();
+        }
+        else
+        {
+            // Synchronize state update with UARTE events
+            NRFX_CRITICAL_SECTION_ENTER();
+             
+
+            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_ERROR_RECOVERY);
+
+            NRFX_CRITICAL_SECTION_EXIT();
+        }
+    }
+}
+
+
+
+
+

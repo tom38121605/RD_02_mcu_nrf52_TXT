@@ -1,84 +1,177 @@
-
-疑问1：NRF_TIMER_TASK_CAPTURE0 和 NRF_TIMER_EVENT_COMPARE0   区别
-
-答：NRF_TIMER_TASK_CAPTURE0	“拍照”   -- 立刻把当前 COUNTER 快照复制到 CC[0]               //easy，外部 → Timer（存数）            
-    NRF_TIMER_EVENT_COMPARE0	“闹铃响” -- 当 COUNTER == CC[0]，硬件自动产生 COMPARE0 事件   //easy，Timer → 向外发出信号
+//IMU IRQ pin
+#define OMMO_IMU_IRQ_PIN                    NRF_GPIO_PIN_MAP(0,12)
 
 
 
+typedef struct
+{
+    nrfx_gpiote_evt_handler_t handlers[GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS];
+    void *                    handlers_context[GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS];
+    int8_t                    pin_assignments[MAX_PIN_NUMBER];
+    int8_t                    port_handlers_pins[NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS];
+    uint8_t                   configured_pins[((MAX_PIN_NUMBER)+7) / 8];
+    uint8_t                   event_channels;  // See STATIC_ASSERT above.  Each bit valid only if handlers[i] != FORBIDDEN_HANDLER_ADDRES.
+    nrfx_drv_state_t          state;
+
+} gpiote_control_block_t;
+
+static   gpiote_control_block_t   m_cb;
 
 
-=============================================================
 
------------- timer0 ------------
-
-#define OMMOCOMM_1WIRE_TIMER                 NRFX_TIMER_INSTANCE(0)
-nrfx_timer_t comms_1wire_timer  =   OMMOCOMM_1WIRE_TIMER;
-
-
-#define NRFX_TIMER_DEFAULT_CONFIG                                                    
-{                                                                                    
-    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,  // 默认 1MHz，即每微秒加 1  
-    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,            // 定时器模式（不是计数器）
-    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,  // 默认 32 位
-    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                      // 6
-    .p_context          = NULL                                                       
+#define NRFX_GPIOTE_CONFIG_IN_SENSE_LOTOHI(hi_accu) 
+{                                                   
+    .sense = NRF_GPIOTE_POLARITY_LOTOHI,            
+    .pull = NRF_GPIO_PIN_NOPULL,                    
+    .is_watcher = false,                            
+    .hi_accuracy = hi_accu,                         
+    .skip_gpio_setup = false,                       
 }
 
 
-NRF_TIMER_TASK_CAPTURE0 = offsetof(NRF_TIMER_Type, TASKS_CAPTURE[0]),
-#define TIMER_TASK_CAPTURE_RXEND  NRF_TIMER_TASK_CAPTURE0   //CC0
-
-NRF_TIMER_EVENT_COMPARE1 = offsetof(NRF_TIMER_Type, EVENTS_COMPARE[1]),
-#define TIMER_EVENT_SCHEDULE_RX_TX  NRF_TIMER_EVENT_COMPARE1  //CC1
-
-#define TIMER_CHANNEL_RX_TIMEOUT    NRF_TIMER_CC_CHANNEL2
+----
 
 
+typedef struct
+{
+    uint32_t *         p_buf;           
+    uint16_t           buf_size_mask;    
+    volatile uint32_t  read_pos;         
+    volatile uint32_t  write_pos;        
+} ommo_fifo_t;
 
-
-#define COMMS_1WIRE_BYTE_TX_US      10
-#define COMMS_1WIRE_BYTE_TX_TICKS   US_TO_TICKS_16MHZ(COMMS_1WIRE_BYTE_TX_US)  //  10 * 16
-
-#define COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS (COMMS_1WIRE_BYTE_TX_TICKS * sizeof(comms_1wire_timestamp_packet_t))  // 5 * 16 * 10
-
-//合计： 64320
-#define COMMS_1WIRE_MAX_PERIOD_TICKS (COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS +        // 10 * 16 * 5   = 800   
-                                      COMMS_1WIRE_DATA_PACKET_DELAY_TICKS +          // 300 * 16      = 4800
-                                      COMMS_1WIRE_DATA_PACKET_TX_TICKS +             // 10 * 16 * 320 = 51200
-                                      COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS)  // 470 * 16      = 7520
-
-#define COMMS_1WIRE_RX_TIMEOUT_TICKS US_TO_TICKS_16MHZ(20)  //20 * 16 =320
+static ommo_fifo_t sensor_event_fifo;   
 
 
 
------------ timer0 end ----------
+ uint32_t sensor_event_buffer[OMMO_SENSOR_EVENT_FIFO_LEN];   //4
 
 
 
------------- timer3 ------------
+static uint8_t output_data_1[COMMS_ESB_MAX_MULTIPACKET_TOTAL_LENGTH / OMMO_TIMESTAMP_SYNCH_PERIOD_MULT];    //902 / 4
+static uint8_t output_data_2[COMMS_ESB_MAX_MULTIPACKET_TOTAL_LENGTH / OMMO_TIMESTAMP_SYNCH_PERIOD_MULT];    //902 / 4
+static uint8_t output_data_3[COMMS_ESB_MAX_MULTIPACKET_TOTAL_LENGTH / OMMO_TIMESTAMP_SYNCH_PERIOD_MULT];    //902 / 4
+  
 
 
-#define OMMO_TIMESTAMP_TIMER           NRFX_TIMER_INSTANCE(3)
 
-static nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+------------------
 
+static nrf_timer_cc_channel_t    sample_time_offset_cc_channel[OMMO_TIMESTAMP_MAX_SAMPLE_TIME_OFFSET_CHANNELS];   //2
 
------------ timer3 end ----------
+static uint32_t                  sample_time_offset_time[OMMO_TIMESTAMP_MAX_SAMPLE_TIME_OFFSET_CHANNELS];          //2
 
 
 
 
-
--------------------
-
+==========================================回调函数  待整理==================================================
 
 
+sample_timer_event_handler(  event_type,   p_context )
+ 
+    //Save current timestamp for packet that will be sent next
+    if( last_timestamp_used )
+    {
+        //If the mag was not read then don't update the last timestamp because
+        //the old data matching that timestamp will be read in the next cycle
+        last_timestamp = current_timestamp;
+        last_timestamp_offset = current_timestamp_offset;
+        last_timestamp_used = false;
+
+        //Save the timestamp/encoder for the next packet (after packet in process)
+        timestamp_get_last_sample_event_timestamp_basestation_units(current_timestamp, current_timestamp_offset);
+    }
+ 
+    else // sample skipped
+    {
+        ommocomm_packet_malformed_countdown = ommocomm_packet_malformed_after_skipped;
+    }
+ 
+
+    //Re enable encoder sampling
+    timestamp_reenable_disabled_captures();
+ 
 
 
+------------
+
+sample_set_ready(uint8_t *data, uint16_t data_size, uint32_t timestamp, uint32_t timestamp_offset)
 
 
+    //Wait until we are enabled and have synch
+    if(data_mode == DATA_MODE_DISABLED || timestamp_is_synch_lost())
+        return;
 
+    if(data_mode == DATA_MODE_USB)
+    {
+        //Calculate decoded packet size
+        size_t packet_size = 1 + 4 + data_size;
+
+
+        if(power_status & POWER_REQ_1WIRE)
+        {
+            //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via 1-wire
+            ret_code_t code = comms_1wire.send_data_packet_async_vargs(packet_size,
+                (uint32_t)1, &packet_id,
+                (uint32_t)4, &timestamp,
+
+                (uint32_t)data_size, data,
+                (uint32_t)0);
+
+            if(code == NRF_ERROR_BUSY)
+                skipped_tx_count++;
+            else
+                OMMO_APP_ERROR_CHECK(code, STRING("1-wire data transfer error"), 0);
+        }
+
+
+        if(usb_serial_get_state() == USB_SERIAL_STATE_OPENED)
+        {
+            //Do COBS encoding, add packet delimiter(s) (0x00), and transmit via USB
+            uint32_t code = usb_serial_write_data_packet_vargs(packet_size,
+                (uint32_t)1, &packet_id,
+                (uint32_t)4, &timestamp,
+
+                (uint32_t)data_size, data,
+                (uint32_t)0);
+
+            if(code == NRF_ERROR_BUSY)
+                skipped_tx_count++;
+            else
+                OMMO_APP_ERROR_CHECK(code, STRING("USB data transfer error"), 0);
+        }
+
+        //Transmit synch signal alert 
+        uint32_t num_misses = timestamp_synch_get_num_misses();
+        if(num_misses >  USB_DATA_SYNC_LOST_COUNT_TO_SYSTEM_ALERT)
+        {
+            tx_buffer[0] = OMMO_COMMAND_ALERT_SYNCH_FAIL;
+            memcpy(tx_buffer+1, &num_misses, 4);
+
+            if(power_status & POWER_REQ_1WIRE)
+                comms_1wire.send_command_packet_async(tx_buffer, 5);
+
+            if(usb_serial_get_state() == USB_SERIAL_STATE_OPENED)
+                usb_serial_send_command_packet(tx_buffer, 5);
+        }
+
+    }
+    else //DATA_MODE_WIRELESS
+    {
+        //Compose our data packet
+        uint16_t index = 0;
+        copyUint8(tx_buffer, index, packet_id); //PACKET_ID
+        copyUint32_LE(tx_buffer, index, timestamp); //TIME_STAMP
+
+        memcpy(tx_buffer+index, data, data_size); index += data_size; //SENSOR DATA
+
+        uint32_t code = comms_esb_send_sensor_data(tx_buffer, index);
+        if(code == NRF_ERROR_BUSY)
+            skipped_tx_count++;
+    }
+
+    //Update count
+    tx_count++;
 
 
 

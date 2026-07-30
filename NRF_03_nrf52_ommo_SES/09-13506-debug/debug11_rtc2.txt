@@ -1,0 +1,215 @@
+
+作用：连续 500ms 没收到同步包，RTC2 就会触发超时中断，通知系统：“同步丢了！
+
+
+rtc1和rtc2的区别：
+
+   主机还在发数据，但从机软件卡死了	RTC1（检测到计数器不变）
+   主机完全不发数据了（断线、断电）	RTC2（500ms 没收到同步包）
+
+
+
+
+[系统初始化]
+    ↓
+rtc_timer_init() → 初始化 RTC2
+    ↓
+rtc_timer_get_timeout_channel() → 申请一个 CC 通道
+    ↓
+rtc_timer_set_timeout(500ms) → 启动倒计时
+    ↓
+┌────────────────────────--─┐
+│           循环运行                                 │
+│                                                    │
+│  [收到同步包] → timestamp_reset_synch_lost_timer()│
+│       ↓                                           │
+│  rtc_timer_reset_timeout() → 重置倒计时为 500ms   │
+│       ↓                                           │
+│  继续等待下一个同步包                              │
+│       ↓                                           │
+│  如果 500ms 内没收到同步包：                       │
+│       ↓                                           │
+│  RTC2 超时中断 → timestamp_lost_timeout()         │
+│       ↓                                           │
+│  标记同步丢失 → 更新 LED 状态                     │
+└──────────────────────────┘
+
+
+
+
+步骤	函数	位置
+初始化 RTC2	rtc_timer_init()	                                                                        //rtc_timeout_gen.cpp
+申请通道	rtc_timer_get_timeout_channel(&timestamp_lost_compare_channel, timestamp_lost_timeout, NULL)	//timestamp_timer.cpp
+启动 500ms 倒计时	rtc_timer_set_timeout(timestamp_lost_compare_channel, MS_TO_RTC_TIMEOUT_GEN(500))	//timestamp_timer.cpp
+收到同步包 → 重置	timestamp_reset_synch_lost_timer() → rtc_timer_reset_timeout()	                        //timestamp_timer.cpp
+超时 → 回调	timestamp_lost_timeout()	                                                                //timestamp_timer.cpp
+
+
+
+
+
+=========================================== rtc2 初始化 ===============================================
+
+
+int main(void)
+
+    。。。。。。
+ 
+
+
+    rtc_timer_init();  //rtc2，专用超时通道系统
+
+
+    //设置rtc2同步超时的回调函数（显示小灯状态）
+    //向 RTC2 申请了空的cc通道，即 CC0，如果闹钟响了，就调用 timestamp_lost_timeout 这个函数    
+    //写入rtc2 CC0的阈值 “RTC2 当前计数值 + 500ms ”，使能rtc2 CC0中断
+    timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found);
+ 
+    。。。。。。
+
+
+
+------
+
+//向 RTC2 申请了空的cc通道，即 CC0，如果闹钟响了，就调用 timestamp_lost_timeout 这个函数    
+//写入rtc2 CC0的阈值 “RTC2 当前计数值 + 500ms ”，使能rtc2 CC0中断
+
+参数：timestamp_synch_lost_found
+
+timestamp_set_synch_lost_found_callback(  func)
+
+    timestamp_synch_lost_found_callback = func;  //timestamp_synch_lost_found
+
+
+    //向 RTC2 申请了空的cc通道，即 CC0，如果闹钟响了，就调用 timestamp_lost_timeout 这个函数    
+    rtc_timer_get_timeout_channel(&timestamp_lost_compare_channel, timestamp_lost_timeout, NULL);
+            capture_channels_used_mask |= (0x01<<i);  //i=0
+            timestamp_lost_compare_channel = i;       //0 (cc0)
+            callback_funcs[i] = callback;     //timestamp_lost_timeout
+            callback_context[i] = p_context;   //null
+
+
+    //写入rtc2 CC0的阈值 “RTC2 当前计数值 + 500ms ”，使能rtc2 CC0中断
+    rtc_timer_set_timeout(timestamp_lost_compare_channel, MS_TO_RTC_TIMEOUT_GEN(500));
+     
+
+
+----
+
+//写入rtc2 CC0的阈值 “RTC2 当前计数值 + 500ms ”， true-- 使能rtc2 CC0中断
+//参数：rtc2 cc0，500ms
+rtc_timer_set_timeout(  channel,   timeout )
+ 
+    //待理解
+    if (timeout_running[0])
+        return NRF_ERROR_INVALID_STATE;
+
+    last_timeout_used[0] = timeout;
+    timeout_running[0]   = true;
+
+ 
+    //写入rtc2 CC0的阈值 “RTC2 当前计数值 + 500ms ”， true-- 使能rtc2 CC0中断
+    nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + timeout, true);
+ 
+
+ 
+
+----
+
+功能；RTC 超时定时器的回调函数。500ms 没收到同步包，触发失联报警（或小灯闪烁）
+
+timestamp_lost_timeout(  *p_context)
+  
+    
+    //如果有下面函数，则调用该函数
+    if(timestamp_synch_lost_found_callback != NULL)  //yes
+  
+        timestamp_synch_lost = true;
+
+        //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+              set_leds();
+    
+
+
+-----
+
+//显示小灯状态
+timestamp_synch_lost_found(  found,   wired)
+ 
+    set_leds();
+ 
+
+------
+
+set_leds()
+ 
+    application_state new_state;
+    application_substates substate;
+
+    if(in_charge_loop)
+        new_state = APP_STATE_CHARGING;  
+
+    else if(!(power_status & POWER_REQ_1WIRE) && //1 wire keeps esb disabled, usb connected moves esb to synch only mode
+       (comms_esb_get_current_state() == COMMS_ESB_EXTERNAL_STATE_IDLE ||
+       comms_esb_get_current_state() == COMMS_ESB_EXTERNAL_STATE_SEARCHING))
+
+        new_state = APP_STATE_IDLE;
+    
+    else if(comms_esb_get_current_state() == COMMS_ESB_EXTERNAL_STATE_SD_SLEEP)
+        new_state = APP_STATE_SLEEP;
+    
+    else if(comms_esb_get_current_state() == COMMS_ESB_EXTERNAL_STATE_DC)
+        new_state = APP_STATE_DC;
+
+    else if((usb_serial_get_state() == USB_SERIAL_STATE_OPENED || (power_status & POWER_REQ_1WIRE))
+             && data_mode == DATA_MODE_DISABLED)
+
+        new_state = APP_STATE_CONNECTED;
+    
+    else if(timestamp_is_synch_lost())    
+        new_state = APP_STATE_SYNCH_LOST;
+    
+    else if(!timestamp_is_synch_wired())    
+        new_state = APP_STATE_WIRELESS_SYNCH;
+    
+    else    
+        new_state = APP_STATE_WIRED_SYNCH;   
+
+    substate = APP_SUBSTATE_NORMAL;
+
+    if (low_battery_state)
+        substate = APP_SUBSTATE_LOW_BATTERY;
+ 
+    // TODO passive charging overrides low battery
+
+    change_led_state(new_state, substate, false);
+ 
+
+
+=========================================== rtc2 收到同步包，重置500ms ===============================================
+
+
+     待完成
+
+
+
+
+=========================================== rtc2 超时500ms没收到同步包，小灯状态 变化 ===============================================
+
+
+     待完成
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
