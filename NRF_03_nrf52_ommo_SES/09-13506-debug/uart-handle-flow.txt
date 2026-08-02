@@ -1,0 +1,43 @@
+
+
+[1-Wire 总线收到数据]
+    ↓
+[硬件] UARTE 接收完成 → 触发 ENDRX 中断
+    ↓
+[中断向量表] UARTE0_IRQHandler()
+    ↓
+[nrfx_uarte.c] nrfx_uarte_0_irq_handler()
+    ↓
+[nrfx_uarte.c] uarte_irq_handler()  → 判断事件类型（ENDRX / ERROR / RXTO）
+    ↓
+
+
+[nrfx_uarte.c] rx_done_event()  → 打包事件，调用用户回调
+    ↓
+[comms_uarte_siu_1wire.cpp] comms_uarte_handler()  ← 静态转发函数
+    ↓
+[comms_uarte_siu_1wire.cpp] on_comms_uarte_event()  ← C++ 成员函数
+
+
+
+
+
+    ↓
+[comms_uarte_siu_1wire.cpp] 根据状态机处理：
+    - 如果是 STATE_RX_DATA → on_rx_complete_in_isr()
+    - 如果是 STATE_RX_TIMESTAMP → 处理 timestamp 包
+    ↓
+
+[comms_uarte_siu_1wire.cpp] on_rx_complete_in_isr()
+    ↓
+
+[comms_uarte_siu_1wire.cpp] rx_complete_callback()  ← 调用 packetizer 的回调
+
+    ↓
+[comms_packetizer.cpp] packetizer 收到数据，开始解析协议
+    ↓
+[comms_packetizer.cpp] 识别出完整数据包（COBS 解码完成）
+    ↓
+[comms_packetizer.cpp] m_packet_ready_handler()  ← 调用注册的包就绪回调
+    ↓
+[main.cpp] msiu_1wire_packet_received()  ← ★ 最终业务处理 ★

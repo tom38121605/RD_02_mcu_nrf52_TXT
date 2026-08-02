@@ -10,23 +10,10 @@ timer_event_handler   --  on_timer_event   -- timer0
 timestamp_timer_event_handler  -- timer3
 comms_esb_timer_handler        -- timer4
 
-
-
-无论数据从哪来，最终都会调用 timestamp_synch_recieved 来提取同步信息。
-TIMESTAMP_SYNCH_SOURCE_1WIRE
-TIMESTAMP_SYNCH_SOURCE_ESB
+ 
 
 
 
-timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
-
-if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_UART) {
-    // 收到有线同步，忽略 ESB 同步一段时间
-    timestamp_synch_esb_ignore_count = 16;  // 16 个 ESB 周期内忽略无线同步
-    if (was_wireless) {
-        timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
-    }
-}
 
 
 
@@ -96,6 +83,17 @@ if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_U
        nrfx_prs_box_4_irq_handler()        //待验证
                ↓
        m_prs_box_4.handler() → comms_uarte_handler() → 你的 1-Wire 代码
+
+
+
+疑问3： uart rx中断的rxdone中，为什么先判断 STATE_RX_RESTART_HANDSHAKE
+答：       因为先处理STATE_RX_RESTART_HANDSHAKE后，之后有些重复模块，可以交给下面的状态一起处理  （待验证）
+
+疑问4： 为什么RESTART_HANDSHAKE这个时候不检查是不是有效的握手包 （只检查标记flags.7 =1，不检查timestamp = 0xfffefdfc ）
+答： 因为 STATE_RX_RESTART_HANDSHAKE 的“任务”不是检查包内容，而是先保证“时间窗口对齐”。
+       你进这个状态的原因是：从机已经发现同步丢了（时间戳跳跃异常），但主机还在正常发数据，还没意识到出问题。
+      此时从机的核心目标是：“我不信任你的时间了，但我还没完全断开，我要先等你把当前这包发完，再重新握一次。”
+
 
 
 
@@ -188,6 +186,9 @@ STATE_TX_PING_ACK	            “正在发心跳包”——发一个空包（pi
 
 STATE_ERROR	                    “出事了”——UARTE 卡死了或长时间没动静，背景循环（100ms 定时器）发现后强行切到这个状态，准备重启通信  //待理解
 
+
+
+
 STATE_RX_HANDSHAKE	            “等主机喊我”——从机不知道当前时间窗口，正在等主机发握手包来建立/恢复同步。这是初始状态  
 
 STATE_RX_RESTART_HANDSHAKE          “主机在说话，但我想重新握手”——从机收到了主机数据，但时间戳对不上，想重新协商连接。此时主机还在发数据，从机先听着，等主机停下来再重握手
@@ -198,14 +199,16 @@ STATE_RX_TIMESTAMP	            “等主机报时”——握手成功后，从�
 
 STATE_RX_DATA	                     “等主机发数据”——主机在 timestamp 包里说了“我要发数据”，从机正在等着收数据包。
 
+
+
 STATE_FIRST_RX = STATE_RX_HANDSHAKE  只是个标记，表示“第一个接收状态是 STATE_RX_HANDSHAKE”，方便代码判断。 //= STATE_RX_HANDSHAKE
 
 
-
+---
 
 //flags常数定义： 这个是数据包（第5字节）里面的 指令标记
 
-#define COMMS_1WIRE_FLAGS_HANDSHAKE 0x80  // 区分是握手数据包，还是时间戳数据包  1 -- “这是握手包”（不是时间戳包）  //已验证
+#define COMMS_1WIRE_FLAGS_HANDSHAKE 0x80  // 区分是否握手数据包                  1 -- “这是握手包” 
 #define COMMS_1WIRE_FLAGS_EXT_SYNCH 0x08  // 主时间戳，与外部输入信号同步        1 -- 这个时间戳可用来同步            //待验证
 
 #define COMMS_1WIRE_FLAGS_OPEN      0x04  // bit2=1，app里open了该从机     easy    
@@ -213,7 +216,43 @@ STATE_FIRST_RX = STATE_RX_HANDSHAKE  只是个标记，表示“第一个接收�
 #define COMMS_1WIRE_FLAGS_MASTER_TX 0x01  // bit0=1 -- 收到主机发来的包, bit0=0 -- 请求从机发送包到主机去 easy
 
 
+---
 
+typedef enum {
+    TRACE_LOCATION_NONE                                      = 0x00,
+
+
+    // comms_uarte_siu_1wire.cpp and comms_uarte_master_1wire.cpp
+    TRACE_1WIRE_TX                                           = 0xA5,
+    TRACE_1WIRE_RX                                           = 0xA6,
+    TRACE_1WIRE_RX_DONE                                      = 0xA7,
+    TRACE_1WIRE_TX_DONE                                      = 0xA8,
+    TRACE_1WIRE_ERROR                                        = 0xA9,
+    TRACE_1WIRE_TIMEOUT                                      = 0xAA,
+    TRACE_1WIRE_SW_WATCHDOG                                  = 0xAB,
+    TRACE_1WIRE_ERROR_RECOVERY                               = 0xAC,
+    TRACE_1WIRE_ERROR_RECOVERY_RX                            = 0xAD,
+    TRACE_1WIRE_ERROR_RECOVERY_TX                            = 0xAE,
+    TRACE_1WIRE_INJECTED_BAD_TIMESTAMP                       = 0xAF,
+    TRACE_1WIRE_DISCONNECTED_BAD_TIMESTAMP                   = 0xB0,
+    TRACE_1WIRE_DISCONNECTED_MASTER_INITIATED_HANDSHAKE      = 0xB1,
+
+    TRACE_1WIRE_DISCONNECTED_SLAVE_INITIATING_HANDSHAKE      = 0xB2,   //here
+
+    TRACE_1WIRE_DISCONNECTED_RX_CALLBACK_ERROR               = 0xB3,
+    TRACE_1WIRE_DISCONNECTED_RX_CANCELLED                    = 0xB4,
+    TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT                      = 0xB5,
+    TRACE_1WIRE_DISCONNECTED_RX_ERROR                        = 0xB6,
+    TRACE_1WIRE_DISCONNECTED_INITIAL_STATE                   = 0xB7,
+    TRACE_1WIRE_DISCONNECTED_ERROR_RECOVERY                  = 0xB8,
+    TRACE_1WIRE_CONNECTED                                    = 0xB9,
+
+
+
+} trace_location;
+
+
+---
 
 typedef __PACKED_STRUCT
 {
@@ -272,9 +311,36 @@ static comms_1wire_slave_tx_data_packet_t tx_no_data =
 
 #define TIMESTAMP_SYNCH_1WIRE_TX_DELAY     (5*10*16 + 1 + (16-4)) 
 
+-------
+
+comms_transport_interface               *transport_device;
+comms_packetizer_packet_ready_handler   packet_handler;
 
 
+#define offsetof(TYPE, MEMBER) __builtin_offsetof (TYPE, MEMBER)
 
+
+class comms_packetizer
+{
+
+  private:  
+        uint8_t           tx_buffer_primary[USB_SERIAL_TX_BUFFER_SIZE];
+
+   ......
+
+}
+
+=============================或参考================================================
+
+timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
+
+if (source == TIMESTAMP_SYNCH_SOURCE_1WIRE || source == TIMESTAMP_SYNCH_SOURCE_UART) {
+    // 收到有线同步，忽略 ESB 同步一段时间
+    timestamp_synch_esb_ignore_count = 16;  // 16 个 ESB 周期内忽略无线同步
+    if (was_wireless) {
+        timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
+    }
+}
 
 
 

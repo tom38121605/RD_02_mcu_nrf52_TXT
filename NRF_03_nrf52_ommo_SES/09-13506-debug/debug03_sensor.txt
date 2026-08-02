@@ -19,18 +19,31 @@ sample_timer_event_handler()   // ← 被调用
 
 int main(void)
 
-    。。。。。。
  
 
-    //
+    //使能 GPIOTE 外设的中断 （房间开关），使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+    //设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler 
+    //设置数据已ready的回调函数
+    //保存timer3 cc2的回调函数 （或cc1中断时调用）
+    //output_data变量初始化
+    //初始化 sensor_event_fifo
+    //分配一个ppi组 sampling_ppi_start_group
+    //取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
     sensors_init(&sample_set_ready);
  
-    。。。。。。
-
 
 
 
 -----------------------------------
+
+//使能 GPIOTE 外设的中断 （房间开关），使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+//设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler 
+//设置数据已ready的回调函数 sample_set_ready
+//保存timer3 cc2的回调函数 sample_timer_event_handler（在cc1中断时调用）
+//output_data变量初始化
+//初始化 sensor_event_fifo
+//分配一个ppi组 sampling_ppi_start_group
+//取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
 
 
 参数：sample_set_ready
@@ -51,20 +64,22 @@ sensors_init(  sample_set_ready_callback_function )
        .skip_gpio_setup = false,     
 
 
-    // //设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
+    //设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
     //nrfx_gpiote_in_init(OMMO_IMU_IRQ_PIN, &in_config, imu_irq_pin_handler);
         nrfx_gpiote_in_init_errata155(pin, p_config, evt_handler, NULL, true);
  
 
+    //设置数据已ready的回调函数 sample_set_ready （数据采完了，快发出去）
     sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
         
 
     //DS  每次 1ms 心跳到来时，sample_timer_event_handler 被调用，检查是否需要采集传感器数据?
     timestamp_add_sample_event_callback(sample_timer_event_handler);
-       sample_event_callbacks[0] = sample_timer_event_handler;
+       sample_event_callbacks[0] = sample_timer_event_handler;        //保存timer3 cc2的回调函数 （在cc1中断时调用）
+       sample_event_callbacks_num++;   // 1
 
 
-    //变量初始化
+    //output_data变量初始化
     current_output_data = output_data_1;
     next_output_data = output_data_2;
     next_next_output_data = output_data_3;
@@ -96,7 +111,8 @@ sensors_init(  sample_set_ready_callback_function )
     current_output_data_timestamp = 0;
     current_output_data_timestamp_offset = 0;
 
-    
+
+    //DS: 就是一个“消息盒子”——中断里把事件放进去，主循环再取出来处理?
     //初始化 sensor_event_fifo
     //ommo_fifo_init(&sensor_event_fifo,  sensor_event_buffer, OMMO_SENSOR_EVENT_FIFO_LEN) ;
 
@@ -110,7 +126,7 @@ sensors_init(  sample_set_ready_callback_function )
     nrfx_ppi_group_alloc(&sampling_ppi_start_group);
 
 
-    //TIMER3 的 CC2 通道负责在每次采样事件后延迟 700us，触发磁力计（MMC5983）的 SET/RESET 命令 （cc0和cc1不受要偏移数组管）
+    //取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入)，或触发磁力计（MMC5983）的 SET/RESET 命令 （cc0和cc1不受要偏移数组管）
     //sensor_set_sample_time_offset_event = timestamp_create_sample_event_offset_event(OMMO_SENSOR_MAG_SET_TIME);
         sample_time_offset_cc_channel[0] = CC2;
         sample_time_offset_time[0] = offset;   //11200
