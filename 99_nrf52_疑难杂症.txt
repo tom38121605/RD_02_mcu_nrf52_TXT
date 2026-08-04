@@ -137,6 +137,31 @@
                 
           } while (0)
           
+   ------------------
 
 
-
+          
+          [调用] OMMO_APP_ERROR_CHECK(err_code, "错误信息", 0)
+          ↓
+      [宏展开]
+          ↓
+      do {
+          const uint32_t LOCAL_ERR_CODE = err_code;
+          if (LOCAL_ERR_CODE != NRF_SUCCESS) {
+              ommo_app_error_handler(err_code, __LINE__, __FILE__, "错误信息", 0);
+          }
+      } while (0)
+          ↓
+      [如果 err_code != NRF_SUCCESS]
+          ↓
+      ommo_app_error_handler() 执行：
+          1. 关闭中断（__disable_irq()）
+          2. 组装错误日志（错误码、文件名、行号、时间戳、附加变量）
+          3. COBS 编码
+          4. 写入 Flash（保存崩溃报告）
+          5. 调用 ommo_app_error_fault_handler()
+          ↓
+      ommo_app_error_fault_handler()：
+          1. 打印错误日志
+          2. 触发断点（NRF_BREAKPOINT_COND）
+          3. 调用 app_error_save_and_stop() → 系统停止/复位
