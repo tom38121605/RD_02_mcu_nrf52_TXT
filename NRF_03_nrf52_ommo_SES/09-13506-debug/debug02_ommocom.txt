@@ -15,12 +15,29 @@ int main(void)
     gpio_init();
 
 
+    //置初始state为 STATE_RX_HANDSHAKE
+    //设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
+    //设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
+
+    //配置uart的回调函数 comms_uarte_handler
+    //取得uart0的回调函数 nrfx_uarte_0_irq_handler
+    //UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+    //设置uart0的中断优先级为1，并使能uart0中断，启动uart0
+
+    //分配和配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1 -- 拍照1）
+    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+    //TMER0 CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃) 
+    //把rtc1的comms_1wire_timer_timer_id初始化为100ms，作为  1-Wire 通信的“软件看门狗”  
+
+    //开始握手初始化
+    //设置state为STATE_RX_HANDSHAKE;
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
     comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
 
 
-
     。。。。。。
-
 
 
 
@@ -36,17 +53,39 @@ void gpio_init( void )
 
 ---------------------------------------
 
+//置初始state为 STATE_RX_HANDSHAKE
+//设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
+//设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
+
+//配置uart的回调函数 comms_uarte_handler
+//取得uart0的回调函数 nrfx_uarte_0_irq_handler
+//UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+//设置uart0的中断优先级为1，并使能uart0中断，启动uart0
+
+//分配和配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1 -- 拍照1）
+//timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+//ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+//TMER0 CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃) 
+//把rtc1的comms_1wire_timer_timer_id初始化为100ms，作为  1-Wire 通信的“软件看门狗”  
+
+//开始握手初始化
+//设置state为STATE_RX_HANDSHAKE;
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+
 
 参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
 
-comms_uarte_siu_1wire::init(    *timer,     *app_timer_id,   packet_ready_callback,    *context,      rtx_pin,   isr_priority   )
+comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback,    *context,    rtx_pin,   isr_priority   )
  
-    this->timer                   = timer;                    //comms_1wire_timer
-    this->app_timer_id     = app_timer_id;       //comms_1wire_timer_timer_id
-    this->rtx_pin               = rtx_pin;                   //P0.7
-    this->ev_handler         = nullptr;                  //NULL
+    this->timer                   = timer;           //comms_1wire_timer           （timer0）
+    this->app_timer_id     = app_timer_id;           //comms_1wire_timer_timer_id  (timer3)     
+    this->rtx_pin               = rtx_pin;           //P0.7
+    this->ev_handler         = nullptr;              //NULL
 
+    //置初始state为 STATE_RX_HANDSHAKE
     state = STATE_RX_HANDSHAKE;
+
     disconnected_count = DISCONNECTION_COUNT_LIMIT;     //100
     last_app_connection_status = false;
 
@@ -61,120 +100,21 @@ comms_uarte_siu_1wire::init(    *timer,     *app_timer_id,   packet_ready_callba
     last_lost_synch_count = UINT32_MAX;
     last_acquiring_synch_count = UINT32_MAX;
 
+
+    //设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
+    //设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
     packetizer.init(this,  packet_ready_callback,  context);
 
 
+    /在发送数据包时，跳过多少字节的“头部”，只把有效数据（data 字段）交给上层处理。
+    //packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
+          reserved_size = offsetof(comms_1wire_slave_tx_data_packet_t, data)  //3
+          tx_buffer_active_top = reserved_size;
+          tx_buffer_base = reserved_size;
 
-
-***1-------------------------------------------------
-
-comms_transport_interface               *transport_device;
-comms_packetizer_packet_ready_handler   packet_handler;
-
-功能：“给数据包处理器配好‘快递员’（通信接口）和‘收件人’（回调函数）
-
-参数：this,    msiu_1wire_packet_received,    NULL
-
-comms_packetizer::init(    *transport,      packet_ready_callback,    *p_context)
-
-    transport_device = transport;                         // this
-    packet_handler = packet_ready_callback;     // msiu_1wire_packet_received
-    packet_handler_context = p_context;            // NULL
-
-    // Init buffers
-    rx_cobs_buffer_in_use = 0;
-    rx_cobs_buffer_top    = 0;
-    rx_cobs_buffer_bottom = 0;
-    in_comms_transport_rx = false;
-    rx_data_ready         = false;
-    rx_failed             = false;
-
-    flush_flag             = false;
-    tx_retry_count         = 0;
-    in_comms_transport_tx  = false;
-    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
-    tx_buffer_base         = 0;
-    tx_buffer_active_top   = 0;
-    tx_buffer_active       = tx_buffer_primary;
-    tx_buffer_transport    = nullptr; 
-    tx_buffer_transport_end= nullptr;
-
-    // Misc
-    rx_lost_packets = 0;
-    tx_lost_packets = 0;
-    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;   //0xFF
-
-    // 设置读完了和写完了的回调函数
-    //transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
-        rx_complete_callback = (rx_cb);     // static_transport_read_complete
-        tx_complete_callback = (tx_cb);     // static_transport_write_complete
-        p_context = (p_context_g);             // this
-
-
-***2-------------------------------------------------
-
-UARTE 硬件收到字节
-    ↓
-nrfx 驱动触发中断 → 调用用户回调
-    ↓
-comms_uarte_siu_1wire 状态机处理（识别 timestamp 包还是 data 包）
-    ↓
-如果是 data 包 → 调用 transport_device 的读完成回调
-    ↓
-packetizer 收到字节 → COBS 解码 → 拼包
-    ↓
-拼好完整包 → 调用 msiu_1wire_packet_received()
-    ↓
-业务处理（解析命令、发回复）
-
-comms_packetizer::static_transport_read_complete(   actual_rx_length,    failed,    *p_context)
-
-    ((comms_packetizer*)p_context)->transport_read_complete(actual_rx_length, failed);
-
----
-
-comms_packetizer::transport_read_complete(   actual_rx_length,   failed)
-{
-    uint16_t i_raw;
-    uint16_t i_cobs;
-
-    // Note that errors may be reported synchronously
-    if (failed)
-    {
-        // Retry from the main event queue
-        rx_failed = true;
-        return;
-    }
-
-    OMMO_APP_ERROR_CHECK(in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous call of transport_read_complete"), 0);
-
-    if (rx_cobs_buffer_top + actual_rx_length > sizeof(rx_cobs_buffer))
-    {
-        rx_lost_packets++;
-        rx_cobs_buffer_top = rx_cobs_buffer_in_use;
-    }
-    else
-    {
-        memcpy(&rx_cobs_buffer[rx_cobs_buffer_top], rx_raw_buffer, actual_rx_length);
-        rx_cobs_buffer_top += actual_rx_length;
-
-        rx_data_ready = true;
-    }
-
-    // Set up next transfer (if opened and not suspended)
-    if (transport_device->is_connected())
-        setup_next_rx();
-}
-
-
-
-（返回原函数2）
-
-（返回原函数1）
-
-    packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
     packetizer_enabled_actual = false;
     packetizer_enabled_target = false;
+
 
     //uart参数配置值，单线半双工，只接rx引脚
     nrfx_uarte_config_t m_uart0_drv_config = NRFX_UARTE_DEFAULT_CONFIG;
@@ -184,12 +124,16 @@ comms_packetizer::transport_read_complete(   actual_rx_length,   failed)
     m_uart0_drv_config.interrupt_priority = isr_priority;    //1
 
 
-    //单线uart初始化之一
-    //APP_ERROR_CHECK(port_master_acquire_uarte_direct(&m_uart0_drv_config, comms_uarte_handler, this, &uarte_resource));   //here
+    //单线uart初始化之一 （同下面的线uart初始化之二）
+    //port_master_acquire_uarte_direct(&m_uart0_drv_config, comms_uarte_handler, this, &uarte_resource);   //here
 
             //uarte_basic_instances[0].acquire(m_uart0_drv_config,  comms_uarte_handler,  this);
 
                  //单线uart初始化之二
+                 //配置uart的回调函数 comms_uarte_handler
+                 //取得uart0的回调函数 nrfx_uarte_0_irq_handler
+                 //UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+                 //设置uart0的中断优先级为1，并使能uart0中断，启动uart0
                  reconfigure(m_uart0_drv_config,  comms_uarte_handler,  this);                  
 
             uarte_resource = &uarte_basic_instances[0];
@@ -199,65 +143,65 @@ comms_packetizer::transport_read_complete(   actual_rx_length,   failed)
        uarte = uarte_instance;    // uarte_basic_instances
 
 
-    // 初始化ommocom为rx脚，第二次配置，更详细
+    // 初始化ommocom为rx脚，第二次配置，更详细 （input，nopull，hod1，nosense）
     nrf_gpio_cfg(rtx_pin,
                  NRF_GPIO_PIN_DIR_INPUT, NRF_GPIO_PIN_INPUT_CONNECT,
                  NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0D1, NRF_GPIO_PIN_NOSENSE);
 
 
-    //配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1）
 
-    //DS: UARTE 每次接收完一个数据包（ENDRX 事件）时，自动捕获当前计时器TIMER3（timestamp timer）的值，并把这个值存下来，用于计算数据包到达的精确时间
-    //timestamp_capture_channel = timestamp_add_capture_event(uarte_resource->get_endrx_event(), &ppi_channel_timestamp_capture);
-        capture_channel = timestamp_get_capture_compare_channel();  //或CC0 待验证
-        //nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, trigger_event_addr, nrfx_timer_task_address_get(&timer_timestamp, capture_tasks[capture_channel]))
-          nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, &NRF_UARTE0_ENDRX, nrfx_timer_task_address_get(&timer_timestamp, task_CC0 )) 
-        return capture_channel;
+     //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture -------------
+
+    //DS: 用 ENDRX 自动捕获当前计时器TIMER3（timestamp timer）的值，用于计算数据包到达的精确时间
+    //分配和配置PPI: endrx（6 点） --  ppi_channel_timestamp_capture (闹铃)  --   TIMER3_CC0（开灯1 -- 拍照1）
+    //timestamp_capture_channel = timestamp_add_capture_event(uarte_resource->get_endrx_event(), &ppi_channel_timestamp_capture);        
+        timestamp_capture_channel = timestamp_get_capture_compare_channel();  //或CC0 
+        nrfx_ppi_channel_alloc(&ppi_channel_timestamp_capture)
+        nrfx_ppi_channel_assign(ppi_channel_timestamp_capture, &NRF_UARTE0_ENDRX, nrfx_timer_task_address_get(&timer_timestamp, task_CC0 )) 
 
 
-    //timer0 初始化，  发送 或 接收超时
+    //timer0 初始参数
     nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
     timer_cfg.p_context = this;
     timer_cfg.interrupt_priority = isr_priority;  //1
 
-    //设置timer0的中断优先级1，使能timer1中断,设置timer1为定时器模式，32位，1M
-    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);     
+    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);  
 
 
-    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2）
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+
     //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
        nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
 
 
-    //TMER0_CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃)  
-
-    //Data packet transmission is triggered by the state machine timer
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_schedule_rx_tx));
+    //TMER0 CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃)  
+    nrfx_ppi_channel_alloc(&ppi_channel_schedule_rx_tx);
     nrf_ppi_event_endpoint_setup(ppi_channel_schedule_rx_tx, nrfx_timer_event_address_get(timer, TIMER_EVENT_SCHEDULE_RX_TX));
 
 
-    。。。。。。
+    //把rtc1的comms_1wire_timer_timer_id初始化为100ms，作为  1-Wire 通信的“软件看门狗”   
+    //Init 100ms timer for disconnection watchdog, etc.
+    app_timer_create(app_timer_id, APP_TIMER_MODE_REPEATED, timed_loop_100ms);
+    app_timer_start(*app_timer_id, APP_TIMER_TICKS(100), this);
 
 
-    //Set up initial handshake rx to start state machine
-    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收，state为STATE_RX_HANDSHAKE
+    //开始握手初始化
+    //设置state为STATE_RX_HANDSHAKE;
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)（超时检查），使能CC2中断，开启timer0
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
     initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
 
----------
+     //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture ----end---------
 
-参数： static_transport_read_complete,   static_transport_write_complete,    this
-comms_transport_interface::set_callbacks(   rx_cb,   tx_cb,  *p_context_g)
 
-    rx_complete_callback = (rx_cb);     // static_transport_read_complete
-    tx_complete_callback = (tx_cb);     // static_transport_write_complete
-    p_context = (p_context_g);             // this
 
 --------
 
-//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收，state为STATE_RX_HANDSHAKE
+//设置state为STATE_RX_HANDSHAKE;
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断（超时检查），开启timer0，
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
 
 参数：TRACE_1WIRE_DISCONNECTED_INITIAL_STATE
 
@@ -275,13 +219,13 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
     //关闭ppi_channel_schedule_rx_tx，不让它触发
     nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
 
-    //写入CC2的阈值64640(4040us)，使能CC2中断
+    //写入CC2的阈值64640(4040us)，使能CC2中断（超时检查）
     nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT, COMMS_1WIRE_MAX_PERIOD_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS, true);   // 64640
 
     nrfx_timer_clear(timer);    //计数器清0
     nrfx_timer_resume(timer);   //重新计数
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
     //rx_now(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(&rx_timestamp, 5, false)
 
@@ -289,14 +233,12 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
 ---
 
 
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+//设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
 
 参数： &rx_timestamp, 5, false
 
 comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
 
-    //空函数  //忽略
-    TRACE_1WIRE(TRACE_1WIRE_RX);
 
     //设置uart为单线rx
     //uarte_resource->switch_to_rx_only();
@@ -307,14 +249,14 @@ comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
     uarte_resource->uarte_rx_flush_fifo();
 
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 （或不等ppi触发）
+    //设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收  
     nrfx_uarte_rx_with_hold(uarte, *buffer, length, with_hold);
  
 
 
 ---
 
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 （或不等ppi触发）
+//设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
 
 参数： uarte， &rx_timestamp, 5, false
 
@@ -353,14 +295,14 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
     //轮换接收仓库
     if (!second_buffer)  //用buf1
     
-        p_cb->rx_buffer_length = length;
-        p_cb->p_rx_buffer      = p_data;
+        p_cb->rx_buffer_length = length;    //5
+        p_cb->p_rx_buffer      = p_data;    //rx_timestamp
         p_cb->rx_secondary_buffer_length = 0;          // 这里两个buf为什么不对称 （这里应该只是初始化）
     
     else   // 用buf2  （这里不能把 buf1的length置为0，因为里面有数据？）
     
-        p_cb->p_rx_secondary_buffer = p_data;
-        p_cb->rx_secondary_buffer_length = length;
+        p_cb->p_rx_secondary_buffer = p_data;       //rx_timestamp
+        p_cb->rx_secondary_buffer_length = length;  //5
 
 
     err_code = NRFX_SUCCESS;
@@ -373,15 +315,16 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
     //---------------------------------------  buf1和buf2 轮流接收  ----end--------------------------------------------
  
 
-
     //开启接收
     if (!hold_rx)   // yes
     
-        if (!second_buffer)        
+        if (!second_buffer)   //buf1的情况     
             nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STARTRX);      // 直接启动接收
         
-        else        
-            nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);    // 设置硬件“自动接力”：当前接收完成后，自动开始下一个接收
+        else  //buf2的情况     
+ 
+            //nrf_uarte_shorts_enable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);    // 设置硬件“自动接力”：当前接收完成后，自动开始下一个接收
+                p_reg->SHORTS = NRF_UARTE_SHORT_ENDRX_STARTRX
         
 
     if (m_cb[0].handler == NULL)    //no,  comms_uarte_handler  
@@ -404,7 +347,7 @@ nrfx_uarte_rx_with_hold(  *p_instance,   p_data,  length,  hold_rx)
 
 //清空rx fifo里面的垃圾数据 easy
 
-uarte_basic::uarte_rx_flush_fifo() const
+uarte_basic::uarte_rx_flush_fifo()  
  
     if (nrf_uarte_event_check(uarte_instance->p_reg, NRF_UARTE_EVENT_RXDRDY))  //如果有数据 （垃圾）
  
@@ -433,11 +376,13 @@ uarte_basic::uarte_rx_flush_fifo() const
     nrf_uarte_event_clear(uarte_instance->p_reg, NRF_UARTE_EVENT_ERROR);
  
 
-
 ---------
 
-
-//单线串口初始化之二，
+//单线uart初始化之二 
+//配置uart的回调函数 comms_uarte_handler
+//取得uart0的回调函数 nrfx_uarte_0_irq_handler
+//UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+//设置uart0的中断优先级为1，并使能uart0中断，启动uart0
 
 参数：m_uart0_drv_config,   comms_uarte_handler,   this
 
@@ -463,7 +408,7 @@ uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
     if (err != NRF_SUCCESS)
         return err;
 
-
+    //配置uart的回调函数 comms_uarte_handler
     if(direct_mode) //yes， 有回调函数
 
         event_handler = event_handler;        //comms_uarte_handler
@@ -474,7 +419,10 @@ uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
         uarte_config.p_context = this;
 
 
-    //单线串口初始化之三，
+    //单线uart初始化之三，
+    //取得uart0的回调函数 nrfx_uarte_0_irq_handler
+    //UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+    //设置uart0的中断优先级为1，并使能uart0中断，启动uart0
     nrfx_uarte_init(uarte_instance, &uarte_config, event_handler);
 
 
@@ -492,27 +440,30 @@ uarte_basic::reconfigure(   * p_cfg,    event_handler,    *p_context)
 
 -----------
 
-//单线串口初始化之三，
+//单线uart初始化之三，
+//取得uart0的回调函数 nrfx_uarte_0_irq_handler
+//UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
+//设置uart0的中断优先级为1，并使能uart0中断，启动uart0
 
 参数：uarte_instance (for UARTE0) ,  m_uart0_drv_config,   comms_uarte_handler    //uarte_basic_instances[0]
 
 nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
  
- 
-    uarte_control_block_t * p_cb = &m_cb[p_instance->drv_inst_idx ]; 
+    p_cb = &m_cb[0]; 
 
-    static nrfx_irq_handler_t const irq_handlers[2] = {
+    nrfx_irq_handler_t const irq_handlers[2] = {
         nrfx_uarte_0_irq_handler,
         nrfx_uarte_1_irq_handler
     };
 
     //申请使用该路uart0，并打占用标志
-    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[p_instance->drv_inst_idx]);
-       p_box->handler  = irq_handler;    //m_prs_box_4
+    //取得uart0的回调函数 nrfx_uarte_0_irq_handler  （具体待理解）
+    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[0]);
+       p_box->handler  = irq_handler;    //m_prs_box_4   //nrfx_uarte_0_irq_handler
        p_box->acquired = true;
 
 
-    //UART0 初始化
+    //UART0 初始化：rx脚p0.7输入，波特率1M，tx脚为空
     //apply_config(p_instance, p_config);    //uarte_instance(for UARTE0) , m_uart0_drv_config
        
        nrf_gpio_cfg_input(p_config->pselrxd, NRF_GPIO_PIN_NOPULL);                        //初始化P0.7为输入
@@ -536,7 +487,6 @@ nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
     p_cb->state                      = NRFX_DRV_STATE_INITIALIZED;
 
  
-
 
 
 
@@ -578,12 +528,23 @@ nrfx_uarte_init(   p_instance,   *p_config,  event_handler)
 
 
 
+
+
+------------------------------------------------------------------------
+
+
+//uart0中断入口
 nrfx_uarte_0_irq_handler( )
  
     uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
  
 
 -------------
+
+//接收完成中断
+//判断是正常收满
+//rx_done_event
+
 
 uarte_irq_handler(   *p_uarte,   *p_cb  )
 
@@ -595,27 +556,29 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
         。。。。。。
 
 
+
+
     else if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDRX))   // 接收完成中断
     
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDRX);    //清零ENDRX标记
 
-        size_t amount = nrf_uarte_rx_amount_get(p_uarte);  收到了多少个字节
+        size_t amount = nrf_uarte_rx_amount_get(p_uarte);  //收到的字节数
 
         if (amount == p_cb->rx_buffer_length)    // 收满了（不是超时，是正常收满）
         
-            if (p_cb->rx_secondary_buffer_length != 0)      //轮到buf2
+            if (p_cb->rx_secondary_buffer_length != 0)      //轮到buf1
             
-                uint8_t * p_data = p_cb->p_rx_buffer;
+                uint8_t * p_data = p_cb->p_rx_buffer;  //rx_timestamp
 
                 nrf_uarte_shorts_disable(p_uarte, NRF_UARTE_SHORT_ENDRX_STARTRX);  //关闭快捷
 
-                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;
-                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;
+                p_cb->rx_buffer_length = p_cb->rx_secondary_buffer_length;  //5
+                p_cb->p_rx_buffer = p_cb->p_rx_secondary_buffer;            //rx_timestamp
 
                 p_cb->rx_secondary_buffer_length = 0;
-                rx_done_event(p_cb, amount, p_data);
+                rx_done_event(p_cb, amount, p_data);   //rx_timestamp
             
-            else                                        // 轮到buf1
+            else                                        // 轮到buf2
             
                 p_cb->rx_buffer_length = 0;
                 rx_done_event(p_cb, amount, p_cb->p_rx_buffer);   // rx_timestamp
@@ -659,7 +622,7 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
 
 
-
+//uart0中断入口
 nrfx_uarte_0_irq_handler( )
  
     uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
@@ -679,42 +642,52 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
 
         if (p_cb->tx_buffer_length != 0)
         
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));  //上次发送的数据长度323字节
         
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))   // 发送结束
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))   // 发送结束   // here
     
+        //清 ENDTX 标记
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
 
-        // Transmitter has to be stopped by triggering STOPTX task to achieve
-        // the lowest possible level of the UARTE power consumption.
+        //停止uart发送
         nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
 
+        // 这是你的数据吗，俺已发完了，你要咋处理
         if (p_cb->tx_buffer_length != 0)        
             tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
 
     
 
 
+-------
+
+//参数： pcb，  323
+tx_done_event(  *p_cb, bytes  )
+
+    nrfx_uarte_event_t event;
+
+    event.type                        = NRFX_UARTE_EVT_TX_DONE;
+    event.data.rxtx.bytes      = bytes;
+    event.data.rxtx.p_data    =  p_cb->p_tx_buffer;    //tx_no_data
+
+    p_cb->tx_buffer_length = 0;
+
+    //p_cb->handler(&event, p_cb->p_context);
+    //  comms_uarte_handler(&event, this);
+            this->on_comms_uarte_event(p_event);
+
+
+
  -----
 
 
-参数：event.type             = RXDONE;
+参数：event.type             = TX_DONE;
       event.data.rxtx.bytes  = amount 
       event.data.rxtx.p_data = rx_timestamp
 
-
 comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
  
-
-    if (p_event->type == NRFX_UARTE_EVT_ERROR)
-        nrf_uarte_event_clear(uarte->p_reg, NRF_UARTE_EVENT_ENDRX);
-  
-
-    if (state == STATE_ERROR || state == STATE_UNINITIALIZED)
-        return;
-
-
 
     if (p_event->type == NRFX_UARTE_EVT_RX_DONE) 
 
@@ -722,15 +695,48 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
 
 
-    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)
+    else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)  //发送完成   //here
 
-        if (state == STATE_TX_DATA)
+        if (state == STATE_TX_DATA)    //no ， 先忽略跳过
             on_tx_complete_in_isr();
 
+          //设置 state 为 STATE_RX_TIMESTAMP
+         //停止timer0定时器
+         //关闭 ppi_channel_schedule_rx_tx通道
+         //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+        //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
         rx_timestamp_now();
+
     
+---------
 
+//设置 state 为 STATE_RX_TIMESTAMP
+//停止timer0定时器
+//关闭 ppi_channel_schedule_rx_tx通道
+//写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
 
+comms_uarte_siu_1wire::rx_timestamp_now( )
+
+    state = STATE_RX_TIMESTAMP;
+
+    //停止timer0定时器
+    nrfx_timer_pause(timer);
+
+    //关闭 ppi_channel_schedule_rx_tx通道
+    nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
+
+    //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT,
+                       COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS + COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS,   //8640
+                       true);
+
+    nrfx_timer_clear(timer);        //把timer0计数值清0
+    nrfx_timer_resume(timer);    //开启timer0定时器    
+
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //rx_now(&rx_timestamp, sizeof(rx_timestamp));
+       rx_with_optional_hold(&rx_timestamp, 5, false)
  
             
  

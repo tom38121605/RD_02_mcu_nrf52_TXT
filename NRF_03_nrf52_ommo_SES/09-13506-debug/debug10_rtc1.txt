@@ -248,7 +248,9 @@ void comms_uarte_siu_1wire::timed_loop_100ms()
             // Synchronize state update with UARTE events
             NRFX_CRITICAL_SECTION_ENTER();
              
-
+            //设置 state 为 STATE_RX_HANDSHAKE
+            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+            //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
             initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_ERROR_RECOVERY);
 
             NRFX_CRITICAL_SECTION_EXIT();

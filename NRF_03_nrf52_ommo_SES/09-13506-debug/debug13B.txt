@@ -15,6 +15,58 @@ TIMER3 是系统主时钟
     NRF_TIMER_EVENT_COMPARE0	“闹铃响” -- 当 COUNTER == CC[0]，硬件自动产生 COMPARE0 事件   //easy，Timer → 向外发出信号
 
 
+疑问2：采样在哪里
+
+采样（读取传感器数据）是在 sample_timer_event_handler() 中完成的，它是通过 timestamp_add_sample_event_callback() 注册到 sample_event_callbacks[] 数组里的。
+
+
+[TIMER3 CC0 中断]（每 1ms）
+    ↓
+timestamp_timer_event_handler()
+    ↓
+遍历 sample_event_callbacks[] 数组
+    ↓
+sample_timer_event_handler()   ← 注册到数组里
+    ↓
+（在 sample_timer_event_handler 中保存时间戳）
+    ↓
+[回到主循环]
+    ↓
+sensors_event_queue_sample_ready_process()
+    ↓
+sample_set_ready()   ← 真正发送数据
+
+
+那采样到底在哪？
+采样是在 状态机 sensors_state_change() 中完成的：
+
+状态	采样操作
+SETUP_NEXT_MAG_DATA_READ	启动 SPI 读取磁力计数据
+SETUP_NEXT_IMU_DATA_READ	启动 SPI 读取 IMU 数据
+WAITING_FOR_MAG_DATA_READ_COMPLETION	保存磁力计数据到缓冲区
+WAITING_FOR_IMU_DATA_READ_COMPLETION	保存 IMU 数据到缓冲区
+OMMOCOMM_DELAY_SETUP_STATE_MACHINE_RESTART	调用 swap_sample_buffers_and_flag_sample_callback()
+swap_sample_buffers_and_flag_sample_callback()	切换缓冲区，设置 execute_sample_ready_callback = true
+
+
+TIMER3 CC0（1ms）
+    ↓
+sample_timer_event_handler（保存时间戳）
+    ↓
+[PPI 触发 SPI 采样]  ← 硬件自动触发，不经过 CPU 中断
+    ↓
+SPI 完成 → 中断 → sensors_state_change()
+    ↓
+数据存到缓冲区
+    ↓
+swap_sample_buffers_and_flag_sample_callback()
+    ↓
+execute_sample_ready_callback = true
+    ↓
+主循环 → sensors_event_queue_sample_ready_process()
+    ↓
+sample_set_ready()（发送数据）
+
 
 
 

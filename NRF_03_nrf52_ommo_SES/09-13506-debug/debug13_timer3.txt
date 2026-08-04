@@ -62,14 +62,15 @@ nrfx_timer_compare(CC_sampe, sample_event_trigger_value)
 
 int main(void)
 
-    。。。。。。
+
 
  
     //timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M，开启timer3开始计数
     //写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
     //写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
     //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组
-    //分配和建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group），使能该ppi
+    //分配和建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group）
+    //使能ppi_channel_disable_timestamp_capture
     timestamp_init_with_internal_sample_event(3);
 
 
@@ -78,7 +79,44 @@ int main(void)
     //配置PPI：ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
     comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
 
-    。。。。。。
+
+
+    //取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
+    sensors_init(&sample_set_ready);
+
+
+
+--------------
+
+//设置数据已ready的回调函数 sample_set_ready
+//保存timer3 cc2的回调函数 sample_timer_event_handler（在cc1中断时调用）
+//取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
+
+参数：sample_set_ready
+sensors_init(  sample_set_ready_callback_function )
+
+     。。。。。。
+
+    //设置数据已ready的回调函数 （数据采完了，快发出去）
+    sample_set_ready_callback = sample_set_ready_callback_function;    //sample_set_ready
+        
+
+    //DS  每次 1ms 心跳到来时，sample_timer_event_handler 被调用，检查是否需要采集传感器数据?
+    timestamp_add_sample_event_callback(sample_timer_event_handler);
+       sample_event_callbacks[0] = sample_timer_event_handler;        //保存timer3 cc2的回调函数 （或cc1中断时调用）
+       sample_event_callbacks_num++;   // 1
+
+
+     。。。。。。
+
+
+    //取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入)，触发磁力计（MMC5983）的 SET/RESET 命令 （cc0和cc1不受要偏移数组管）
+    //sensor_set_sample_time_offset_event = timestamp_create_sample_event_offset_event(OMMO_SENSOR_MAG_SET_TIME);
+        sample_time_offset_cc_channel[0] = CC2;
+        sample_time_offset_time[0] = offset;   //11200
+        sensor_set_sample_time_offset_event = nrf_timer_event_address_get( TIMER3, compare_events[CC2]);
+
+     。。。。。。
 
 
 
@@ -108,20 +146,42 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
 
 
-    。。。。。。 
+    //timer0 初始化，  发送 或 接收超时
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.p_context = this;
+    timer_cfg.interrupt_priority = isr_priority;  //1
+
+    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+    nrfx_timer_init(timer, &timer_cfg, timer_event_handler);  
 
 
-    //配置PPI：ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
+    //ppi_channel_timestamp_capture (闹铃)  --   TIMER0 CC0（开灯2 -- 拍照2）
 
     //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
        nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
 
 
+
+    //TMER0 CC1 (6点)  --  ppi_channel_schedule_rx_tx (闹铃)  
+
+    //Data packet transmission is triggered by the state machine timer
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_schedule_rx_tx));
+    nrf_ppi_event_endpoint_setup(ppi_channel_schedule_rx_tx, nrfx_timer_event_address_get(timer, TIMER_EVENT_SCHEDULE_RX_TX));
+
+
+
+    。。。。。。
+
+
+    //设置 state 为 STATE_RX_HANDSHAKE
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
+
+
      //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture ----end---------
 
     
-    。。。。。。
-
 
 
 
@@ -130,10 +190,11 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
 
 //timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M，开启timer3开始计数
-//分配和写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
-//分配和写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
+//写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
+//写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
 //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组
-//分配和建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group），使能该ppi
+//分配和建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group）
+//使能ppi_channel_disable_timestamp_capture
 
 参数： 3 
 timestamp_init_with_internal_sample_event( isr_priority)
@@ -306,23 +367,34 @@ irq_handler(    *p_reg,   *p_cb,   channel_count)
 
 -----------
 
-参数： event, null
-timestamp_timer_event_handler(  event_type,   *p_context)
+//把cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
+//计算timer3 cc0的新门槛值，把cc0的新门槛值（旧值 + 1ms）写入到timer3的cc0中，使能timer3 cc0中断
+
+//取得timer3 cc1的比较事件标志 （同步事件），如果有同步事件，则如下处理：
+//    如果在uart中断里已收到同步包，则清0同步接收标志。如未收到同步包，则同步包次数+1
+//    把cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断  
+ 
+//调用timer3 cc2的回调函数  //待完善
+
+
+参数： CC0比较事件, null
+timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3的CC0 1ms开了中断。cc1和cc2都没有开中断
 
     //保存最后一次的时间戳timestamp
     last_sample_event_trigger_value = sample_event_trigger_value;   
 
- 
-    if( sample_event_compare_channel !=  0xFF )
+
+    //如果CC0的通道值没有越界 
+    if( sample_event_compare_channel !=  0xFF )    //yes
 
         //timer3 cc2中断处理，控制set/reset （只有cc2是保存在偏移数值里面的）  //cc0，cc1跳过这里         
         for(  i=0; i<next_free_sample_time_offset_index; i++)
 
-            //在每次采样事件发生时，基于前一次的采样拍照时间，设置各个cc新的门槛值，不使能cc中断 
-            nrfx_timer_compare(&timer_timestamp,  sample_time_offset_cc_channel[i],     sample_event_trigger_value  +  sample_time_offset_time[i],  false  );  //700us
+            //把cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
+            nrfx_timer_compare(&timer_timestamp,  sample_time_offset_cc_channel[i],   sample_event_trigger_value + sample_time_offset_time[i],  false  );  //700us
 
         
-        //timer3 cc1的中断
+        //计算timer3 cc0的新门槛值
         do
         {
             sample_event_trigger_value += OMMO_TIMESTAMP_SAMPLE_PERIOD;   //15984， 1ms
@@ -332,34 +404,96 @@ timestamp_timer_event_handler(  event_type,   *p_context)
         while( AAA  > 0 );  //如果错过了这个 ISR，则向前推进（仅在 USB 连接期间发生）
 
 
-
-        //Set up next sample event
+        //把cc0的新门槛值（旧值 + 1ms）写入到timer3的cc0中，使能timer3 cc0中断
         nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
 
 
-        //Check if this was a synch event
-        if(nrf_timer_event_check(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]))
-        {
+        //取得timer3 cc1的比较事件标志 （同步事件）
+        //AAA = nrf_timer_event_check(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel])
+            AAA = nrf_timer_event_check(timer_timestamp.p_reg, compare_events[cc1])
+
+        //如果timer3 cc1有同步事件，如下处理
+        if( AAA )
+        
+            //如果在uart中断里已收到同步包，则清0同步接收标志。如未收到同步包，则同步包次数+1
             timestamp_on_synch_event();
 
-            //UARTE is actively transmitting the trigger value via DMA right now and sample_event_trigger_value has already been rolled forward by 1 cycle
+
+            //计算下一次同步事件（CC1）的触发时间，等于cc0的下一次触发时间（1ms） +  3ms
             synch_event_trigger_value = sample_event_trigger_value + (OMMO_TIMESTAMP_SYNCH_PERIOD_MULT-1)*OMMO_TIMESTAMP_SAMPLE_PERIOD;
 
-            //Setup next synch event
+
+            //清0timer3 cc1的比较事件中断
             nrf_timer_event_clear(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]);
+
+            //把cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断
             nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
+
             
-            //Callback that a synch event just happened and the next will occur at the following BS timestamp trigger value in the future
+            //没有下面函数的调用，忽略跳过
             for(uint8_t i = 0; i < timestamp_synch_execute_functions_num; i++)
                 timestamp_synch_execute_functions[i](synch_event_trigger_value + timestamp_synch_offset); //Convert value to BS units
-        }
+        
 
 
+    //调用timer3 cc2的回调函数  //待完善
+    for(uint8_t i = 0; i < sample_event_callbacks_num; i++)   //1
 
-    //Call callback if supplied
-    for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
-        sample_event_callbacks[i](event_type, p_context);
+       //待完善  （先看uart中断函数）
+       //sample_event_callbacks[i](event_type, p_context);
+          sample_timer_event_handler(event_type, p_context);
+
  
+
+
+--------
+
+//如果已收到同步包，则清0同步接收标志。如未收到同步包，则同步包次数+1
+timestamp_on_synch_event( )
+ 
+    //Keep track of timestamp events since last synch
+
+    //判断 是否已收到同步包
+    if( timestamp_synch_received_msk&0x02 )     //如果已收到同步包
+ 
+        timestamp_synch_consequtive_misses = 0;  //把同步包丢失次数清0
+
+        //原子操作，设置timestamp_synch_received_msk的bit2=0，把同步接收标志恢复到初始状态
+        __atomic_and_fetch(&timestamp_synch_received_msk, ~0x02, __ATOMIC_SEQ_CST);
+    
+    else 
+        timestamp_synch_consequtive_misses++;   //同步包丢失次数 +1
+
+---------
+
+//待完善  （先看uart中断函数）
+
+参数： CC0比较事件, null
+
+sample_timer_event_handler(  event_type,   p_context )
+ 
+    //Save current timestamp for packet that will be sent next
+    if( last_timestamp_used )
+    {
+        //If the mag was not read then don't update the last timestamp because
+        //the old data matching that timestamp will be read in the next cycle
+
+        last_timestamp = current_timestamp;
+        last_timestamp_offset = current_timestamp_offset;
+        last_timestamp_used = false;
+
+        //Save the timestamp/encoder for the next packet (after packet in process)
+        timestamp_get_last_sample_event_timestamp_basestation_units(current_timestamp, current_timestamp_offset);
+    }
+ 
+    else // sample skipped
+    {
+        ommocomm_packet_malformed_countdown = ommocomm_packet_malformed_after_skipped;
+    }
+ 
+
+    //Re enable encoder sampling
+    timestamp_reenable_disabled_captures();
 
 
 ----------
@@ -379,17 +513,7 @@ calculate_wrapped_delta(  first,  second,   period )
  
 
 
-
-
-=======================================timer3 触发 1ms采样=========待完成===========================================
-
-
-
-
-
-
-=======================================timer3 触发 4ms同步=========待完成===========================================
-
+ 
 
 
 

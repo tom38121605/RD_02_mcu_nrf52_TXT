@@ -1,6 +1,8 @@
 //IMU IRQ pin
 #define OMMO_IMU_IRQ_PIN                    NRF_GPIO_PIN_MAP(0,12)
 
+static nrf_ppi_channel_group_t sampling_ppi_start_group;
+
 
 
 typedef struct
@@ -67,29 +69,7 @@ static uint32_t                  sample_time_offset_time[OMMO_TIMESTAMP_MAX_SAMP
 ==========================================回调函数  待整理==================================================
 
 
-sample_timer_event_handler(  event_type,   p_context )
- 
-    //Save current timestamp for packet that will be sent next
-    if( last_timestamp_used )
-    {
-        //If the mag was not read then don't update the last timestamp because
-        //the old data matching that timestamp will be read in the next cycle
-        last_timestamp = current_timestamp;
-        last_timestamp_offset = current_timestamp_offset;
-        last_timestamp_used = false;
 
-        //Save the timestamp/encoder for the next packet (after packet in process)
-        timestamp_get_last_sample_event_timestamp_basestation_units(current_timestamp, current_timestamp_offset);
-    }
- 
-    else // sample skipped
-    {
-        ommocomm_packet_malformed_countdown = ommocomm_packet_malformed_after_skipped;
-    }
- 
-
-    //Re enable encoder sampling
-    timestamp_reenable_disabled_captures();
  
 
 

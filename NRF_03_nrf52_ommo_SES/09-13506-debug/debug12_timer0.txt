@@ -2,11 +2,11 @@
 
 TIMER0 的三个主要功能
 
-   捕获 RX 完成时间	CC0	记录上一次 UARTE 接收完成的时刻，作为后续调度的基准
+   捕获 RX 完成时间	CC0	记录上一次 UARTE 接收完成的时刻，作为后续调度的基准   拍照
 
-   调度 RX/TX 切换	CC1	在精确的时间点触发 PPI，自动启动 UARTE 接收或发送
+   调度 RX/TX 切换	CC1	在精确的时间点触发 PPI，自动启动 UARTE 接收或发送     300us 等rxtx /  3530us + 235us 等接收下一个时间戳包
 
-   接收超时检测	CC2	如果没在规定时间内收到数据，触发超时中断，重新握手
+   接收超时检测	CC2	如果没在规定时间内收到数据，触发超时中断，重新握手            540us等时间戳/ 4040us等握手包/ 3530us + 540us 从新接收时间戳包
 
 
 
@@ -25,6 +25,9 @@ TIMER0 计数到 CC1 → 触发 PPI → 自动启动 UARTE RX/TX
 TIMER0 计数到 CC2 → 触发中断 → 超时处理
 
 
+
+疑问1：为什么 timer0 CC1 接收下一个时间戳包时间窗口是 3530us + 235us
+答：   从“上一个包结束”到“下一个时间戳包开始”，中间要经过：数据包延迟（300us）+ 数据包传输时间（323字节，3.23ms）+ 安全余量（235us）
 
 
 
@@ -91,6 +94,15 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
     //nrfx_ppi_channel_fork_assign(ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, TIMER_TASK_CAPTURE_RXEND));
        nrf_ppi_fork_endpoint_setup( ppi_channel_timestamp_capture, nrfx_timer_task_address_get(timer, CC0) );
+
+
+    。。。。。。
+
+
+    //设置 state 为 STATE_RX_HANDSHAKE
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
 
      //---------- timer3 cc0 和timer0 cc0 共用 ppi_channel_timestamp_capture ----end---------

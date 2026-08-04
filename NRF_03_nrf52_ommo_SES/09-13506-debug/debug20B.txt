@@ -1,0 +1,311 @@
+
+
+
+main()
+    ↓
+sensors_init(sample_set_ready)
+    ├─ timestamp_add_sample_event_callback(sample_timer_event_handler)
+    └─ nrfx_ppi_group_alloc(&sampling_ppi_start_group)   // 分配 PPI Group
+    ↓
+[某个命令触发] sensors_start_state_machine()
+    ↓
+sensors_state_machine_acquire_resources()
+    ├─ port_master_acquire_spim_direct() → sensors_add_start_transfer_task(SPI_START)
+    ├─ port_master_acquire_ommocomm_direct() → sensors_add_start_transfer_task(OMMOCOMM_START)
+    └─ sensors_add_start_transfer_task(DEBUG_PIN_START)
+    ↓
+current_state = SETUP_MAG_SET_COMMAND
+sensors_state_change()
+    ↓
+在状态机中启用 PPI Group：
+sensors_set_ppi_start_transfer_event_addr_and_enable(event)
+    ↓
+nrfx_ppi_group_enable(sampling_ppi_start_group)   // ★ 所有 PPI 通道开始工作 ★
+    ↓
+[每个采样事件触发时]
+TIMER3 CC0 事件 → PPI → 所有注册的任务（SPI START、Ommocomm START 等）被自动触发
+
+
+
+
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    sensors_init()                               │
+│  • 分配 PPI Group（sampling_ppi_start_group）                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│              sensors_start_state_machine()                      │
+│  → sensors_state_machine_acquire_resources()                   │
+│      ├─ 获取 SPI 总线 → sensors_add_start_transfer_task()     │
+│      ├─ 获取 Ommocomm → sensors_add_start_transfer_task()     │
+│      └─ 获取调试引脚 → sensors_add_start_transfer_task()       │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│           sensors_add_start_transfer_task() 内部               │
+│  • 分配 PPI 通道                                               │
+│  • 加入 PPI Group                                              │
+│  • 配置 PPI：采样事件 → 任务地址                               │
+│  • 任务地址存入 free 列表（支持 Fork 复用）                   │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│          sensors_set_ppi_start_transfer_event_addr_and_enable()│
+│  • 设置所有 PPI 通道的事件端点                                 │
+│  • nrfx_ppi_group_enable(sampling_ppi_start_group)            │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│           每个采样事件触发时（~1ms）                           │
+│  TIMER3 CC0 事件                                               │
+│      ↓ PPI 自动触发                                            │
+│  所有注册的任务（SPI、Ommocomm 等）同时启动                   │
+└─────────────────────────────────────────────────────────────────┘
+
+
+
+
+
+
+[主机(Base Station)] 发送无线数据使能命令
+    ↓
+[从机(MSIU)] ESB 无线模块收到数据包
+    ↓
+RADIO 中断 → nrfx_esb_irq_handler()
+    ↓
+comms_esb_siu_wireless::on_radio_event()
+    ↓
+检测到是 Direct Comm 模式的数据包
+    ↓
+comms_esb_direct_comms_packet_received()   [main.cpp]
+    ↓
+解析命令：case OMMO_COMMAND_WIRELESS_DATA_ENABLE
+    ↓
+comms_esb_enter_sd_mode()   [comms_esb_siu_wireless.cpp]
+    ↓
+sensors_start_state_machine()   [akm_st_spi_sampler.cpp]
+    ↓
+sensors_state_machine_acquire_resources()
+    ↓
+sensors_state_change() → 开始循环采样
+
+
+---
+
+TIMER3 CC0（1ms 采样事件）
+    ↓
+PPI 自动触发 SPI START 任务（硬件自动，不经过 CPU）
+    ↓
+SPI 传输开始
+    ↓
+SPI 传输完成 → 中断 → spi_event_handler()
+    ↓
+sensors_state_change()   // ★ 在这里被调用 ★
+
+
+---
+
+
+TIMER3 CC0（1ms）
+    ↓
+PPI → SPI START（硬件自动）
+    ↓
+SPI 读取磁力计/IMU 数据
+    ↓
+SPI 完成中断 → spi_event_handler()
+    ↓
+sensors_state_change() → 下一个状态
+    ↓
+（可能继续 SPI 读取下一个传感器，或切换到 I2C，或完成一轮采样）
+    ↓
+一轮采样完成 → swap_sample_buffers_and_flag_sample_callback()
+    ↓
+execute_sample_ready_callback = true
+    ↓
+主循环 → sensors_event_queue_sample_ready_process()
+    ↓
+sample_set_ready()（发送数据）
+
+
+---
+
+
+你的图纸对应到代码里
+如果图纸是 2 个磁力计 + 1 个 IMU + 1 个温度计：
+
+传感器	      总线    total_num_ics    num_i2c_ics
+磁力计 1	SPI     +1               —
+磁力计 2	SPI     +1               —
+IMU	        SPI     +1               —
+温度计           I2C     —               +1
+合计             —      3                1
+
+
+
+
+
+
+====================================参考2   配置 sampling_ppi_start_group ==================================================
+
+
+
+
+
+static nrf_ppi_channel_group_t sampling_ppi_start_group;
+
+
+
+
+
+[初始化]
+nrfx_ppi_group_alloc(&sampling_ppi_start_group)   // 分配 Group
+    ↓
+[sensors_add_start_transfer_task() 被调用多次]
+每个 PPI 通道被分配并加入 Group
+    ↓
+[开始采样]
+sensors_set_ppi_start_transfer_event_addr_and_enable(event)
+    ↓
+nrfx_ppi_group_enable(sampling_ppi_start_group)   // ★ 一键启用所有 PPI 通道 ★
+    ↓
+[采样期间] PPI 通道自动工作
+    ↓
+[停止采样]
+sensors_clean_start_transfer_tasks()
+    ↓
+nrfx_ppi_group_disable(sampling_ppi_start_group)  // ★ 一键禁用所有 PPI 通道 ★
+
+
+
+
+
+---------------------------------------------------------------
+
+
+int main(void)
+
+
+    sensors_init(&sample_set_ready);
+
+------------
+
+
+参数：sample_set_ready
+sensors_init(  sample_set_ready_callback_function )
+
+
+    //分配一个ppi组 sampling_ppi_start_group
+    nrfx_ppi_group_alloc(&sampling_ppi_start_group);
+
+
+
+
+
+
+
+==========================================参考==========================================
+
+
+
+sensors_start_state_machine()
+{ 
+    // Don't start state machine if state machine is not ready to run (state machine will fail)
+    if (!sensors_is_state_machine_ready_to_run())
+        return NRF_ERROR_NOT_FOUND;
+
+    // Stop idle hot_plug
+    sensors_stop_state_machine();
+
+    // Acquire resources
+    sensors_state_machine_acquire_resources();
+ 
+
+    // Put ommocomm instances into auto mode (if they have sensors attached)
+    for (ommocomm_uarte *& ommocomm_dev : ommocomm_instances)
+    {
+        APP_ERROR_CHECK(ommocomm_dev->automode_enable());
+    }
+
+    ommocomm_packet_malformed_countdown = 0;   //only checked when value != 0
+ 
+ 
+    nrfx_gpiote_in_event_disable(OMMO_IMU_IRQ_PIN);
+ 
+
+    uint32_t prev_timestamp_bs_units, unused;
+    timestamp_get_last_sample_event_timestamp_basestation_units(prev_timestamp_bs_units, unused);
+    prev_timestamp_bs_units -= OMMO_TIMESTAMP_SAMPLE_PERIOD;
+    sensors_schedule_i2c_set_reset(prev_timestamp_bs_units);
+
+    // Change states 
+    current_state = SETUP_MAG_SET_COMMAND;
+ 
+    sensors_state_change();
+
+ 
+
+---------------------
+
+
+sensors_state_machine_acquire_resources()
+ 
+    //Flag state sto that we know resources are acquired
+    current_state = PREPARED_FOR_START;
+
+    // Setup SS GPIOs
+    for (int32_t i = 0; i < OMMO_PM_SS_PINS_COUNT; i++)
+    {
+        nrf_gpio_pin_set(port_master_ss_pins[i]);
+        port_master_configure_high_speed_output(port_master_ss_pins[i]);
+    }
+
+
+    // Acquire ommocomm resources
+    for (uint8_t ommocomm_index = 0; ommocomm_index < ommocomm_num_present; ommocomm_index++)
+    {
+        ommocomm_uarte * ommocomm_dev = nullptr;
+        APP_ERROR_CHECK(port_master_acquire_ommocomm_direct(ommocomm_port_num[ommocomm_index], true, &ommocomm_dev));
+        APP_ERROR_CHECK_BOOL(ommocomm_instances.push_back(ommocomm_dev));
+        APP_ERROR_CHECK(sensors_add_start_transfer_task(ommocomm_dev->get_start_task()));
+    }
+
+
+    // Acquire SPIM/TWI resources
+    for (uint8_t i = 0; i < OMMO_PM_SPI_BUSSES_COUNT; ++i)
+    {
+        spim_basic * spim;
+        if (spim_twi_basic_direct_instance == nullptr && port_master_spi_busses[i].supports_sampling &&
+            port_master_acquire_spim_twi_direct(i, &spim_twi_basic_direct_instance) == NRF_SUCCESS)            
+        {
+            APP_ERROR_CHECK(sensors_add_start_transfer_task(spim_twi_basic_direct_instance->get_start_task()));
+            APP_ERROR_CHECK_BOOL(spi_bus_comm_devices.push_back(spim_twi_basic_direct_instance));
+        }
+        else if (port_master_spi_busses[i].supports_sampling && port_master_acquire_spim_direct(i, &spim) == NRF_SUCCESS)
+        {
+            APP_ERROR_CHECK(sensors_add_start_transfer_task(spim->get_start_task()));
+            APP_ERROR_CHECK_BOOL(spi_bus_comm_devices.push_back(spim));
+        }
+        else
+        {
+            // Push nullptr to keep the spi_bus_comm_devices array aligned with the ss_pins_with_mag and ss_pins_with_imu arrays
+            APP_ERROR_CHECK_BOOL(spi_bus_comm_devices.push_back(nullptr));
+        }
+    }
+
+ 
+
+
+
+
+-------------------
+
+
+
+
+
+
+
+
+
+
