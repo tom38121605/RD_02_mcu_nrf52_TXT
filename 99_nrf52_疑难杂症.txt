@@ -165,3 +165,42 @@
           1. 打印错误日志
           2. 触发断点（NRF_BREAKPOINT_COND）
           3. 调用 app_error_save_and_stop() → 系统停止/复位
+
+
+10.  register_task注册任务队列的讲解
+
+      1）。 程序示例
+       //把队列one_hundred_ms_event_pending作为一个子函数，加入到主队列中
+       //main_event_queue.register_task(one_hundred_ms_event_pending, one_hundred_ms_event_process);
+       //  register_task_impl( nullptr, one_hundred_ms_event_pending,  one_hundred_ms_event_process,  nullptr,  nullptr,  false);
+
+           process_functions[i]    = one_hundred_ms_event_process;
+           pending_functions[i]    = one_hundred_ms_event_pending;
+           main_loop_only_flags[i] = false;                         //在主循环外也可运行
+
+
+      2）。 讲解：
+
+        2-0. 关于 event task的讲解：
+               pending  --  51单片机的flag
+               process  --  51单片机的回调函数
+               注册     --  函数指针赋值
+
+         2-1. 正确的 pending 实现：
+
+               bool my_pending(void *ctx) 
+                  return work_ready;   // 只读，不改状态
+
+               ---
+
+               void my_process(void *ctx) 
+                   if (work_ready)    
+                       work_ready = false;   // ★ 在 process 里清标志，不在 pending 里清 ★
+                       // 干活...
+
+         2-2. main_loop_only = true 的理解
+               打个比喻： 大家依次进屋换衣服。 有两个人是小偷，可能偷衣服，必须让它们排队等候，等别人出来后才让它们进去换衣服
+
+
+
+
