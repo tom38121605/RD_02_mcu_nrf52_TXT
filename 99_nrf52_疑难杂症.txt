@@ -185,6 +185,7 @@
                pending  --  51单片机的flag
                process  --  51单片机的回调函数
                注册     --  函数指针赋值
+               main_event_queue.execute_forever()     --  相当于在while中不断检查flag，如果是1则运行process
 
          2-1. 正确的 pending 实现：
 
