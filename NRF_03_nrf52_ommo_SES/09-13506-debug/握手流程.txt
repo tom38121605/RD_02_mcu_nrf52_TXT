@@ -1,0 +1,168 @@
+
+一句话： RX_DONE 事件的处理完全由当前 state 决定，timestamp 包 → 可能切到 STATE_RX_DATA 或 STATE_TX_DATA，数据包收完 → 切回 STATE_RX_TIMESTAMP
+
+
+
+[UARTE 收到数据] → ENDRX 中断
+    ↓
+nrfx_uarte_0_irq_handler()
+    ↓
+uarte_irq_handler() → rx_done_event()
+    ↓
+p_cb->handler() → comms_uarte_handler()
+    ↓
+on_comms_uarte_event() → NRFX_UARTE_EVT_RX_DONE
+    ↓
+┌───────────────────────────────────┐
+│ 1. 清除错误标志（如果有）                                   │
+│ 2. 断言：没有正在进行的发送                                 │
+│ 3. 断言：state >= STATE_FIRST_RX（即处于接收状态）          │
+└────────────────────────────────────┘
+    ↓
+[UARTE 收到数据] → ENDRX 中断
+    ↓
+on_comms_uarte_event() → NRFX_UARTE_EVT_RX_DONE
+    ↓
+┌───────────────────────────────────┐
+│ 1. 清除错误标志                                            │
+│ 2. 断言：没有正在进行的发送                                 │
+│ 3. 断言：state >= STATE_FIRST_RX                          │
+└───────────────────────────────────┘
+    ↓
+┌───────────────────────────────────────┐
+│                       根据 state 分支处理                               │
+├───────────────────────────────────────┤
+│                                                                         │
+│ ① state == STATE_RX_RESTART_HANDSHAKE                                   │
+│    ├─ if (flags & HANDSHAKE) → state = STATE_RX_TIMESTAMP              │
+│    └─ else → 继续等待（后续分支处理）                                   │
+│                                                                         │
+│ ② state == STATE_RX_HANDSHAKE                                          │
+│    └─ handle_handshake_packet()                                        │
+│        ├─ 有效握手包 → 回空包 → state = STATE_TX_PING_ACK              │
+│        └─ 无效 → initiate_handshake_now() → state = STATE_RX_HANDSHAKE │
+│                                                                         │
+│ ③ state == STATE_RX_RESTART_HANDSHAKE（续）                            │
+│    ├─ flags & MASTER_TX → 保持 STATE_RX_RESTART_HANDSHAKE              │
+│    └─ 否则 → schedule_rx_timestamp(..., STATE_RX_HANDSHAKE)            │
+│                                                                         │
+│ ④ state == STATE_RX_TIMESTAMP  ← ★ 主要分支 ★                          │
+│    │                                                                     │
+│    ├─ if (flags & HANDSHAKE)                                           │
+│    │   └─ handle_handshake_packet() → 走握手流程                       │
+│    │                                                                     │
+│    └─ else（正常 timestamp 包）                                         │
+│        │                                                                 │
+│        ├─ ★ 时间戳间隔检查 ★                                            │
+│        │   ts_delta = timestamp - last_rx_timestamp                    │
+│        │                                                                 │
+│        ├─ if (ts_delta > 70400)  // > 4.4ms                            │
+│        │   ├─ on_disconnection(BAD_TIMESTAMP)                          │
+│        │   └─ state = STATE_RX_RESTART_HANDSHAKE  ← 进入重握手         │
+│        │                                                                 │
+│        └─ else（正常间隔）                                              │
+│            │                                                             │
+│            ├─ in_synch_count++                                         │
+│            ├─ last_rx_timestamp = timestamp                            │
+│            │                                                             │
+│            ├─ if (disconnected_count != 0)                             │
+│            │   └─ on_connection() → 恢复连接                           │
+│            │                                                             │
+│            ├─ if (flags & EXT_SYNCH)                                   │
+│            │   └─ timestamp_synch_recieved() → 时间同步                │
+│            │                                                             │
+│            └─ 判断 flags & MASTER_TX                                   │
+│                │                                                         │
+│                ├─ MASTER_TX = 1（主机要发数据）                         │
+│                │   ├─ rx_buffer != nullptr → rx_data_now()             │
+│                │   │   └─ state = STATE_RX_DATA                       │
+│                │   └─ rx_buffer == nullptr → schedule_rx_timestamp()   │
+│                │       └─ state = STATE_RX_TIMESTAMP                  │
+│                │                                                         │
+│                └─ MASTER_TX = 0（从机发数据）                           │
+│                    ├─ tx_buffer != nullptr && !PING                    │
+│                    │   └─ schedule_tx_data(tx_buffer, STATE_TX_DATA)  │
+│                    └─ else（没数据或 PING）                             │
+│                        └─ schedule_tx_data(&tx_no_data,               │
+│                                             STATE_TX_PING_ACK)         │
+│                                                                         │
+│ ⑤ state == STATE_RX_DATA                                               │
+│    └─ on_rx_complete_in_isr()                                          │
+│        ├─ 成功 → rx_timestamp_now() → state = STATE_RX_TIMESTAMP      │
+│        └─ 失败 → initiate_handshake_now() → state = STATE_RX_HANDSHAKE│
+│                                                                         │
+│ ⑥ state == STATE_RX_TIMEOUT                                            │
+│    └─ initiate_handshake_now() → state = STATE_RX_HANDSHAKE            │
+└──────────────────────────────────────┘
+
+
+
+
+
+---------------------------  完善 STATE_RX_TIMESTAMP 之前   ---------------------------
+
+
+
+根据 state 分支处理：
+    │
+    ├── state == STATE_RX_RESTART_HANDSHAKE
+    │   ├─ 如果 flags & HANDSHAKE → state = STATE_RX_TIMESTAMP
+    │   └─ 否则 → 继续等待（后续分支处理）
+    │
+ 1  ├── state == STATE_RX_HANDSHAKE
+    │   └─ handle_handshake_packet()
+    │       ├─ 有效握手包 → 回空包 → state = STATE_TX_PING_ACK
+    │       └─ 无效 → initiate_handshake_now() → state = STATE_RX_HANDSHAKE
+    │
+    ├── state == STATE_RX_RESTART_HANDSHAKE（续）
+    │   ├─ flags & MASTER_TX → 保持 STATE_RX_RESTART_HANDSHAKE
+    │   └─ 否则 → schedule_rx_timestamp(..., STATE_RX_HANDSHAKE)
+    │
+    ├── state == STATE_RX_TIMESTAMP   //disconnected_count==0
+    │   ├─disconnected_count == 0  t2 -t1 > AAA   
+    │   ├─ flags & HANDSHAKE → handle_handshake_packet()
+    │   └─ 否则（正常 timestamp）：
+    │       ├─ in_synch_count++
+    │       ├─ last_rx_timestamp = timestamp
+    │       ├─ if (disconnected_count != 0) on_connection()
+    │       ├─ if (flags & EXT_SYNCH) timestamp_synch_recieved()
+    │       ├─ 判断 flags & MASTER_TX：
+    │       │   ├─ 1 → rx_data_now() → state = STATE_RX_DATA
+    │       │   └─ 0 → schedule_tx_data() → state = STATE_TX_DATA 或 STATE_TX_PING_ACK
+    │       └─ 如果 MASTER_TX=1 但 rx_buffer==nullptr → schedule_rx_timestamp(..., STATE_RX_TIMESTAMP)
+    │
+    ├── state == STATE_RX_DATA
+    │   └─ on_rx_complete_in_isr()
+    │       ├─ 成功 → rx_timestamp_now() → state = STATE_RX_TIMESTAMP
+    │       └─ 失败 → initiate_handshake_now() → state = STATE_RX_HANDSHAKE
+    │
+    └── state == STATE_RX_TIMEOUT
+        └─ initiate_handshake_now() → state = STATE_RX_HANDSHAKE
+
+
+
+------
+
+├── state == STATE_RX_TIMESTAMP
+│   ├─ 检查是否收到握手包：
+│   │   ├─ if (flags & HANDSHAKE) → handle_handshake_packet()
+│   │   └─ 否则（正常 timestamp 包）：
+│   │       ├─ 计算时间戳间隔
+│   │       │   ts_delta = rx_timestamp.timestamp - last_rx_timestamp
+│   │       │
+│   │       ├─ 如果 ts_delta > 70400（≈4.4ms）：
+│   │       │   ├─ on_disconnection(TRACE_1WIRE_DISCONNECTED_BAD_TIMESTAMP)
+│   │       │   └─ state = STATE_RX_RESTART_HANDSHAKE   ★ ★ ★
+│   │       │
+│   │       ├─ else（正常间隔）：
+│   │       │   ├─ in_synch_count++
+│   │       │   ├─ last_rx_timestamp = timestamp
+│   │       │   ├─ if (disconnected_count != 0) on_connection()
+│   │       │   ├─ if (flags & EXT_SYNCH) timestamp_synch_recieved()
+│   │       │   ├─ 判断 flags & MASTER_TX：
+│   │       │   │   ├─ 1 → rx_data_now() → state = STATE_RX_DATA
+│   │       │   │   └─ 0 → schedule_tx_data() → state = STATE_TX_DATA 或 STATE_TX_PING_ACK
+│   │       │   └─ 如果 MASTER_TX=1 但 rx_buffer==nullptr → schedule_rx_timestamp(..., STATE_RX_TIMES
+
+
+

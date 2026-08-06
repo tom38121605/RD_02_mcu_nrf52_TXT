@@ -1,6 +1,36 @@
 
+STATE_RX_TIMEOUT流程：
 
-
+[1-Wire 通信中]
+    ↓
+从机预期收到数据（timestamp 包 / 数据包）
+    ↓
+设置了 TIMER0 CC2 超时阈值（540us 或 4ms）
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 正常情况                                                   │
+│ 在超时前收到数据 → 清除 CC2 事件标志 → 正常处理           │
+└─────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────┐
+│ 异常情况：超时了！                                         │
+│ TIMER0 计数到 CC2 阈值                                     │
+│    ↓                                                       │
+│ 触发 TIMER_EVENT_COMPARE2 中断                             │
+│    ↓                                                       │
+| timer_event_handler(TIMER_EVENT_RX_TIMEOUT)                │
+|    ↓                                                       |
+| state = STATE_RX_TIMEOUT                                   |
+| uarte_resource->rx_abort()                                 |
+└─────────────────────────────────────────────────────────────┘
+    ↓
+[UARTE 接收被中止] → 触发 ENDRX 或 ERROR 事件
+    ↓
+on_comms_uarte_event() 中检测到 RX_DONE（被中止）
+    ↓
+检测到 state == STATE_RX_TIMEOUT
+    ↓
+initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT)   ★ 就是这里 ★
 
 
 
@@ -34,10 +64,18 @@ nrfx_timer_t comms_1wire_timer = OMMOCOMM_1WIRE_TIMER;
 
 
 #define TIMER_CHANNEL_SCHEDULE_RX_TX  NRF_TIMER_CC_CHANNEL1       //CC1
-#define TIMER_EVENT_SCHEDULE_RX_TX    NRF_TIMER_EVENT_COMPARE1    //CC1  闹铃
+#define TIMER_EVENT_SCHEDULE_RX_TX    NRF_TIMER_EVENT_COMPARE1    //CC1  闹铃  --> rxtx
 
  
-#define TIMER_CHANNEL_RX_TIMEOUT       NRF_TIMER_CC_CHANNEL2     //CC2
+#define TIMER_CHANNEL_RX_TIMEOUT       NRF_TIMER_CC_CHANNEL2     //CC2   超时
+
+
+//下面的timer0 cc3实际上用不到，忽略跳过
+#ifdef DEBUG_NRF
+#define TIMER_CHANNEL_CAPTURE_NOW    NRF_TIMER_CC_CHANNEL3
+#define TIMER_TASK_CAPTURE_NOW       NRF_TIMER_TASK_CAPTURE3      //CC3  拍照
+#endif
+
 
 
 

@@ -4,8 +4,8 @@
 
 rtc1和rtc2的区别：
 
-   主机还在发数据，但从机软件卡死了	RTC1（检测到计数器不变）
-   主机完全不发数据了（断线、断电）	RTC2（500ms 没收到同步包）
+   主机还在发数据，但从机软件卡死了	RTC1 CC0（检测到计数器不变）     //100ms
+   主机完全不发数据了（断线、断电）	RTC2 CC0（500ms 没收到同步包）   //500ms
 
 
 
@@ -249,7 +249,7 @@ void comms_uarte_siu_1wire::timed_loop_100ms()
             NRFX_CRITICAL_SECTION_ENTER();
              
             //设置 state 为 STATE_RX_HANDSHAKE
-            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
             //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
             initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_ERROR_RECOVERY);
 

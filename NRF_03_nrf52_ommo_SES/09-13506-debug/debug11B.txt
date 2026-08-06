@@ -2,13 +2,47 @@
 
 
 
------------- rtc2 ------------
+timeout_running[0] 和 timestamp_synch_lost的flow：
+
+
+[rtc_timer_set_timeout(500ms)]
+    ↓
+timeout_running[0] = true   // 倒计时开始
+    ↓
+[500ms 后，RTC 超时触发]
+    ↓
+timeout_running[0] = false  // 倒计时结束
+    ↓
+timestamp_synch_lost = true // ★ 同步丢失 ★
+    ↓
+callback() → set_leds()     // 通知上层
+
+
+------
+
+[收到同步包]  timestamp_synch_recieved
+    ↓
+timestamp_reset_synch_lost_timer()
+    ↓
+rtc_timer_reset_timeout(channel) → timeout_running[0] = true（重新倒计时）
+    ↓
+timestamp_synch_lost = false   // ★ 同步恢复 ★
+    ↓
+callback() → set_leds()        // 通知上层
+
+
+
+------------------------
+
+说明1： timestamp_is_synch_lost标志， 在sample_set_ready 中会用到  
+
+
+
+-------------------------
+
 
 #define NRFX_RTC_DEFAULT_CONFIG_FREQUENCY 32768
 #define RTC_TIMEOUT_GEN_FREQUENCY NRFX_RTC_DEFAULT_CONFIG_FREQUENCY
 #define MS_TO_RTC_TIMEOUT_GEN(x)  ((uint32_t)(((uint64_t)(x) * RTC_TIMEOUT_GEN_FREQUENCY) / 1000UL))  //x 代表x毫秒， x * 32768 个 ticks
 
-
-
------------- rtc2 end ------------
 

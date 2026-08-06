@@ -18,7 +18,6 @@ comms_esb_timer_handler        -- timer4
 
 
 
-
 ====================================================
 
 
@@ -89,12 +88,18 @@ comms_esb_timer_handler        -- timer4
 疑问3： uart rx中断的rxdone中，为什么先判断 STATE_RX_RESTART_HANDSHAKE
 答：       因为先处理STATE_RX_RESTART_HANDSHAKE后，之后有些重复模块，可以交给下面的状态一起处理  （待验证）
 
+
 疑问4： 为什么RESTART_HANDSHAKE这个时候不检查是不是有效的握手包 （只检查标记flags.7 =1，不检查timestamp = 0xfffefdfc ）
+
 答： 因为 STATE_RX_RESTART_HANDSHAKE 的“任务”不是检查包内容，而是先保证“时间窗口对齐”。
        你进这个状态的原因是：从机已经发现同步丢了（时间戳跳跃异常），但主机还在正常发数据，还没意识到出问题。
       此时从机的核心目标是：“我不信任你的时间了，但我还没完全断开，我要先等你把当前这包发完，再重新握一次。”
 
 
+问5：timer3 cc0采样，和uart rx end 哪个先出现
+答： 几乎同时出现
+     uart rx end   --  主机1ms
+     timer3 cc0    --  从机1ms
 
 
 

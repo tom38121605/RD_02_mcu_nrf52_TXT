@@ -16,8 +16,9 @@ int main(void)
 
 
     //置初始state为 STATE_RX_HANDSHAKE
-    //设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
-    //设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
+    //设置回调函数 packet_handler为：msiu_1wire_packet_received            //packetizer
+    //设置接收完成函数 rx_complete_callback为： transport_read_complete    //packetizer
+    //设置发送完成函数 tx_complete_callback为： transport_write_complete   //packetizer
 
     //配置uart的回调函数 comms_uarte_handler
     //取得uart0的回调函数 nrfx_uarte_0_irq_handler
@@ -32,8 +33,8 @@ int main(void)
 
     //开始握手初始化
     //设置state为STATE_RX_HANDSHAKE;
-    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
     comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
 
 
@@ -54,8 +55,9 @@ void gpio_init( void )
 ---------------------------------------
 
 //置初始state为 STATE_RX_HANDSHAKE
-//设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
-//设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
+//设置回调函数 packet_handler为：msiu_1wire_packet_received              //packetizer
+//设置接收完成函数 rx_complete_callback为： transport_read_complete      //packetizer
+//设置发送完成函数 tx_complete_callback为： transport_write_complete     //packetizer
 
 //配置uart的回调函数 comms_uarte_handler
 //取得uart0的回调函数 nrfx_uarte_0_irq_handler
@@ -70,8 +72,8 @@ void gpio_init( void )
 
 //开始握手初始化
 //设置state为STATE_RX_HANDSHAKE;
-//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
 
 
 参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
@@ -101,16 +103,17 @@ comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback
     last_acquiring_synch_count = UINT32_MAX;
 
 
-    //设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
-    //设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
+    //设置回调函数 packet_handler为：msiu_1wire_packet_received 
+    //设置接收完成函数 rx_complete_callback为： transport_read_complete
+    //设置发送完成函数 tx_complete_callback为： transport_write_complete
     packetizer.init(this,  packet_ready_callback,  context);
 
 
     /在发送数据包时，跳过多少字节的“头部”，只把有效数据（data 字段）交给上层处理。
     //packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
-          reserved_size = offsetof(comms_1wire_slave_tx_data_packet_t, data)  //3
-          tx_buffer_active_top = reserved_size;
-          tx_buffer_base = reserved_size;
+          reserved_size         = offsetof(comms_1wire_slave_tx_data_packet_t, data)  //3
+          tx_buffer_active_top  = reserved_size;   //3
+          tx_buffer_base        = reserved_size;   //3
 
     packetizer_enabled_actual = false;
     packetizer_enabled_target = false;
@@ -140,7 +143,7 @@ comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback
 
 
     //uarte = uarte_resource->get_nrfx_uarte_instance();
-       uarte = uarte_instance;    // uarte_basic_instances
+       uarte = uarte_instance;    // uarte_basic_instances  ，即UARTE0的uarte_basic 对象 
 
 
     // 初始化ommocom为rx脚，第二次配置，更详细 （input，nopull，hod1，nosense）
@@ -188,8 +191,8 @@ comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback
 
     //开始握手初始化
     //设置state为STATE_RX_HANDSHAKE;
-    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)（超时检查），使能CC2中断，开启timer0
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)（超时检查），使能timer0 CC2中断，开启timer0
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
     initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
 
@@ -200,8 +203,8 @@ comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback
 --------
 
 //设置state为STATE_RX_HANDSHAKE;
-//停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断（超时检查），开启timer0，
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断（超时检查），开启timer0，
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
 
 参数：TRACE_1WIRE_DISCONNECTED_INITIAL_STATE
 
@@ -219,13 +222,13 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
     //关闭ppi_channel_schedule_rx_tx，不让它触发
     nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
 
-    //写入CC2的阈值64640(4040us)，使能CC2中断（超时检查）
+    //写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断（超时检查）
     nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT, COMMS_1WIRE_MAX_PERIOD_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS, true);   // 64640
 
     nrfx_timer_clear(timer);    //计数器清0
     nrfx_timer_resume(timer);   //重新计数
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，false--开启接收
     //rx_now(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(&rx_timestamp, 5, false)
 
@@ -233,7 +236,7 @@ comms_uarte_siu_1wire::initiate_handshake_now(  reason )
 ---
 
 
-//设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，false--开启接收
 
 参数： &rx_timestamp, 5, false
 
@@ -249,14 +252,14 @@ comms_uarte_siu_1wire::rx_with_optional_hold( *buffer,   length,  with_hold)
     uarte_resource->uarte_rx_flush_fifo();
 
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收  
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，false--开启接收  
     nrfx_uarte_rx_with_hold(uarte, *buffer, length, with_hold);
  
 
 
 ---
 
-//设置rx的接收字符串为 rx_timestamp，长度为5，false--开启接收
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，false--开启接收
 
 参数： uarte， &rx_timestamp, 5, false
 
@@ -548,13 +551,9 @@ nrfx_uarte_0_irq_handler( )
 
 uarte_irq_handler(   *p_uarte,   *p_cb  )
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR)       //错误中断
-        。。。。。。
 
-    
     if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))    // 接收超时中断
         。。。。。。
-
 
 
 
@@ -616,8 +615,6 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
 
 
-
-
 =========================================== uart0 发送中断 ===============================================
 
 
@@ -630,22 +627,29 @@ nrfx_uarte_0_irq_handler( )
 
 -------------
 
+(这里是目前只发空ack的处理)
+//清 ENDTX 标记，停止uart发送
+//设置 state 为 STATE_RX_TIMESTAMP
+//停止timer0定时器
+//关闭 ppi_channel_schedule_rx_tx通道
+//写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+
 uarte_irq_handler(   *p_uarte,   *p_cb  )
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR)       //错误中断
-        。。。。。。
 
-
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))    //发送停止
+    //发送停止，目前没有在发送过程中，主动停止发送的情况，忽略跳过
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_TXSTOPPED))    
     
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_TXSTOPPED);
 
         if (p_cb->tx_buffer_length != 0)
         
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));  //上次发送的数据长度323字节
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte)); 
         
 
-    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))   // 发送结束   // here
+    // 发送结束
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ENDTX))      // here
     
         //清 ENDTX 标记
         nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ENDTX);
@@ -654,22 +658,34 @@ uarte_irq_handler(   *p_uarte,   *p_cb  )
         nrf_uarte_task_trigger(p_uarte, NRF_UARTE_TASK_STOPTX);
 
         // 这是你的数据吗，俺已发完了，你要咋处理
-        if (p_cb->tx_buffer_length != 0)        
-            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));
+        if (p_cb->tx_buffer_length != 0)     
+
+            //设置 state 为 STATE_RX_TIMESTAMP
+            //停止timer0定时器
+            //关闭 ppi_channel_schedule_rx_tx通道
+            //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+            //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+            tx_done_event(p_cb, nrf_uarte_tx_amount_get(p_uarte));   //上次发送的数据长度323字节
 
     
 
 
 -------
 
+//设置 state 为 STATE_RX_TIMESTAMP
+//停止timer0定时器
+//关闭 ppi_channel_schedule_rx_tx通道
+//写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+
 //参数： pcb，  323
 tx_done_event(  *p_cb, bytes  )
 
     nrfx_uarte_event_t event;
 
-    event.type                        = NRFX_UARTE_EVT_TX_DONE;
-    event.data.rxtx.bytes      = bytes;
-    event.data.rxtx.p_data    =  p_cb->p_tx_buffer;    //tx_no_data
+    event.type                  = NRFX_UARTE_EVT_TX_DONE;
+    event.data.rxtx.bytes       = bytes;
+    event.data.rxtx.p_data      =  p_cb->p_tx_buffer;    //tx_no_data
 
     p_cb->tx_buffer_length = 0;
 
@@ -681,6 +697,11 @@ tx_done_event(  *p_cb, bytes  )
 
  -----
 
+//设置 state 为 STATE_RX_TIMESTAMP
+//停止timer0定时器
+//关闭 ppi_channel_schedule_rx_tx通道
+//写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
 
 参数：event.type             = TX_DONE;
       event.data.rxtx.bytes  = amount 
@@ -694,17 +715,26 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
         。。。。。。
 
 
-
     else if (p_event->type == NRFX_UARTE_EVT_TX_DONE)  //发送完成   //here
 
-        if (state == STATE_TX_DATA)    //no ， 先忽略跳过
-            on_tx_complete_in_isr();
+        if (state == STATE_TX_DATA)    //no （因为目前发送的是空ack包）， 先忽略跳过
 
-          //设置 state 为 STATE_RX_TIMESTAMP
-         //停止timer0定时器
-         //关闭 ppi_channel_schedule_rx_tx通道
-         //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
-        //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+            //如果发送的是数据，则从仓库做相应的出库处理
+            //on_tx_complete_in_isr();
+               packet = (comms_1wire_slave_tx_data_packet_t*)tx_buffer;
+               actual_length = packet->length;
+               tx_buffer = nullptr;
+
+               //从仓库做相应的出库处理
+               //tx_complete_callback(actual_length, NRF_SUCCESS, p_context);
+                  comms_packetizer::transport_write_complete( actual_length, NRF_SUCCESS, null );
+
+
+        //设置 state 为 STATE_RX_TIMESTAMP
+        //停止timer0定时器
+        //关闭 ppi_channel_schedule_rx_tx通道
+        //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+        //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
         rx_timestamp_now();
 
     
@@ -714,7 +744,7 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 //停止timer0定时器
 //关闭 ppi_channel_schedule_rx_tx通道
 //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
-//设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
 
 comms_uarte_siu_1wire::rx_timestamp_now( )
 
@@ -734,7 +764,178 @@ comms_uarte_siu_1wire::rx_timestamp_now( )
     nrfx_timer_clear(timer);        //把timer0计数值清0
     nrfx_timer_resume(timer);    //开启timer0定时器    
 
-    //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+    //rx_now(&rx_timestamp, sizeof(rx_timestamp));
+       rx_with_optional_hold(&rx_timestamp, 5, false)
+ 
+            
+ 
+
+
+=========================================== uart0 ERR错误中断 ===============================================
+
+
+
+//uart0中断入口
+nrfx_uarte_0_irq_handler( )
+ 
+    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+ 
+
+-------------
+
+//清理EVENT_ERROR中断标记
+//中止接收，把待处理的数据长度设置为0
+
+//清除EVENT_ENDRX标记
+//手动清除timer0 CC2(功能timeout)事件标志，防止在处理帧错误时触发超时中断
+//清空rx fifo里面的垃圾数据 
+
+//总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+//取得timer0 cc0的计数值，即rxend的时间点
+//写入timer0 CC1的阈值 rxend_time + data_end_offset(2025us) +3760(235us)，不使能timer0 CC1中断 //关于2025us待理解，先忽略跳过
+//设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+//写入timer0 CC2的阈值 rxend_time + data_end_offset(2025us) + 8640(540us)，使能timer0 CC2中断  
+//---设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+//设置state为STATE_RX_HANDSHAKE
+
+
+uarte_irq_handler(   *p_uarte,   *p_cb  )
+
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_ERROR)       //错误中断
+    
+       //清理EVENT_ERROR中断标记
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_ERROR);
+
+
+        event.type                   = NRFX_UARTE_EVT_ERROR;
+        event.data.error.error_mask  = nrf_uarte_errorsrc_get_and_clear(p_uarte);
+        event.data.error.rxtx.bytes  = nrf_uarte_rx_amount_get(p_uarte);
+        event.data.error.rxtx.p_data = p_cb->p_rx_buffer;
+
+        //中止接收，把待处理的数据长度设置为0
+        p_cb->rx_buffer_length = 0;
+        p_cb->rx_secondary_buffer_length = 0;
+
+
+        //清除EVENT_ENDRX标记
+        //手动清除timer0 CC2(功能timeout)事件标志，防止在处理帧错误时触发超时中断
+        //清空rx fifo里面的垃圾数据 
+
+        //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+        //取得timer0 cc0的计数值，即rxend的时间点
+        //写入timer0 CC1的阈值 rxend_time + data_end_offset(2025us) +3760(235us)，不使能timer0 CC1中断 //关于2025us待理解，先忽略跳过
+        //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+        //写入timer0 CC2的阈值 rxend_time + data_end_offset(2025us) + 8640(540us)，使能timer0 CC2中断  
+        //---设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+        //设置state为STATE_RX_HANDSHAKE
+
+        //p_cb->handler(&event, p_cb->p_context);
+        //  comms_uarte_handler(&event, this);
+            this->on_comms_uarte_event(p_event);
+
+
+
+ -----
+
+//清除EVENT_ENDRX标记
+//手动清除timer0 CC2(功能timeout)事件标志，防止在处理帧错误时触发超时中断
+//清空rx fifo里面的垃圾数据 
+
+//总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+//取得timer0 cc0的计数值，即rxend的时间点
+//写入timer0 CC1的阈值 rxend_time + data_end_offset(2025us) +3760(235us)，不使能timer0 CC1中断 //关于2025us待理解，先忽略跳过
+//设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+//写入timer0 CC2的阈值 rxend_time + data_end_offset(2025us) + 8640(540us)，使能timer0 CC2中断  
+//---设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+//设置state为STATE_RX_HANDSHAKE
+
+参数：  event.type                    =  NRFX_UARTE_EVT_ERROR;
+        event.data.error.error_mask   =  nrf_uarte_errorsrc_get_and_clear(p_uarte);
+        event.data.error.rxtx.bytes   =  nrf_uarte_rx_amount_get(p_uarte);
+        event.data.error.rxtx.p_data  =  p_cb->p_rx_buffer;
+
+comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
+ 
+
+    if (p_event->type == NRFX_UARTE_EVT_ERROR)
+    
+        //清除EVENT_ENDRX标记
+        nrf_uarte_event_clear(uarte->p_reg, NRF_UARTE_EVENT_ENDRX);
+ 
+
+
+    if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
+
+        。。。。。。
+
+
+    else  //if (p_event->type == NRFX_UARTE_EVT_ERROR)
+    
+       
+        //手动清除timer0 CC2(功能timeout)事件标志，防止在处理帧错误时触发超时中断
+        nrf_timer_event_clear(timer->p_reg, nrf_timer_compare_event_get(TIMER_CHANNEL_RX_TIMEOUT));
+
+        if (state == STATE_RX_TIMEOUT)
+        
+            //设置 state 为 STATE_RX_HANDSHAKE
+            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)使能timer0 CC2中断，开启timer0
+            //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT);
+        
+        else
+        
+            if (state >= STATE_FIRST_RX)
+
+                //在log中标记当前已断开，并记录断开的次数            
+                on_disconnection(TRACE_1WIRE_DISCONNECTED_RX_ERROR);
+ 
+
+                //清空rx fifo里面的垃圾数据  easy
+                uarte_resource->uarte_rx_flush_fifo();
+
+                //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+                //取得timer0 cc0的计数值，即rxend的时间点
+                //写入timer0 CC1的阈值 rxend_time + data_end_offset(2025us) +3760(235us)，不使能timer0 CC1中断 //关于2025us待理解，先忽略跳过
+                //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+                //写入timer0 CC2的阈值 rxend_time + data_end_offset(2025us) + 8640(540us)，使能timer0 CC2中断  
+                //---设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+                //设置state为STATE_RX_HANDSHAKE
+                schedule_rx_timestamp(COMMS_1WIRE_MAX_PERIOD_TICKS / 2, STATE_RX_HANDSHAKE);   // 64800/2 = 32400 (2025us)
+            
+
+            //else   
+            //    tx_error_count++;
+
+    
+
+---------
+
+//设置 state 为 STATE_RX_TIMESTAMP
+//停止timer0定时器
+//关闭 ppi_channel_schedule_rx_tx通道
+//写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+
+comms_uarte_siu_1wire::rx_timestamp_now( )
+
+    state = STATE_RX_TIMESTAMP;
+
+    //停止timer0定时器
+    nrfx_timer_pause(timer);
+
+    //关闭 ppi_channel_schedule_rx_tx通道
+    nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
+
+    //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT,
+                       COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS + COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS,   //8640
+                       true);
+
+    nrfx_timer_clear(timer);        //把timer0计数值清0
+    nrfx_timer_resume(timer);    //开启timer0定时器    
+
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
     //rx_now(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(&rx_timestamp, 5, false)
  
@@ -745,183 +946,91 @@ comms_uarte_siu_1wire::rx_timestamp_now( )
 
 
 
+=========================================== uart0 接收超时中断 ===============================================
 
 
-==================================== 参考 ==================================
 
-
-------------------
-
-                                     
-
-static void msiu_1wire_packet_received(    *buffer,     length,      *context)
-{
-    // The 1-wire interface is intended to emulate a USB connection.  The device is connected to an
-    // adapter with a USB CDC instance that simply relays USB packets over 1-wire to the device.
-
-    //取得返回长度
-    uint32_t response_length = process_usb_serial_packet_received(buffer, length, tx_buffer, PACKET_RESPONSE_BUFFER_SIZE);
-
-    if(response_length == 0) //No response, must be an unknown command
-        response_length = fill_in_ack_packet(tx_buffer, OMMO_ACK_UNKNOWN_COMMAND);
-
-    //根据返回长度，发送返回字符串
-    comms_1wire.send_command_packet_async(tx_buffer, response_length);
-
-}
-
-------
-
-uint16_t process_usb_serial_packet_received(uint8_t data[], uint16_t length, uint8_t response_buffer[], uint16_t response_buffer_size)
-{
-uint16_t response_length = 0;
-
-    //Check for invalid packets
-    if(length == 0x00)
-        return fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-
-    switch(data[0])
-    {
-        case OMMO_COMMAND_USB_DATA_ENABLE:
-            if(data_mode != DATA_MODE_DISABLED || !sensors_is_state_machine_ready_to_run())
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
-            }
-            else if(length != 2)
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                //Try to start state machine
-                uint32_t rvalue = sensors_start_state_machine();
-
-                if(rvalue == NRF_SUCCESS)
-                {
-                    packet_id = data[1];
-                    data_mode = DATA_MODE_USB;
-                }
-
-                //Return success/failure
-                set_leds();
-                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(rvalue));
-            }
-            break;
-
-        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
-            if(length != 2)
-            {
-                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
-            }
-            else
-            {
-                response_length = fill_in_ack_packet(response_buffer, comms_esb_set_synch_rx_channel(data[1]));
-            }
-            break;
-    }
-
-    if(response_length == 0) //No response, try protocol agnostic commands
-        response_length = process_packet_received(data, length, response_buffer, response_buffer_size);
-
-    return response_length;
-}
-
-
-------
-
-inline void usb_serial_send_command_packet(const uint8_t * buffer, size_t length)
-{
-    usb_serial.send_command_packet(buffer, length);
-       send_command_packet_blocking(buffer, length, false);
-}
-
-
------
-
-参数： buffer, length, false
-
-comms_packetizer::send_command_packet_blocking(  * buffer,   length,   block)
-
-    uint16_t tx_write_location;
-    ret_code_t err_code = NRF_SUCCESS;
+//uart0中断入口
+nrfx_uarte_0_irq_handler( )
  
-    if (transport_device->is_connected())
-    {
-        // Reserve space in buffer if USB packet fits in USB buffer
-        const size_t max_possible_output_length = COBS_CMD_CRC_POST0_MAX_LEN(length);
+    uarte_irq_handler(NRF_UARTE0, &m_cb[NRFX_UARTE0_INST_IDX]);
+ 
 
-        CRITICAL_REGION_ENTER();
-        if (tx_buffer_active_top + max_possible_output_length < USB_SERIAL_TX_BUFFER_SIZE)
-        {
-            tx_write_location = tx_buffer_active_top;
-            tx_buffer_active_top += max_possible_output_length;
-        }
-        else
-        {
-            // Buffer full
-            tx_lost_packets++;
-            err_code = NRF_ERROR_BUSY;
-        }
-        CRITICAL_REGION_EXIT();
+-------------
 
-        // If data fit into the buffer, copy into reserved buffer location
-        // Note: usb event queue processing is done at the lowest priority level so this process
-        // cannot be interrupted
-        if (err_code == NRF_SUCCESS)
-        {
-            cobs_encode_usb_command_crc_post0_zero_pad(buffer, length, tx_buffer_active + tx_write_location, max_possible_output_length);
-
-            err_code = flush_tx_buffers(block);
-        }
-    }
-    else    
-        tx_lost_packets++;
+//清除EVENT_RXTO事件标志
 
 
+uarte_irq_handler(   *p_uarte,   *p_cb  )
+
+
+    。。。。。。
+
+
+    
+    if (nrf_uarte_event_check(p_uarte, NRF_UARTE_EVENT_RXTO))    // 接收超时中断
+    
+        //清除EVENT_RXTO事件标志
+        nrf_uarte_event_clear(p_uarte, NRF_UARTE_EVENT_RXTO);
+
+        if (p_cb->rx_buffer_length != 0)
+        
+            p_cb->rx_buffer_length = 0;
+            p_cb->rx_secondary_buffer_length = 0;
+
+            rx_done_event(p_cb, nrf_uarte_rx_amount_get(p_uarte), p_cb->p_rx_buffer);
+        
+
+-------
+
+//设置 state 为 STATE_RX_HANDSHAKE
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+
+参数： p_cb,   amount,   rx_timestamp/rx_buffer
+
+rx_done_event(  *p_cb,    bytes,    p_data)
+
+    event.type             = NRFX_UARTE_EVT_RX_DONE;
+    event.data.rxtx.bytes  = bytes;
+    event.data.rxtx.p_data = p_data;
+
+    //p_cb->handler(&event, p_cb->p_context);
+    //  comms_uarte_handler(&event, this);
+            this->on_comms_uarte_event(p_event);
 
 
 
 
-============================= 参考2 =========================================
+----------------
 
-comms_transport_interface               *transport_device;
-comms_packetizer_packet_ready_handler   packet_handler;
+//设置 state 为 STATE_RX_HANDSHAKE
+//停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
 
-参数：this, msiu_1wire_packet_received, context
+参数：event.type             = RXDONE;
+      event.data.rxtx.bytes  = amount 
+      event.data.rxtx.p_data = rx_timestamp / rx_buffer
 
-void comms_packetizer::init(comms_transport_interface *transport, const comms_packetizer_packet_ready_handler   packet_ready_callback, const void *p_context)
-{
+comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
+ 
 
-    transport_device = transport;               // this
-    packet_handler = packet_ready_callback;     // msiu_1wire_packet_received
-    packet_handler_context = p_context;         // NULL
+    if (p_event->type == NRFX_UARTE_EVT_RX_DONE)
 
-    // Init buffers
-    rx_cobs_buffer_in_use = 0;
-    rx_cobs_buffer_top    = 0;
-    rx_cobs_buffer_bottom = 0;
-    in_comms_transport_rx = false;
-    rx_data_ready         = false;
-    rx_failed             = false;
+        NRFX_ASSERT(state >= STATE_FIRST_RX);       //state 要大于等于4
 
-    flush_flag             = false;
-    tx_retry_count         = 0;
-    in_comms_transport_tx  = false;
-    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
-    tx_buffer_base         = 0;
-    tx_buffer_active_top   = 0;
-    tx_buffer_active       = tx_buffer_primary;
-    tx_buffer_transport    = nullptr; 
-    tx_buffer_transport_end= nullptr;
 
-    // Misc
-    rx_lost_packets = 0;
-    tx_lost_packets = 0;
-    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;
+       ......
 
-    // Set transport up to call us back on rx/tx complete
-    transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
-}
+      
+        else /*if (state == COMMS_1WIRE_STATE_RX_TIMEOUT)*/
+        
+             //设置 state 为 STATE_RX_HANDSHAKE
+            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
+            //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，开启接收
+            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CANCELLED);
+        
+
 
 
 

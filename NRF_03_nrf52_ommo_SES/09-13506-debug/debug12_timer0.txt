@@ -100,7 +100,7 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
 
     //设置 state 为 STATE_RX_HANDSHAKE
-    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
     //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
     initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
@@ -118,6 +118,27 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
 =======================================timer0 中断响应（只响应 cc2超时中断）====================================================
 
+cc0  -- 拍照用，没开中断
+cc1  -- rxend和ppi触发，没看中断
+cc2  -- 开了中断
+cc3  -- 未使用
+cc4  -- 未使用
+
+
+
+[调用 STOPRX] flow：
+    ↓
+ENDRX 事件（如果接收正在进行）
+    ↓
+RXTO 事件
+    ↓
+[中断处理] on_comms_uarte_event()
+    ├─ 检测到 ENDRX → 处理接收完成
+    └─ 检测到 RXTO → 处理超时
+
+
+
+-----------------------------
 
 nrfx_timer_0_irq_handler( )
  
@@ -135,7 +156,7 @@ nrfx_timer_0_irq_handler( )
 irq_handler(    *p_reg,   *p_cb,   channel_count)
 
    
-    //依次看cc0 -- cc4的事件标记和中断使能
+    //依次看timer0 cc0 -- cc4的事件标记和中断使能
     for (i = 0; i < channel_count; ++i)
     
         nrf_timer_event_t event = nrf_timer_compare_event_get(i);     //事件标记
@@ -147,14 +168,18 @@ irq_handler(    *p_reg,   *p_cb,   channel_count)
         
             nrf_timer_event_clear(p_reg, event);    //清除事件标记
 
-            //p_cb->handler(event, p_cb->context);    //进入中断服务程序
+
+            //设置state为STATE_RX_TIMEOUT 
+            //中止uart接收
+            //p_cb->handler(event, p_cb->context);     
             //  timer_event_handler(event, null) 
-                comms_uarte_siu_1wire::on_timer_event((event) 
+                   comms_uarte_siu_1wire::on_timer_event((event) 
 
 
 -----
 
-//如果是timer0 cc2超时中断，则置state为STATE_RX_TIMEOUT，并中止uart接收
+//设置state为 STATE_RX_TIMEOUT
+//中止uart接收
 
 参数： event
 
@@ -168,7 +193,10 @@ comms_uarte_siu_1wire::on_timer_event( event_type)
          
             state = STATE_RX_TIMEOUT;
 
-            uarte_resource->rx_abort();  // triggers a RX_DONE event，中止uart接收
+            //uarte_resource->rx_abort();  // triggers a RX_DONE event，中止uart接收
+            //  nrfx_uarte_rx_abort(uarte_instance);
+                  nrf_uarte_shorts_disable(p_instance->p_reg, NRF_UARTE_SHORT_ENDRX_STARTRX);   //关闭快照     
+                  nrf_uarte_task_trigger(p_instance->p_reg, NRF_UARTE_TASK_STOPRX);             //中止接收
 
 
  

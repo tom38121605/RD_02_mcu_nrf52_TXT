@@ -1,0 +1,602 @@
+
+
+
+
+
+=========================================== packetizer 初始化 ===============================================
+
+
+
+int main(void)
+
+    。。。。。。
+
+
+    gpio_init();
+
+
+ 
+    //设置回调函数 packet_handler为：msiu_1wire_packet_received 
+    //设置接收完成函数 rx_complete_callback为： transport_read_complete
+    //设置发送完成函数 tx_complete_callback为： transport_write_complete
+    //----在发送数据包时，跳过多少字节的“头部”，只把有效数据（data 字段）交给上层处理。
+    comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+
+    。。。。。。
+
+
+
+--------------------------------------------------------
+
+//设置回调函数 packet_handler为：msiu_1wire_packet_received 
+//设置接收完成函数 rx_complete_callback为： static_transport_read_complete，
+//设置发送完成函数 tx_complete_callback为： static_transport_write_complete
+//----在发送数据包时，跳过多少字节的“头部”，只把有效数据（data 字段）交给上层处理。
+
+参数：comms_1wire_timer, comms_1wire_timer_timer_id, msiu_1wire_packet_received, NULL, P0.7, 1
+
+comms_uarte_siu_1wire::init(    *timer,   *app_timer_id,   packet_ready_callback,    *context,    rtx_pin,   isr_priority   )
+ 
+    。。。。。。
+
+
+    //设置回调函数 packet_handler为： msiu_1wire_packet_received 
+    //设置接收完成函数 rx_complete_callback为： transport_read_complete
+    //设置发送完成函数 tx_complete_callback为： transport_write_complete
+    //packetizer.init(this,  packet_ready_callback,  context);   
+        packetizer.init(this,  msiu_1wire_packet_received,  null );  
+
+
+    //在发送数据包时，跳过多少字节的“头部”，只把有效数据（data 字段）交给上层处理。
+    //packetizer.set_tx_header_size(offsetof(comms_1wire_slave_tx_data_packet_t, data));
+          reserved_size = offsetof(comms_1wire_slave_tx_data_packet_t, data)  //3
+          tx_buffer_active_top = reserved_size;
+          tx_buffer_base = reserved_size;
+
+    packetizer_enabled_actual = false;
+    packetizer_enabled_target = false;
+
+    。。。。。。
+
+
+
+-----------------------------------------------------------------
+
+//设置回调函数 packet_handler为： msiu_1wire_packet_received 
+//设置接收完成函数 rx_complete_callback为： transport_read_complete
+//设置发送完成函数 tx_complete_callback为： transport_write_complete
+
+//参数：this(comms_uarte_siu_1wire),  msiu_1wire_packet_received,  null
+
+comms_packetizer::init(  *transport,   packet_ready_callback,  *p_context)
+
+
+    transport_device = transport;              //comms_uarte_siu_1wire
+    packet_handler = packet_ready_callback;    //设置回调函数 msiu_1wire_packet_received 
+    packet_handler_context = p_context;        //NULL
+
+    // Init buffers
+    rx_cobs_buffer_in_use = 0;
+    rx_cobs_buffer_top    = 0;
+    rx_cobs_buffer_bottom = 0;
+    in_comms_transport_rx = false;
+    rx_data_ready         = false;
+    rx_failed             = false;
+
+    flush_flag             = false;
+    tx_retry_count         = 0;
+    in_comms_transport_tx  = false;
+    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
+    tx_buffer_base         = 0;
+    tx_buffer_active_top   = 0;
+    tx_buffer_active       = tx_buffer_primary;
+    tx_buffer_transport    = nullptr; 
+    tx_buffer_transport_end= nullptr;
+
+    // Misc
+    rx_lost_packets = 0;
+    tx_lost_packets = 0;
+    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;   // 0xFF
+
+
+    //设置接收完成函数rx_complete_callback为： transport_read_complete，
+    //设置发送完成函数tx_complete_callback为： transport_write_complete
+    transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
+       rx_complete_callback = transport_read_complete;  
+       tx_complete_callback = transport_write_complete;
+       p_context = this;
+
+ 
+
+
+
+
+=========================================== packetizer 接收数据的准备 ====ok===========================================
+
+
+
+[主机发握手包]
+    ↓
+[从机] STATE_RX_HANDSHAKE 状态下收到数据
+    ↓
+on_comms_uarte_event() → RX_DONE 事件
+    ↓
+handle_handshake_packet()
+    ↓
+验证握手包有效：
+    ├─ timestamp == 0xfffefdfc
+    └─ flags & HANDSHAKE
+    ↓
+schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK)   // 发空包（PING 响应）
+    ↓
+tx_with_hold() → 发送空包
+    ↓
+[发送完成] TX_DONE 事件
+    ↓
+rx_timestamp_now()   // 切到 STATE_RX_TIMESTAMP，准备收 timestamp 包
+    ↓
+[等待主机发 timestamp 包]
+    ↓
+收到 timestamp 包 → STATE_RX_TIMESTAMP 分支
+    ↓
+in_synch_count++
+last_rx_timestamp = rx_timestamp.timestamp
+    ↓
+if (disconnected_count != 0)  
+    on_connection();   →  packetizer_enabled_target = true
+ 
+    ↓
+检查 flags & EXT_SYNCH
+    ↓
+timestamp_synch_recieved()   // 时间同步
+
+    ↓
+根据 MASTER_TX 位决定下一步（收数据/发数据）
+
+
+
+---------------------------------------------
+
+这个过程做了以下两样准备：
+
+   。全局参数：packetizer_enabled_target = true   （完成握手on_connection 后变成true）
+   。设置rx_buffer为 rx_raw_buffer
+
+
+
+int main(void)
+
+
+    。。。。。
+
+
+    //注册event_queue_packetizer_enabled_change_pending       //packetizer_enabled_target
+    //注册event_queue_packetizer_enabled_change_process
+    comms_1wire.add_tasks_to_event_queue(&main_event_queue);
+
+
+    。。。。。。
+
+
+    //一直运行队列，如果没有任务就进入休眠
+    //main_event_queue.execute_forever_with_sleep();
+
+         while(1)
+              execute_once_with_sleep_impl(1);   
+
+                //设置rx_buffer为 rx_raw_buffer
+                event_queue_packetizer_enabled_change_process
+             
+
+
+
+-------------
+
+全局参数：packetizer_enabled_target = true   （完成握手on_connection 后变成true）
+
+//设置rx_buffer为 rx_raw_buffer
+
+comms_uarte_siu_1wire::event_queue_packetizer_enabled_change_process()
+ 
+ 
+    if (packetizer_enabled_actual != packetizer_enabled_target)   //yes，已在握手时连接成功
+    
+        packetizer_enabled_actual = packetizer_enabled_target;   //第一次时，从false变成true
+
+        if (packetizer_enabled_target)   //yes
+
+            //packetizer.enable_packet_reading();
+            // initiate_rx();
+            //   setup_next_rx();
+
+                  in_comms_transport_rx = true;
+
+                  //设置rx_buffer为 rx_raw_buffer
+                  //transport_device->comms_transport_rx(rx_raw_buffer, sizeof(rx_raw_buffer));
+                  //  comms_uarte_siu_1wire::comms_transport_rx(rx_raw_buffer, sizeof(rx_raw_buffer))
+                      rx_buffer = rx_raw_buffer;
+
+                  in_comms_transport_rx = false;
+
+        else
+
+            //packetizer.disable_packet_reading();
+
+
+
+
+
+=========================================== packetizer 接收数据  =====（待完成）==========================================
+
+
+msiu_1wire_packet_received 在哪里调用
+
+
+------从握手到决定接收------
+
+[主机发握手包]
+    ↓
+[从机] UARTE 收到数据 → ENDRX 中断
+    ↓
+on_comms_uarte_event() → RX_DONE 事件
+    ↓
+state == STATE_RX_HANDSHAKE
+    ↓
+handle_handshake_packet()
+    ↓
+验证握手包有效：
+    ├─ timestamp == 0xfffefdfc
+    └─ flags & HANDSHAKE
+    ↓
+schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK)   // 发空包（PING 响应）
+    ↓
+tx_with_hold() → 切换 TX 模式 → 发送空包
+    ↓
+[发送完成] TX_DONE 事件
+    ↓
+rx_timestamp_now()   // 切到 STATE_RX_TIMESTAMP，准备收 timestamp 包
+    ↓
+[等待主机发 timestamp 包]
+    ↓
+[收到 timestamp 包] → UARTE ENDRX 中断
+    ↓
+on_comms_uarte_event() → RX_DONE 事件
+    ↓
+state == STATE_RX_TIMESTAMP
+    ↓
+检查 flags & HANDSHAKE → 否
+    ↓
+in_synch_count++
+last_rx_timestamp = rx_timestamp.timestamp
+    ↓
+if (disconnected_count != 0) on_connection()   →  packetizer_enabled_target = true
+    ↓
+if (flags & EXT_SYNCH) timestamp_synch_recieved()
+    ↓
+根据 MASTER_TX 位决定下一步
+    ↓
+（如果 MASTER_TX = 1，从机接收数据）
+
+
+
+------uart rx接收数据过程-----
+
+[1-Wire 总线收到数据]
+    ↓
+UARTE 硬件接收完成 → ENDRX 中断
+    ↓
+nrfx_uarte_0_irq_handler()
+    ↓
+uarte_irq_handler() → rx_done_event()
+    ↓
+p_cb->handler() → comms_uarte_handler()
+    ↓
+
+
+on_comms_uarte_event() → RX_DONE 事件   ？
+    ↓
+on_rx_complete_in_isr()
+    ↓
+rx_complete_callback()
+    ↓
+packetizer.static_transport_read_complete()
+    ↓
+packetizer.transport_read_complete()                               //here
+    ├─ 数据从 rx_raw_buffer 拷贝到 rx_cobs_buffer
+    ├─ rx_cobs_buffer_top 更新
+    └─ rx_data_ready = true
+
+
+    ↓
+
+[主循环] main_event_queue.execute_forever_with_sleep()
+    ↓
+event_queue_start_rx_pending() → 检查 rx_data_ready
+    ↓
+event_queue_start_rx_process()
+    ├─ COBS 解码
+    ├─ CRC 校验
+    ├─ 提取完整数据包
+    └─ 调用 (*packet_handler)(rx_cobs_buffer, packet_size, packet_handler_context)
+    ↓
+packet_handler = msiu_1wire_packet_received                                             //here
+
+
+
+
+--------------------------------------------------------------------
+
+
+
+
+int main(void)
+
+
+    。。。。。
+
+
+    //注册event_queue_start_rx_pending   //rx_data_ready
+    //注册event_queue_start_rx_process
+    comms_1wire.add_tasks_to_event_queue(&main_event_queue);
+
+
+    。。。。。。
+
+
+    //一直运行队列，如果没有任务就进入休眠
+    //main_event_queue.execute_forever_with_sleep();
+
+         while(1)
+              execute_once_with_sleep_impl(1);     //循环运行event_queue_packetizer_enabled_change_process
+
+
+------------
+
+
+//设置rx_data_ready为 true
+//把推车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+//如果没有断连，就继续接收数据包
+//继续设置rx_buffer为：数据包的变量rx_raw_buffer
+
+参数：actual_length, false, p_context
+
+comms_packetizer::transport_read_complete(  actual_rx_length,  failed)
+
+    uint16_t i_raw;
+    uint16_t i_cobs;
+
+
+    //如果是失败标记，忽略跳过
+    if (failed)
+        rx_failed = true;   return;
+ 
+    //嵌套调用出错处理，忽略跳过
+    //OMMO_APP_ERROR_CHECK(in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous call of transport_read_complete"), 0);
+        if(in_comms_transport_rx)  
+            app_error_save_and_stop()   //系统停止/复位 
+
+
+    //判断仓库rx_cobs_buffer里面的空间是否足够。把推车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+    if (rx_cobs_buffer_top + actual_rx_length > sizeof(rx_cobs_buffer))  //空间不够，则不搬
+    
+        rx_lost_packets++;
+        rx_cobs_buffer_top = rx_cobs_buffer_in_use;
+    
+    else  //空间足够
+    
+        memcpy(&rx_cobs_buffer[rx_cobs_buffer_top], rx_raw_buffer, actual_rx_length);  //把卡车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+        rx_cobs_buffer_top += actual_rx_length;
+
+        rx_data_ready = true;
+    
+
+    //判断是否断连了
+    //AAA = transport_device->is_connected();
+    //  AAA = comms_uarte_siu_1wire::is_connected();
+          AAA = (disconnected_count < DISCONNECTION_COUNT_LIMIT};   //100
+
+
+    //如果没有断连，就继续接收数据包
+    //继续设置rx_buffer为：数据包的变量rx_raw_buffer
+    if (AAA) 
+        //setup_next_rx();
+            in_comms_transport_rx = true;
+
+            //继续设置rx_buffer为：数据包变量rx_raw_buffer
+            //transport_device->comms_transport_rx(rx_raw_buffer, sizeof(rx_raw_buffer));
+            //   comms_uarte_siu_1wire::comms_transport_rx(rx_raw_buffer, sizeof(rx_raw_buffer))
+                 rx_buffer = rx_raw_buffer;
+            in_comms_transport_rx = false;
+
+
+-------------
+
+#define L(x) TYPEID(x), x
+
+全局参数：   rx_cobs_buffer
+
+comms_packetizer::event_queue_start_rx_process()
+
+
+    size_t  cobs_size, , packet_size, not_used;
+
+    AAA = rx_cobs_buffer_in_use ? NRF_ERROR_INTERNAL : NRF_SUCCESS;
+    BBB =  L(rx_cobs_buffer_in_use), L(rx_cobs_buffer_bottom), L(rx_cobs_buffer_top), L(rx_lost_packets), L(tx_lost_packets);
+
+    //检查 rx_cobs_buffer_in_use 是否为非零，如果是，触发错误处理并记录相关变量值
+     if (AAA)  //NRF_ERROR_INTERNAL
+       
+        //OMMO_APP_ERROR_CHECK(AAA,BBB, 0);
+            L(rx_cobs_buffer_in_use),       // 记录变量,      L(x) 把变量名和变量值打包成一对 (类型, 值)
+            L(rx_cobs_buffer_bottom),   // 记录变量
+            L(rx_cobs_buffer_top),          // 记录变量
+            L(rx_lost_packets),               // 记录变量
+            L(tx_lost_packets),                // 记录变量
+   
+    current_top                        =   rx_cobs_buffer_top;
+    rx_cobs_buffer_in_use              =   current_top;
+
+
+    // 在rx_cobs_buffer 中查找 \0 字符，用来确定一个 COBS 编码包的结束位置
+    for (i = rx_cobs_buffer_bottom; i < current_top; i++)
+    
+        if (rx_cobs_buffer[i] == '\0')
+            break;
+
+    cobs_size=i;
+
+    // Bail if this is a partial packet  如果是不完整数据包，则直接退出处理。
+    if (cobs_size >= current_top)
+    
+        rx_cobs_buffer_bottom = current_top;
+        rx_cobs_buffer_in_use = 0;
+        return;
+    
+
+  
+    // Decode our rx cobs buffer, in-place
+    if (!cobs_decode_crc(
+          rx_cobs_buffer, cobs_size,
+          rx_cobs_buffer, cobs_size, &crc, &not_used,
+          &packet_size))
+    {
+        packet_size = 0;
+    }
+
+    // \0 is excluded for decoding the COBS data, but included in subsequent pointer math
+    cobs_size++;
+
+    // Prevent ISR from updating the decoded packet.  If it needs to overwrite data, anything
+    // after this point is disposable.
+    rx_cobs_buffer_in_use = cobs_size;
+
+    // Is this a real packet?
+    if (packet_size > 0x00)
+    {
+        if (crc == 0x00)
+        {
+            if (packet_handler)
+                (*packet_handler)(rx_cobs_buffer, packet_size, packet_handler_context);
+        }
+        else
+        {
+            //Report a 0x00 length packet, indicating an invalid packet was received
+            if (packet_handler)
+                (*packet_handler)(nullptr, 0x00, packet_handler_context);
+        }
+    }
+
+    // Shift the processed packet to the start of the cobs buffer, and release use of the buffer
+    // to transport_read_complete/ISR.  Note that there may be another packet between cobs_size
+    // and current_top.
+
+
+
+    // disable_packet_reading() may have been called by the handler
+    if (rx_cobs_buffer_in_use != 0)
+    {
+        NRFX_ASSERT(rx_cobs_buffer_top >= cobs_size);
+        memmove(rx_cobs_buffer, &rx_cobs_buffer[cobs_size], rx_cobs_buffer_top - cobs_size);
+        rx_cobs_buffer_top -= cobs_size;
+        rx_cobs_buffer_in_use = 0;
+        rx_cobs_buffer_bottom = 0;
+        if (rx_cobs_buffer_top == 0)
+            rx_data_ready = false;
+    }
+
+
+
+
+
+--------------
+
+
+comms_packetizer::event_queue_start_rx_pending()
+
+    return rx_data_ready;
+
+
+----------
+                                     
+
+static void msiu_1wire_packet_received(    *buffer,     length,      *context)
+{
+    // The 1-wire interface is intended to emulate a USB connection.  The device is connected to an
+    // adapter with a USB CDC instance that simply relays USB packets over 1-wire to the device.
+
+    //取得返回长度
+    uint32_t response_length = process_usb_serial_packet_received(buffer, length, tx_buffer, PACKET_RESPONSE_BUFFER_SIZE);
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(tx_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    //根据返回长度，发送返回字符串
+    comms_1wire.send_command_packet_async(tx_buffer, response_length);
+
+}
+
+
+
+
+
+=========================================== packetizer 发送数据  =====（待完成）==========================================
+
+
+
+
+[主机发握手包]
+    ↓
+[从机] UARTE 收到数据 → ENDRX 中断
+    ↓
+on_comms_uarte_event() → RX_DONE 事件
+    ↓
+state == STATE_RX_HANDSHAKE
+    ↓
+handle_handshake_packet()
+    ↓
+验证握手包有效：
+    ├─ timestamp == 0xfffefdfc
+    └─ flags & HANDSHAKE
+    ↓
+schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK)   // 发空包（PING 响应）
+    ↓
+tx_with_hold() → 切换 TX 模式 → 发送空包
+    ↓
+[发送完成] TX_DONE 事件
+    ↓
+rx_timestamp_now()   // 切到 STATE_RX_TIMESTAMP，准备收 timestamp 包
+    ↓
+[等待主机发 timestamp 包]
+    ↓
+[收到 timestamp 包] → UARTE ENDRX 中断
+    ↓
+on_comms_uarte_event() → RX_DONE 事件
+    ↓
+state == STATE_RX_TIMESTAMP
+    ↓
+检查 flags & HANDSHAKE → 否
+    ↓
+in_synch_count++
+last_rx_timestamp = rx_timestamp.timestamp
+    ↓
+if (disconnected_count != 0) on_connection()   →  packetizer_enabled_target = true
+    ↓
+if (flags & EXT_SYNCH) timestamp_synch_recieved()
+    ↓
+根据 MASTER_TX 位决定下一步
+    ↓
+（如果 MASTER_TX = 0，从机发数据）
+    ↓
+schedule_tx_data(tx_buffer, STATE_TX_DATA)
+    ↓
+tx_with_hold() → 发送数据包
+    ↓
+[发送完成] TX_DONE 事件
+    ↓
+rx_timestamp_now()   // 切回 STATE_RX_TIMESTAMP
+
+
+
+
+

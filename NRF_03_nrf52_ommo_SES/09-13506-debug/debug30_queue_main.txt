@@ -1,0 +1,304 @@
+main_event_queue 的工作流程
+
+
+
+[系统启动] main()
+    ↓
+main_event_queue.reset()   // 清空队列
+    ↓
+注册各种任务（包括 packetizer 的任务）
+    ↓
+main_event_queue.execute_forever_with_sleep()   // ★ 进入主循环 ★
+    ↓
+┌────────────────────────────────┐
+│  主循环每转一圈：                                           │
+│  1. 遍历所有注册的任务                                      │
+│  2. 调用每个任务的 pending 函数检查是否需要执行              │
+│  3. 如果 pending 返回 true → 调用 process 函数执行          │
+│  4. 如果没有任务要执行 → 进入休眠（WFI）                    │
+└─────────────────────────────────┘
+    ↓
+
+┌──────────────────────────┐
+│  这个循环永远不会自然退出                          │
+│  直到发生以下事件之一：                            │
+│  1. 检测到充电器插入 → 直接调用 charge_loop()     │
+│  2. 检测到需要关机 → 直接调用 shutdown()          │
+│  3. 系统复位                                       │
+└──────────────────────────┘
+    ↓
+[充电器插入] charge_loop()
+    ↓
+main_event_queue.reset()   // 清空旧任务
+注册充电模式任务
+    ↓
+main_event_queue.execute_forever_with_sleep()   // 充电模式主循环
+    ↓
+[充电器移除] shutdown() → NVIC_SystemReset()
+    ↓
+系统重新启动，回到 main()
+
+
+
+
+============================================
+
+
+
+int main(void)
+
+
+    。。。。。
+
+
+    //comms_1wire初始化
+    comms_1wire.init(&comms_1wire_timer, &comms_1wire_timer_timer_id, &msiu_1wire_packet_received, NULL, OMMOCOMM_UARTE_DATA_PIN, 1);
+
+
+    //清零已注册的任务数量 num_registered_functions
+    //清空标志位变量 process_executing_mask
+    //清空所有函数指针
+    main_event_queue.reset();
+
+    //注册喂看门狗的任务advanced_wdt_feed   //easy
+    //main_event_queue.register_task(advanced_wdt_feed);   
+    //  register_task_impl(nullptr, nullptr, advanced_wdt_feed,  nullptr, nullptr, false);
+
+        i = num_registered_functions;
+        process_functions[i]    = (void*)process_func;    //advanced_wdt_feed
+        main_loop_only_flags[i] = main_loop_only;      //false ，看门狗不仅在主循环中运行，在哪里都可运行
+        num_registered_functions++;                    //注册的总任务数加1
+
+
+    //把队列one_hundred_ms_event_pending作为一个子函数，加入到主队列中
+    //main_event_queue.register_task(one_hundred_ms_event_pending, one_hundred_ms_event_process);
+    //  register_task_impl( nullptr, one_hundred_ms_event_pending,  one_hundred_ms_event_process,  nullptr,  nullptr,  false);
+
+        process_functions[i]    = one_hundred_ms_event_process;
+        pending_functions[i]    = one_hundred_ms_event_pending;
+        main_loop_only_flags[i] = false;                         //在主循环外也可运行
+
+
+    //注册event_queue_start_rx_process
+    //注册event_queue_start_tx_process
+    //注册event_queue_rx_error_recovery_pending
+    //注册event_queue_tx_error_recovery_pending
+    //注册event_queue_event_change_callback_process
+    //注册event_queue_packetizer_enabled_change_process
+    comms_1wire.add_tasks_to_event_queue(&main_event_queue);
+
+
+
+    //等待300ms，看可否通过1wire连接上主机
+    while( !comms_1wire.is_connected())
+
+        if(one_wire_connection_timeout_count<3)
+
+           //运行一次队列 (待完成)
+           main_event_queue.execute_once();
+
+
+    //判断1wire通讯是否可用  
+    if(comms_1wire.is_connected())
+
+        //modify_power_status(true, POWER_REQ_1WIRE);    //告诉电源管理：1-Wire 正在用，别休眠
+           power_status |= POWER_REQ_1WIRE
+
+    else  // 1wire通讯不可用
+
+        //释放1wire上的所有从机资源  （芭比Q了）
+        comms_1wire.uninit();
+
+ 
+
+    。。。。。。
+
+
+    //一直运行队列，如果没有任务就进入休眠
+    //main_event_queue.execute_forever_with_sleep();
+
+         while(1)
+              execute_once_with_sleep_impl(1);
+
+
+--------
+
+(待完成)
+event_queue_manager::execute_once_impl(  in_main  )
+
+    // Disable event queue execution during fault handling.  IRQ handlers may fault, and the fault
+    // handler calls functions (ex. for writing to flash) which call this function.
+    if(in_ommo_app_error_handler)
+        return;
+
+    OMMO_APP_ERROR_CHECK(current_int_priority_get() == APP_IRQ_PRIORITY_THREAD ? NRF_SUCCESS : NRF_ERROR_FORBIDDEN, STRING("event_queue called from IRQ"), 0);
+
+    for(uint16_t i=0; i<num_registered_functions; i++)
+    {
+        // Skip main-loop-only tasks when called from a nested/busy-wait context.
+        if(main_loop_only_flags[i] && !in_main) continue;
+
+        // Prevent re-entrant execution: if this process function is already on the call stack (somewhere below), skip it.
+        const uint32_t bit = (1u << i);
+        if(process_executing_mask & bit) continue;
+
+        // Set the executing bit before pending/acquire so a nested execute_once_impl
+        // cannot re-enter this task while we are evaluating it.
+        process_executing_mask |= bit;
+
+        // Check pending — null pending means always run.
+        if(pending_functions[i] != nullptr)
+        {
+            bool pending = (function_context[i] == nullptr)
+                ? ((event_queue_task_pending)pending_functions[i])()
+                : ((event_queue_task_pending_context)pending_functions[i])(function_context[i]);
+
+            if(!pending)
+            {
+                process_executing_mask &= ~bit;
+                continue;
+            }
+        }
+
+        // Try to acquire resources — null acquire means always allowed.
+        if(acquire_functions[i] != nullptr)
+        {
+            bool acquired = ((event_queue_task_acquire)acquire_functions[i])();
+            if(!acquired)
+            {
+                process_executing_mask &= ~bit; // resource unavailable — skip; release is not called
+                continue;
+            }
+        }
+
+        {
+            TRACE_WITH_ARGS_2(TRACE_TYPE_TIME_FLASHADDR_U16, TRACE_LOCATION_EVENT_QUEUE_PROCESSING, (uint32_t)(size_t)process_functions[i], i);
+        }
+
+        if(function_context[i] == nullptr) ((event_queue_task_process)process_functions[i])();
+        else ((event_queue_task_process_context)process_functions[i])(function_context[i]);
+
+        process_executing_mask &= ~bit;
+
+        if(release_functions[i] != nullptr)
+            ((event_queue_task_release)release_functions[i])();
+    }
+
+
+
+
+------
+
+//注册event_queue_start_rx_process
+//注册event_queue_start_tx_process
+//注册event_queue_rx_error_recovery_pending
+//注册event_queue_tx_error_recovery_pending
+//注册event_queue_event_change_callback_process
+//注册event_queue_packetizer_enabled_change_process
+
+参数： main_event_queue
+
+comms_uarte_siu_1wire::add_tasks_to_event_queue(   *event_queue  )
+
+    //packetizer.add_tasks_to_event_queue(event_queue));
+
+       // 注册 event_queue_start_rx_process
+       // 注册 event_queue_start_tx_process
+       // 注册 event_queue_rx_error_recovery_pending
+       // 注册 event_queue_tx_error_recovery_pending
+       event_queue->register_task(this, event_queue_start_rx_pending, event_queue_start_rx_process, nullptr, nullptr, true);
+       event_queue->register_task(this, event_queue_start_tx_pending, event_queue_start_tx_process, nullptr, nullptr, true);
+       event_queue->register_task(this, event_queue_rx_error_recovery_pending, event_queue_rx_error_recovery_process, nullptr, nullptr, true);
+       event_queue->register_task(this, event_queue_tx_error_recovery_pending, event_queue_tx_error_recovery_process, nullptr, nullptr, true);
+
+
+    // 注册 event_queue_event_change_callback_process
+    // 注册 event_queue_packetizer_enabled_change_process
+    event_queue->register_task(this, event_queue_event_change_callback_pending, event_queue_event_change_callback_process, nullptr, nullptr, true);
+    event_queue->register_task(this, event_queue_packetizer_enabled_change_pending, event_queue_packetizer_enabled_change_process, nullptr, nullptr, true);
+
+
+
+
+-----
+
+
+参数：advanced_wdt_feed ， false
+
+event_queue_manager::register_task(   process_func,  main_loop_only )
+
+    register_task_impl(nullptr, nullptr, process_func,  nullptr, nullptr, main_loop_only);
+
+
+-----
+
+//把喂狗加入到任务列表
+
+参数：nullptr, nullptr, advanced_wdt_feed,  nullptr, nullptr, main_loop_only
+
+event_queue_manager::register_task_impl(  *context,  pending_func,  process_func,  acquire_func,  release_func,   main_loop_only)
+
+
+    i = num_registered_functions;
+
+    function_context[i]     = context;                //nullptr
+
+    process_functions[i]    = (void*)process_func;    //advanced_wdt_feed
+    pending_functions[i]    = (void*)pending_func;    //nullptr
+    acquire_functions[i]    = (void*)acquire_func;    //nullptr
+    release_functions[i]    = (void*)release_func;    //nullptr
+
+    main_loop_only_flags[i] = main_loop_only;      //false ，看门狗不仅在主循环中运行，在哪里都可运行
+
+    num_registered_functions++;                    //注册的总任务数加1
+
+
+
+
+
+-----
+
+//看门狗喂狗
+advanced_wdt_feed( )
+
+    nrf_wdt_reload_request_set(NRF_WDT_RR0);   //看门狗喂狗
+
+
+
+-----
+
+//清零已注册的任务数量 num_registered_functions
+//清空标志位变量 process_executing_mask
+//清空所有函数指针
+
+event_queue_manager::reset()
+
+    num_registered_functions = 0;
+    process_executing_mask = 0;
+
+    for( i=0; i<EVENT_QUEUE_MAX_FUNCTIONS; i++)  //32
+    
+        acquire_functions[i]    = nullptr;
+        release_functions[i]    = nullptr;
+        main_loop_only_flags[i] = false;
+    
+
+
+
+
+================================================== 参考 ======================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

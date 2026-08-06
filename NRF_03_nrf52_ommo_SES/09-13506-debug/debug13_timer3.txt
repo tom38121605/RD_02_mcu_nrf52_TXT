@@ -81,7 +81,7 @@ int main(void)
 
 
 
-    //取得TIMER3 的 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
+    //取得TIMER3 CC2 通道做offset用，门槛值 700us(暂未写入，也没使能)，或触发磁力计（MMC5983）的 SET/RESET 命令
     sensors_init(&sample_set_ready);
 
 
@@ -174,7 +174,7 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 
 
     //设置 state 为 STATE_RX_HANDSHAKE
-    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+    //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
     //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
     initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_INITIAL_STATE);
 
@@ -367,30 +367,30 @@ irq_handler(    *p_reg,   *p_cb,   channel_count)
 
 -----------
 
-//把cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
-//计算timer3 cc0的新门槛值，把cc0的新门槛值（旧值 + 1ms）写入到timer3的cc0中，使能timer3 cc0中断
+//把timer3 cc2的新门槛值（旧值 + 700us）写入到timer3 cc2中，不使能timer3 cc2中断  
+//计算timer3 cc0的新门槛值，把timer3 cc0的新门槛值（旧值 + 1ms）写入到timer3的cc0中，使能timer3 cc0中断
 
 //取得timer3 cc1的比较事件标志 （同步事件），如果有同步事件，则如下处理：
 //    如果在uart中断里已收到同步包，则清0同步接收标志。如未收到同步包，则同步包次数+1
-//    把cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断  
+//    把timer3 cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断  
  
 //调用timer3 cc2的回调函数  //待完善
 
 
-参数： CC0比较事件, null
-timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3的CC0 1ms开了中断。cc1和cc2都没有开中断
+参数： timer3 CC0比较事件, null
+timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3 CC0 1ms开了中断。cc1和cc2都没有开中断
 
     //保存最后一次的时间戳timestamp
     last_sample_event_trigger_value = sample_event_trigger_value;   
 
 
-    //如果CC0的通道值没有越界 
+    //如果timer3 CC0的通道值没有越界 
     if( sample_event_compare_channel !=  0xFF )    //yes
 
-        //timer3 cc2中断处理，控制set/reset （只有cc2是保存在偏移数值里面的）  //cc0，cc1跳过这里         
+        //timer3 cc2中断处理，控制set/reset （只有timer3 cc2是保存在偏移数值里面的）  //cc0，cc1跳过这里         
         for(  i=0; i<next_free_sample_time_offset_index; i++)
 
-            //把cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
+            //把timer3 cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
             nrfx_timer_compare(&timer_timestamp,  sample_time_offset_cc_channel[i],   sample_event_trigger_value + sample_time_offset_time[i],  false  );  //700us
 
         
@@ -404,7 +404,7 @@ timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3
         while( AAA  > 0 );  //如果错过了这个 ISR，则向前推进（仅在 USB 连接期间发生）
 
 
-        //把cc0的新门槛值（旧值 + 1ms）写入到timer3的cc0中，使能timer3 cc0中断
+        //把timer3 cc0的新门槛值（旧值 + 1ms）写入到timer3 cc0中，使能timer3 cc0中断
         nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
 
 
@@ -423,10 +423,10 @@ timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3
             synch_event_trigger_value = sample_event_trigger_value + (OMMO_TIMESTAMP_SYNCH_PERIOD_MULT-1)*OMMO_TIMESTAMP_SAMPLE_PERIOD;
 
 
-            //清0timer3 cc1的比较事件中断
+            //清零timer3 cc1的比较事件中断
             nrf_timer_event_clear(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]);
 
-            //把cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断
+            //把timer3 cc1的新门槛值（旧值 + 4ms）写入到timer3的cc1中，不使能timer3 cc1中断
             nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
 
             
@@ -468,7 +468,7 @@ timestamp_on_synch_event( )
 
 //待完善  （先看uart中断函数）
 
-参数： CC0比较事件, null
+参数： timer3？ CC0比较事件, null
 
 sample_timer_event_handler(  event_type,   p_context )
  

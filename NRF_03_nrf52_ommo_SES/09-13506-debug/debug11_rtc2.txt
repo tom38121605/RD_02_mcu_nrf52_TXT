@@ -1,11 +1,11 @@
 
-作用：连续 500ms 没收到同步包，RTC2 就会触发超时中断，通知系统：“同步丢了！
+作用：连续 500ms 没收到同步包，RTC2 CC0 就会触发超时中断，通知系统：“同步丢了！
 
 
 rtc1和rtc2的区别：
 
-   主机还在发数据，但从机软件卡死了	RTC1（检测到计数器不变）
-   主机完全不发数据了（断线、断电）	RTC2（500ms 没收到同步包）
+   主机还在发数据，但从机软件卡死了	RTC1 CC0（检测到计数器不变）     //100ms
+   主机完全不发数据了（断线、断电）	RTC2 CC0（500ms 没收到同步包）   //500ms
 
 
 
@@ -69,6 +69,51 @@ int main(void)
 
 
 
+-------
+
+rtc_timer_init()
+
+
+    timer_cfg.prescaler          = RTC_FREQ_TO_PRESCALER(NRFX_RTC_DEFAULT_CONFIG_FREQUENCY);    
+    timer_cfg.interrupt_priority = NRFX_RTC_DEFAULT_CONFIG_IRQ_PRIORITY;               //6
+    timer_cfg.reliable           = NRFX_RTC_DEFAULT_CONFIG_RELIABLE;
+    timer_cfg.tick_latency       = NRFX_RTC_US_TO_TICKS(NRFX_RTC_MAXIMUM_LATENCY_US, NRFX_RTC_DEFAULT_CONFIG_FREQUENCY);  //7.7ms，可靠性检查
+
+
+    //设置 m_handlers[2] 为rtc_timer_handler
+    //设置优先级6，使能中断，设置预分频0
+    nrfx_rtc_init(&timeout_rtc, &timer_cfg, rtc_timer_handler, NULL);
+
+    //使能rtc2
+    nrfx_rtc_enable(&timeout_rtc);
+
+
+-------
+
+//设置 m_handlers[2] 为rtc_timer_handler
+//设置优先级6，使能中断，设置预分频0
+
+参数： rtc2, &timer_cfg, rtc_timer_handler, NULL
+
+nrfx_rtc_init(   *p_instance,   *p_config,   *handler,   *p_context)
+
+
+    m_handlers[2] = handler;        //rtc_timer_handler
+    m_p_context[2] = p_context;     //null
+
+    NRFX_IRQ_PRIORITY_SET(p_instance->irq, p_config->interrupt_priority);   //设置优先级6
+    NRFX_IRQ_ENABLE(p_instance->irq);                                       //使能中断
+    nrf_rtc_prescaler_set(p_instance->p_reg, p_config->prescaler);          //设置预分频
+
+    m_cb[2].reliable     = p_config->reliable;
+    m_cb[2].tick_latency = p_config->tick_latency;
+    m_cb[2].state        = NRFX_DRV_STATE_INITIALIZED;
+
+    
+
+
+
+
 ------
 
 //向 RTC2 申请了空的cc通道，即 CC0，如果闹钟响了，就调用 timestamp_lost_timeout 这个函数    
@@ -104,7 +149,7 @@ rtc_timer_set_timeout(  channel,   timeout )
     if (timeout_running[0])
         return NRF_ERROR_INVALID_STATE;
 
-    last_timeout_used[0] = timeout;
+    last_timeout_used[0] = timeout;   //500ms
     timeout_running[0]   = true;
 
  
@@ -114,10 +159,116 @@ rtc_timer_set_timeout(  channel,   timeout )
 
  
 
-----
 
-功能；RTC 超时定时器的回调函数。500ms 没收到同步包，触发失联报警（或小灯闪烁）
 
+=========================================== rtc2 中断服务函数  ===============================================
+
+
+
+[RTC2 硬件触发]
+    ↓
+RTC2_IRQn（中断向量）
+    ↓
+nrfx_rtc_2_irq_handler()   [nrfx_rtc.c]   ★ 中断入口 ★
+    ↓
+irq_handler()   [nrfx_rtc.c]
+    ↓
+m_handlers[instance_id]()   → rtc_timer_handler()   [rtc_timeout_gen.cpp]
+    ↓
+callback_funcs[channel]()   → timestamp_lost_timeout()   [timestamp_timer.cpp]
+    ↓
+timestamp_synch_lost_found_callback()   → set_leds()
+
+
+
+
+------------------------------
+
+//rtc2中断入口函数
+nrfx_rtc_2_irq_handler(void)
+
+    irq_handler(NRF_RTC2, NRFX_RTC2_INST_IDX, NRF_RTC_CC_CHANNEL_COUNT(2));
+
+
+---------
+
+//关闭事件，关闭中断，清中断标记
+//原子地清除运行标志 timeout_running[0]
+//设置timestamp_synch_lost为 true;
+//触发失联报警set_leds（或小灯闪烁）
+
+参数：NRF_RTC2, NRFX_RTC2_INST_IDX, CC2
+
+irq_handler(   *p_reg,    instance_id,    channel_count)
+ 
+    uint32_t i;
+    uint32_t int_mask =  NRF_RTC_INT_COMPARE0_MASK;
+
+
+    event = NRF_RTC_EVENT_COMPARE_0;
+
+    for (i = 0; i < channel_count; i++)
+    
+        if (nrf_rtc_int_is_enabled(p_reg,int_mask) && nrf_rtc_event_pending(p_reg,event))
+        
+            nrf_rtc_event_disable(p_reg,int_mask);   //关闭事件
+            nrf_rtc_int_disable(p_reg,int_mask);     //关闭中断
+            nrf_rtc_event_clear(p_reg,event);        //清除旧的事件标记
+
+
+            //m_handlers[2]( i, m_p_context[2]);
+               rtc_timer_handler( 0, null);
+        
+
+        int_mask <<= 1;                       //下一个通道的中断
+        event = event + sizeof(uint32_t) ;    //下一个通道的事件
+     
+
+
+
+-----------
+
+//原子地清除运行标志 
+//设置timestamp_synch_lost为 true;
+//触发失联报警set_leds（或小灯闪烁）
+
+参数： 0,  null
+
+rtc_timer_handler(   int_type,   *p_context)
+
+    //Only call callback from either timer OR 
+
+    //原子地清除运行标志，并返回清除前的值
+    AAA = nrfx_atomic_flag_clear_fetch(&timeout_running[0]);
+
+    //如果之前是运行的，如下处理
+    if( AAA )
+    
+        nrfx_rtc_cc_disable(&timeout_rtc, 0);   //关掉 RTC2 的 CC0 号闹铃
+
+        callback = callback_funcs[0];       //timestamp_lost_timeout
+
+        if(callback)  //yes
+        
+            //记录 RTC 超时中断里执行了哪个回调函数，用于调试，忽略跳过
+            OMMO_TRACE_ISR_ACTION_CALLBACK(TRACE_ISR_RTC_TIMEOUT, callback);  
+
+            timeout_running[0] = false;         
+
+            BBB = callback_context[0];   //NULL
+
+            //callback( BBB );
+               timestamp_lost_timeout( null );
+        
+
+
+-------------
+
+
+//设置timestamp_synch_lost为 true;
+//触发失联报警set_leds（或小灯闪烁）
+
+参数： null
 timestamp_lost_timeout(  *p_context)
   
     
@@ -127,6 +278,7 @@ timestamp_lost_timeout(  *p_context)
         timestamp_synch_lost = true;
 
         //timestamp_synch_lost_found_callback(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
+        //  timestamp_synch_lost_found(!timestamp_synch_lost, timestamp_synch_esb_ignore_count > 0);
               set_leds();
     
 
@@ -186,6 +338,7 @@ set_leds()
  
 
 
+
 =========================================== rtc2 收到同步包，重置500ms ===============================================
 
 
@@ -198,16 +351,6 @@ set_leds()
 
 
      待完成
-
-
-
-
-
-
-
-
-
-
 
 
 

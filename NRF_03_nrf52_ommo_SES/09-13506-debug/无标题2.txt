@@ -10,6 +10,44 @@
 //在STATE_RX_TIMESTAMP步骤，如果flags.7=0不是握手包。判断跟上一个包的时间相隔太久，如果太久则需要重新握手 （中止解释时间戳的包）
 
 
+问1：第一次握手的时候，rx_buffer = nullptr。请问 之后在哪里给rx_buffer赋值的
+
+答： 第一次运行时 rx_buffer == nullptr 是正常的，因为 packetizer.enable_packet_reading() 还没有被调用。 
+     当你收到 timestamp 包时，on_connection() 触发了 packetizer_enabled_target = true，但主循环还没来得及执行 enable_packet_reading()，所以 rx_buffer 还是 nullptr。
+     之后，rx_buffer 就在 comms_transport_rx() 中被赋值了。完整流程如下：
+
+      [收到 timestamp 包]
+          ↓
+      on_connection()
+          ↓
+      packetizer_enabled_target = true
+          ↓
+      schedule_rx_timestamp(..., STATE_RX_TIMESTAMP)
+          ↓
+      [等待 3.53ms 后收下一个 timestamp 包]
+          ↓
+      （在这 3.53ms 期间，主循环执行）
+          ↓
+      event_queue_packetizer_enabled_change_process()
+          ↓
+      packetizer.enable_packet_reading()
+          ↓
+      comms_transport_rx(m_rx_buffer, ...)
+          ↓
+      rx_buffer = m_rx_buffer   // ★ 赋值 ★
+          ↓
+      [3.53ms 后，收到下一个 timestamp 包]
+          ↓
+      MASTER_TX = 1
+          ↓
+      检查 rx_buffer != nullptr → 可以收数据包了
+          ↓
+      rx_data_now()
+
+
+
+
+------------------------------------------------------------------------------------
 
 参数：event.type             = RXDONE;
       event.data.rxtx.bytes  = amount 
@@ -53,10 +91,9 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
         //在RX_HANDSHAKE步骤，判断接收来的握手包是否有效
         if (state == STATE_RX_HANDSHAKE)    //是握手包   (通讯包1)
 
-            //B2 从机重新发起握手
             //双重检查是不是有效的握手包：  数据timestamp = 0xfffefdfc 和 标记flags.7 =1。否则  -- >  重新开始握手 （一直开startrx等待数据），state保持为STATE_RX_HANDSHAKE
             //再检查主机要求从机返回0长度数据包，则如下处理。 否则  -- >  再次握手 （3.5ms+后开startrx等待数据），state保持为STATE_RX_HANDSHAKE
-            //上面都检查通过，则规划uart的发送空ack数据, 改变state为TATE_TX_PING_ACK
+            //上面都检查通过，则规划uart的发送空ack数据, 改变state为TATE_TX_PING_ACK   （之后直接在uart的TXDONE事件中切回STATE_RX_TIMESTAMP）
             handle_handshake_packet(TRACE_1WIRE_DISCONNECTED_SLAVE_INITIATING_HANDSHAKE);   //B2 从机重新发起握手
 
 
@@ -79,16 +116,17 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
 
             //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
-            //取得timer0的cc0的计数值，即rxend的时间点
-            //写入CC1的阈值 rxend_time + data_end_offset/3530us +3760/235us，不使能CC1中断
+            //取得timer0 cc0的计数值，即rxend的时间点
+            //写入timer0 cc1的阈值 rxend_time + data_end_offset(3530us) +3760(235us)，不使能timer0 cc1中断
             //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
-            //写入CC2的阈值 rxend_time + data_end_offset/3530us + 8640/540us，使能CC2中断  
-            //---设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+            //写入timer0 cc2 的阈值 rxend_time + data_end_offset(3530us) + 8640(540us)，使能timer0 CC2中断  
+            //---设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+            //设置state为new_state
             schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,  new_state);   //56480
         
 
         //step2：接收时间戳包
-        // 如果收到的不是时间戳包，而是一个握手包。主机重新发起握手。state退回为STATE_RX_HANDSHAKE 或 TATE_TX_PING_ACK
+        // 如果收到的不是时间戳包，而是一个握手包。主机重新发起握手。state退回为STATE_RX_HANDSHAKE 或 STATE_TX_PING_ACK
         // 如果收到的是时间戳包，保存时间戳last_rx_timestamp = rx_timestamp.timestamp，断联标记清零disconnected_count
             （。。。。。。timestamp其他处理）
 
@@ -114,11 +152,11 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
                     //看是否已断联，如断联，则清零断连次数，恢复连接
                     //on_connection();
-                        disconnected_count = 0;
-                        packetizer_enabled_target = true;
+                        disconnected_count = 0;             //则清零断连次数，恢复连接
+                        packetizer_enabled_target = true;   //连接恢复了，可以开始收发数据了
 
          
-                //读取timer3的cc0的计数值
+                //读取timer3 cc0的计数值
                 //rxend_timestamp = timestamp_read_capture(timestamp_capture_channel);
                 //  rxend_timestamp = nrfx_timer_capture_get(&timer_timestamp, channel);
                       nrf_timer_cc_read(p_instance->p_reg, cc_channel);
@@ -126,20 +164,184 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
 
                 //如果flags.3=1，进行时钟同步操作
                 if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_EXT_SYNCH)   //flags.3=1
+
+                   //功能：进行时钟同步操作 (原作者有待完善)
+                   //写入rtc2 CC0的阈值 “RTC 当前计数值 + 上次设置的延时时间500ms”，使能rtc2 CC0中断
+                   //如果有超时标记，则去掉超时标记。设置小灯状态为未超时正常状态
+                   //计算本次新的同步误差   (实际没有真正用到 -- 原作者有待完善)
+                   //写入timer3 CC0的阈值 当前计数值local_event_ts + 15984 (1ms)，使能timer3 CC0中断  //cc0做采样用
+                   //写入timer3 CC1的阈值 当前计数值local_event_ts + 15984*4 (4ms)，使能timer3 CC1中断  //cc1做同步用
                     timestamp_synch_recieved(rx_timestamp.timestamp, rxend_timestamp, TIMESTAMP_SYNCH_SOURCE_1WIRE);
 
 
 
+                //看看主机是收数据，还是发数据
+                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)   //flags.0=1, 主机发送过来数据，下面准备接收
 
-//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                    if (rx_buffer == nullptr)  //第一次握手成功运行到这里的时候，是yes，如下处理                
+ 
+                        //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
+                        //取得timer0 cc0的计数值，即rxend的时间点
+                        //写入timer0 CC1的阈值 rxend_time + data_end_offset(3530us) +3760(235us)，不使能timer0 CC1中断
+                        //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
+                        //写入timer0 CC2的阈值 rxend_time + data_end_offset(3530us) + 8640(540us)，使能timer0 CC2中断  
+                        //---设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+                        //设置state为STATE_RX_TIMESTAMP
+                        schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS, STATE_RX_TIMESTAMP);  // 56480 (3530us)
+                    
+                    else  
+
+                        //设置STATE_RX_DATA
+                        //关闭ppi_channel_schedule_rx_tx
+                        //写入timer0 CC2的阈值 rxend_time + 56800*2（7100us），使能timer0 CC2中断 
+                        //设置rx的接收字符串为 rx_raw_buffer，长度为323，开启接收                                       
+                        rx_data_now();
+
+                
+                else    //主机要求从机发送数据回去
+                
+                    AAA = (tx_buffer != nullptr);                          //tx_buffer 不为空吗 （实际上为空）
+                    BBB = !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_PING);  //flags.1等于0吗
+
+                    if ( AAA && BBB )  //no  
+                        schedule_tx_data(tx_buffer, STATE_TX_DATA);   // 目前看来一直到不了这里 
+
+                    else  //返回空ack包 
+
+                        //总功能：规划uart的发送空ack数据
+                        //设置state为TATE_TX_PING_ACK 
+                        //取得timer0 cc0的计数值，即rxend的时间点
+                        //写入timer0 CC1的阈值4800(300us)，不使能timer0 CC1中断 （后面会直接触发ppi）
+                        //建立ppi：ppi_channel_schedule_rx_tx(闹铃)   -->  starttx(开灯) ，使能ppi
+                        //关闭timer0 cc2的超时中断
+                        //---把单线引脚从rx变成tx
+                        //把323字节的发送数据tx_no_data放到uart的tx的缓冲区，暂不发送，或等ppi触发
+                        schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK);
+                
+                 
+        // 接收RX_DATA包
+        else if (state == STATE_RX_DATA)
+        
+           //取得接收缓冲区的结构体指针和数据长度
+           //清空指针rx_buffer
+           //设置rx_data_ready为 true
+           //把推车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+           //如果没有断连，就继续接收数据包
+           //继续设置rx_buffer为：数据包的变量rx_raw_buffer
+           //接收数据成功，返回true
+
+            AAA = on_rx_complete_in_isr();
+
+
+            //如果接收数据成功，则设置定时器timer0继续下一次的接收
+            //如果接收数据失败，则开启从新握手  （主机怎么识别这次通讯过程中从机设置的握手？）
+            if ( AAA )   
+
+                //设置 state 为 STATE_RX_TIMESTAMP
+                //停止timer0定时器
+                //关闭 ppi_channel_schedule_rx_tx通道
+                //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
+                //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
+                rx_timestamp_now();
+
+            else
+
+                //设置 state 为 STATE_RX_HANDSHAKE
+                //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)，使能timer0 CC2中断，开启timer0
+                //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 
+                initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CALLBACK_ERROR);    //（主机怎么识别这次通讯过程中从机设置的握手？）
+
       
+        else /*if (state == COMMS_1WIRE_STATE_RX_TIMEOUT)*/
+        
+            。。。。。
+        
+
+
+-------------------
+ 
+
+
+//取得接收缓冲区的结构体指针和数据长度
+//清空指针rx_buffer
+//把推车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+//如果没有断连，就继续接收数据包
+//继续设置rx_buffer为：数据包的变量rx_raw_buffer
+//接收数据成功，返回true
+
+comms_uarte_siu_1wire::on_rx_complete_in_isr()
+
+    //在编译时检查 data 成员是否位于结构体的起始位置（偏移量为 0），在结构体开头可以简化地址计算 (防止其他人修改成员位置)
+    STATIC_ASSERT(offsetof(comms_1wire_master_tx_data_packet_t, data) == 0);
+
+    //取得接收缓冲区的结构体指针和数据长度
+    packet = (comms_1wire_master_tx_data_packet_t*)rx_buffer;    //结构体指针
+    actual_length = packet->length;                              //接收数据部分的长度
+
+
+    //下面两句仅用作调试，忽略跳过
+    if (actual_length == 0)
+        verify_test_pattern(packet);
+
+    rx_buffer = nullptr;    //清空指针rx_buffer
+
+
+    //如果长度超限，返回false
+    if (actual_length > COMMS_1WIRE_DATA_PACKET_MAX_SIZE)   //320    
+        //rx_complete_callback(COMMS_1WIRE_DATA_PACKET_MAX_SIZE, true, p_context); 
+           rx_failed = true;
+        return false;
+
+    //把推车rx_buffer里的数据，搬到仓库rx_cobs_buffer里
+    //如果没有断连，就继续接收数据包
+    //继续设置rx_buffer为：数据包的变量rx_raw_buffer
+    rx_complete_callback(actual_length, false, p_context);  //参考： debug15_packetizer.txt
+
+    return true;
 
 
 
-***1------------------------------------------------------
+-----
 
 
-功能：进行时钟同步操作。。。。。。
+//设置STATE_RX_DATA
+//关闭ppi_channel_schedule_rx_tx
+//写入timer0 CC2的阈值 rxend_time + 56800*2（7100us），使能timer0 CC2中断 
+//设置rx的接收字符串为 rx_raw_buffer，长度为323，开启接收
+
+comms_uarte_siu_1wire::rx_data_now( )
+
+    //设置STATE_RX_DATA
+    state = STATE_RX_DATA;
+
+    //取得timer0 cc0的计数值，即rxend的时间点
+    rxend_time = nrf_timer_cc_read(timer->p_reg, TIMER_CHANNEL_CAPTURE_RXEND);
+
+    //关闭ppi_channel_schedule_rx_tx
+    nrfx_ppi_channel_disable(ppi_channel_schedule_rx_tx);
+
+    //写入timer0 CC2的阈值 rxend_time + 56800*2（7100us），使能timer0 CC2中断  
+    nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT,
+                       rxend_time + (COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS) * 2,
+                       true);
+
+    //设置rx的接收字符串为 rx_raw_buffer，长度为323，开启接收
+    //rx_now(rx_buffer, sizeof(comms_1wire_master_tx_data_packet_t));
+       rx_with_optional_hold(rx_raw_buffer, 323, false)                 // rx_raw_buffer  -- 待验证
+
+
+
+
+-------
+
+
+功能：进行时钟同步操作 (原作者有待完善)
+//写入rtc2 CC0的阈值 “RTC2当前计数值 + 上次设置的延时时间500ms”，使能rtc2 CC0中断
+//如果有超时标记，则去掉超时标记。设置小灯状态为未超时正常状态
+//计算本次新的同步误差   (实际没有真正用到 -- 原作者有待完善)
+//写入timer3 CC0的阈值 当前计数值local_event_ts + 15984 (1ms)，使能timer3 CC0中断  //cc0做采样用
+//写入timer3 CC1的阈值 当前计数值local_event_ts + 15984*4 (4ms)，使能timer3 CC1中断  //cc1做同步用
+
 
 参数：rx_timestamp.timestamp (主机时间),   rxend_timestamp (本地时间),   TIMESTAMP_SYNCH_SOURCE_1WIRE
 
@@ -156,26 +358,25 @@ timestamp_synch_recieved(   basestation_ts,  local_event_ts,   source)
             tx_delay = TIMESTAMP_SYNCH_1WIRE_TX_DELAY;   //813
 
             
-                //写入rtc CC0的阈值 “RTC 当前计数值 + 上次设置的延时时间（或500ms）”，不使能rtc CC0中断
-                //设置小灯状态为未超时正常状态
+                //写入rtc2 CC0的阈值 “RTC2 当前计数值 + 上次设置的延时时间500ms”，使能rtc2 CC0中断
+                //timestamp_synch_lost = false如果有超时标记，则去掉超时标记。设置小灯状态为未超时正常状态
                 timestamp_reset_synch_lost_timer();
   
 
-                //-----------------关于无线同步和有线同步的切换-----待理解------------------
+                //-----------------关于无线同步和有线同步的切换-----忽略跳过------------------
 
-                //was_wireless = !timestamp_is_synch_wired();                 //1， 是无线sync
-                     return    timestamp_synch_esb_ignore_count > 0
+                //was_wireless = !timestamp_is_synch_wired();                   //没切换前（初始）是1， 是无线sync
+                     was_wireless = !(timestamp_synch_esb_ignore_count > 0);    //timestamp_synch_esb_ignore_count大于0，表示是有线
 
-                timestamp_synch_esb_ignore_count = 16;
+                timestamp_synch_esb_ignore_count = 16    //设置为有线
 
-
-                //同步恢复了，而且现在切换到了有线同步
-                if(timestamp_synch_lost_found_callback != NULL && was_wireless)  
+                if(timestamp_synch_lost_found_callback != NULL && was_wireless)         //如果是无线  (上层关心同步状态变化，且之前是无线模式)
   
-                    //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);
+                    //timestamp_synch_lost_found_callback(!timestamp_synch_lost, true);  //通知上层：“同步恢复了，现在用的是有线同步”
                         set_leds();
 
-                //-----------------关于无线同步和有线同步的切换-----待理解---end---------------
+
+                //-----------------关于无线同步和有线同步的切换--------end---------------
             
             break;
 
@@ -196,130 +397,36 @@ timestamp_synch_recieved(   basestation_ts,  local_event_ts,   source)
         __NOP();                                                                                           //（或为备用调试）
     
 
-    //Update synch and sample time to match basestation
- 
-    //计算timer3 cc0下一次的门槛值 ，用 (basestation_ts -  timestamp_synch_offset)代替local_event_ts可消除累计误差
+    //计算timer3 cc0下一次的门槛值           //应可优化成： local_event_ts + (offsetold - offsetnew) + 1ms
     sample_event_trigger_value = basestation_ts + OMMO_TIMESTAMP_SAMPLE_PERIOD - timestamp_synch_offset;   //15984
 
+    //写入timer3 CC0的阈值 当前计数值local_event_ts + 15984 (1ms)，使能timer3 CC0中断  //cc0做采样用
     nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
 
  
-    //Sometimes synch events come in at a higher rate than the expected synch period
-    //Ignore synch time changes until 1 OMMO_TIMESTAMP_SAMPLE_PERIOD before the expected synch period
-    if((basestation_ts - last_synch_event_value_bs_units) > (OMMO_TIMESTAMP_SAMPLE_PERIOD*(OMMO_TIMESTAMP_SYNCH_PERIOD_MULT-1)))
- 
-    {
-        last_synch_event_value_bs_units = basestation_ts;
-        synch_event_trigger_value = basestation_ts + OMMO_TIMESTAMP_SYNCH_PERIOD - timestamp_synch_offset;
-        nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
-    }
- 
+    //下面判断是否更新timer3 cc1的同步时间门槛
+    AAA = basestation_ts - last_synch_event_value_bs_units;
+    BBB = OMMO_TIMESTAMP_SAMPLE_PERIOD*(OMMO_TIMESTAMP_SYNCH_PERIOD_MULT-1);      // 15984 *（4-1）
 
-
-(返回原函数1)
-
-
-
-                //RX/TX under the direction of the master
-                if (rx_timestamp.flags & COMMS_1WIRE_FLAGS_MASTER_TX)
-                
-                    //If the application isn't expecting any data, simply ignore the incoming data,
-                    //and schedule receipt of the next timestamp packet
-                    if (rx_buffer == nullptr)                  
- 
-                        schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS, STATE_RX_TIMESTAMP);
-                    
-                    else  
-                                       
-                        rx_data_now();
-                    
-                
-                else
-                
-                    //Master has directed the slave to transmit.  The slave MUST transmit to
-                    //maintain a connection.  If the master requested a ping (ex. TEST_PATTERN_MODE
-                    //enabled), or if the application has nothing to transmit, then send a ping
-                    //packet.
-                    if (tx_buffer != nullptr && !(rx_timestamp.flags & COMMS_1WIRE_FLAGS_PING))
-                        schedule_tx_data(tx_buffer, STATE_TX_DATA);
-                    else
-                        schedule_tx_data(&tx_no_data, STATE_TX_PING_ACK);
-                
-            
-        
-        // 接收RX_DATA包
-        else if (state == STATE_RX_DATA)
-        
-            if (on_rx_complete_in_isr())
-
-                //设置 state 为 STATE_RX_TIMESTAMP
-                //停止timer0定时器
-                //关闭 ppi_channel_schedule_rx_tx通道
-                //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
-                //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
-                rx_timestamp_now();
-
-            else
-
-                //设置 state 为 STATE_RX_HANDSHAKE
-                //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
-                //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 
-                initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CALLBACK_ERROR);
-
-
-        
-        else /*if (state == COMMS_1WIRE_STATE_RX_TIMEOUT)*/
-        
-             //设置 state 为 STATE_RX_HANDSHAKE
-            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
-            //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
-            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_CANCELLED);
-        
-
-    else /*if (p_event->type == NRFX_UARTE_EVT_ERROR)*/
+    if( AAA > BBB ) //如果是第4个1ms的同步信号，则重新设置timer3 cc1的同步时间门槛
     
-       
-        //手动清除timer0的CC2(功能timeout)事件标志，防止在处理帧错误时触发超时中断
-        nrf_timer_event_clear(timer->p_reg, nrf_timer_compare_event_get(TIMER_CHANNEL_RX_TIMEOUT));
+        last_synch_event_value_bs_units = basestation_ts;  //保存主机时间
 
-        if (state == STATE_RX_TIMEOUT)
-        
-            //设置 state 为 STATE_RX_HANDSHAKE
-            //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
-            //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
-            initiate_handshake_now(TRACE_1WIRE_DISCONNECTED_RX_TIMEOUT);
-        
-        else
-        
-            if (state >= STATE_FIRST_RX)
+        //计算timer3 cc1下一次的门槛值
+        synch_event_trigger_value = basestation_ts + OMMO_TIMESTAMP_SYNCH_PERIOD - timestamp_synch_offset;
 
-                //在log中标记当前已断开，并记录断开的次数            
-                on_disconnection(TRACE_1WIRE_DISCONNECTED_RX_ERROR);
- 
-
-                //清空rx fifo里面的垃圾数据  easy
-                uarte_resource->uarte_rx_flush_fifo();
-
-                // Framing errors indicate reception was initiated during a timestamp or data
-                // packet.  Schedule the next read where it is likely to land in a window where
-                // the master is listening for a response from the slave.  Note that the callee
-                // adds a bit of time, so that this is not an even multiple of the period.  In
-                // other words, future reads will not occur at the exact same time relative to
-                // the timestamp packet.
-                schedule_rx_timestamp(COMMS_1WIRE_MAX_PERIOD_TICKS / 2, STATE_RX_HANDSHAKE);   // 64320/2 = 32160
-            
-
-            //else   
-            //    tx_error_count++;
- 
+        //写入timer3 CC1的阈值 当前计数值local_event_ts + 15984*4 (4ms)，使能timer3 CC1中断  //cc1做同步用
+        nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
+    
 
 
 
 -------
 
 
-//写入rtc2 CC0的阈值 “RTC2 当前计数值 + 上次设置的延时时间（或500ms）”，不使能rtc2 CC0中断
-//设置小灯状态为未超时正常状态
+
+//写入rtc2 CC0的阈值 “RTC2 当前计数值 + 上次设置的延时时间500ms”，使能rtc2 CC0中断
+//timestamp_synch_lost = false 如果有超时标记，则去掉超时标记。设置小灯状态为未超时正常状态
 timestamp_reset_synch_lost_timer()
   
 
@@ -332,7 +439,8 @@ timestamp_reset_synch_lost_timer()
             nrfx_rtc_cc_set(&timeout_rtc, channel, nrfx_rtc_counter_get(&timeout_rtc) + last_timeout_used[channel], true); //写入rtc2 CC0的阈值，true -- 使能CC0中断
 
 
-        if(timestamp_synch_lost)
+        //如果有超时标记，则去掉超时标记
+        if(timestamp_synch_lost)   
         
             timestamp_synch_lost = false;
 
@@ -346,11 +454,12 @@ timestamp_reset_synch_lost_timer()
 
 
 //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
-//取得timer0的cc0的计数值，即rxend的时间点
-//写入CC1的阈值 rxend_time + data_end_offset/3530us +3760/235us，不使能CC1中断
+//取得timer0 cc0的计数值，即rxend的时间点
+//写入timer0 CC1的阈值 rxend_time + data_end_offset(3530us) +3760(235us)，不使能timer0 CC1中断
 //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
-//写入CC2的阈值 rxend_time + data_end_offset/3530us + 8640/540us，使能CC2中断  
-//设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+//写入timer0 CC2的阈值 rxend_time + data_end_offset（3530us) + 8640(540us)，使能timer0 CC2中断  
+//设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+//设置state为new_state
 
 参数： 56480 ， RESTART_HANDSHAKE / RX_HANDSHAKE
 
@@ -358,10 +467,10 @@ comms_uarte_siu_1wire::schedule_rx_timestamp(  data_end_offset,  new_state )
 
     state = new_state;
 
-    //取得timer0的cc0的计数值，即rxend的时间点
+    //取得timer0 cc0的计数值，即rxend的时间点
     rxend_time = nrf_timer_cc_read(timer->p_reg, TIMER_CHANNEL_CAPTURE_RXEND);
 
-    //写入CC1的阈值 rxend_time + data_end_offset/3530us +3760/235us，不使能CC1中断 （ 直接触发ppi_channel_schedule_rx_tx，ppi再触发startrxrx ）
+    //写入timer0 CC1的阈值 rxend_time + data_end_offset/3530us +3760/235us，不使能timer0 CC1中断 （ 直接触发ppi_channel_schedule_rx_tx，ppi再触发startrxrx ）
     nrfx_timer_compare(timer, TIMER_CHANNEL_SCHEDULE_RX_TX,
                        rxend_time + data_end_offset + COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS / 2, false);
 
@@ -373,14 +482,14 @@ comms_uarte_siu_1wire::schedule_rx_timestamp(  data_end_offset,  new_state )
 
 
     //在定时器（TIMER0）上设置一个“接收超时闹钟”——如果从预期的 timestamp 包开始接收后，超过 540us 还没收到完整数据，就触发超时中断
-    //写入CC2的阈值 rxend_time + data_end_offset/3530us +8640/540us，使能CC2中断  
+    //写入timer0 CC2的阈值 rxend_time + data_end_offset/3530us +8640/540us，使能timer0 CC2中断  
     nrfx_timer_compare(timer, TIMER_CHANNEL_RX_TIMEOUT,
                        rxend_time + data_end_offset + COMMS_1WIRE_TIMESTAMP_PACKET_MAX_DELAY_TICKS +
                        COMMS_1WIRE_TIMESTAMP_PACKET_TX_TICKS + COMMS_1WIRE_RX_TIMEOUT_TICKS,
                        true);
 
 
-    //设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+    //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
     //triggered_rx(&rx_timestamp, sizeof(rx_timestamp));
        rx_with_optional_hold(buffer, length, true)
 
@@ -416,8 +525,8 @@ comms_uarte_siu_1wire::handle_handshake_packet( reason)
          
             //总功能：规划uart的发送空ack数据
             //设置state为TATE_TX_PING_ACK 
-            //取得timer0的cc0的计数值，即rxend的时间点
-            //写入CC1的阈值4800(300us)，不使能CC1中断 （后面由ppi触发）
+            //取得timer0 cc0的计数值，即rxend的时间点
+            //写入timer0 CC1的阈值4800(300us)，不使能timer0 CC1中断 （后面会直接触发ppi）
             //建立ppi：ppi_channel_schedule_rx_tx(闹铃)   -->  starttx(开灯) ，使能ppi
             //关闭timer0 cc2的超时中断
             //---把单线引脚从rx变成tx
@@ -431,19 +540,20 @@ comms_uarte_siu_1wire::handle_handshake_packet( reason)
 
 
             //总功能：算好时间 → 到点了硬件自动开始收 → 没收完就超时报警
-            //取得timer0的cc0的计数值，即rxend的时间点
-            //写入CC1的阈值 rxend_time + data_end_offset/3530us +3760/235us，不使能CC1中断
+            //取得timer0 cc0的计数值，即rxend的时间点
+            //写入timer0 CC1的阈值 rxend_time + data_end_offset(3530us) +3760(235us)，不使能timer0 CC1中断
             //设置ppi：ppi_channel_schedule_rx_tx(闹铃)  -->  startrx(开灯) ，使能ppi
-            //写入CC2的阈值 rxend_time + data_end_offset/3530us + 8640/540us，使能CC2中断  
-            //设置rx的接收缓冲区为 rx_timestamp，长度为5，暂不接收(等ppi触发)
-            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS, STATE_RX_HANDSHAKE);
+            //写入timer0 CC2的阈值 rxend_time + data_end_offset(3530us) + 8640(540us)，使能timer0 CC2中断  
+            //设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
+            //设置state为 STATE_RX_HANDSHAKE
+            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS, STATE_RX_HANDSHAKE);   //56480 (3530us)
          
     
 
     else   //不是有效握手包，处理 如下
 
          //设置 state 为 STATE_RX_HANDSHAKE
-        //停止timer0，关闭ppi_channel_schedule_rx_tx，写入CC2的阈值64640(4040us)使能CC2中断，开启timer0
+        //停止timer0，关闭ppi_channel_schedule_rx_tx，写入timer0 CC2的阈值64640(4040us)使能timer0 CC2中断，开启timer0
         //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收 
         initiate_handshake_now(reason);
  
@@ -455,8 +565,8 @@ comms_uarte_siu_1wire::handle_handshake_packet( reason)
 
 //总功能：规划uart的发空ack送数据
 //设置state为TATE_TX_PING_ACK （根据情况变化）
-//取得timer0的cc0的计数值，即rxend的时间点
-//写入CC1的阈值4800(300us)，不使能CC1中断 （后面由ppi触发）
+//取得timer0 cc0的计数值，即rxend的时间点
+//写入timer0 CC1的阈值4800(300us)，不使能timer0 CC1中断 （后面会直接触发ppi）
 //建立ppi：ppi_channel_schedule_rx_tx(闹铃)   -->  starttx(开灯)  ，使能ppi
 //关闭timer0 cc2的超时中断
 //---把单线引脚从rx变成tx
@@ -468,11 +578,11 @@ comms_uarte_siu_1wire::schedule_tx_data(   *buffer,  new_state)
  
     state = new_state;
 
-    //取得timer0的cc0的计数值，即rxend的时间点
+    //取得timer0 cc0的计数值，即rxend的时间点
     //rxend_time = nrf_timer_cc_read(timer->p_reg, TIMER_CHANNEL_CAPTURE_RXEND);   //TIMER0 CC0
        rxend_time = NRF_TIMER0->CC0;
 
-    //写入CC1的阈值4800(300us)，不使能CC1中断 （后面由ppi触发）
+    //写入timer0 CC1的阈值4800(300us)，不使能timer0 CC1中断 （后面会直接触发ppi）
     nrfx_timer_compare( timer, TIMER_CHANNEL_SCHEDULE_RX_TX,  rxend_time + COMMS_1WIRE_DATA_PACKET_DELAY_TICKS,  false );
 
 
@@ -620,114 +730,6 @@ comms_uarte_siu_1wire::rx_timestamp_now( )
 
 
 
-====================================参考=================================================
-
- 
-
-
-
-//DS：“给数据包处理器配好‘快递员’（通信接口）和‘收件人’（回调函数）
-//设置 packet_ready 回调函数 msiu_1wire_packet_received （待理解）
-// 设置读完了和写完了的回调函数transport_read_complete，transport_write_complete
-
-
-参数：this,   msiu_1wire_packet_received,    NULL
-
-comms_packetizer::init(    *transport,    packet_ready_callback,    *p_context)
-
-    transport_device = transport;                 // this
-    packet_handler = packet_ready_callback;       // msiu_1wire_packet_received  回调函数
-    packet_handler_context = p_context;           // NULL
-
-    // Init buffers
-    rx_cobs_buffer_in_use = 0;
-    rx_cobs_buffer_top    = 0;
-    rx_cobs_buffer_bottom = 0;
-    in_comms_transport_rx = false;
-    rx_data_ready         = false;
-    rx_failed             = false;
-
-    flush_flag             = false;
-    tx_retry_count         = 0;
-    in_comms_transport_tx  = false;
-    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
-    tx_buffer_base         = 0;
-    tx_buffer_active_top   = 0;
-    tx_buffer_active       = tx_buffer_primary;
-    tx_buffer_transport    = nullptr; 
-    tx_buffer_transport_end= nullptr;
-
-    // Misc
-    rx_lost_packets = 0;
-    tx_lost_packets = 0;
-    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;   //0xFF
-
-    // 设置读完了和写完了的回调函数
-    //transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
-        rx_complete_callback = (rx_cb);     // static_transport_read_complete （transport_read_complete）
-        tx_complete_callback = (tx_cb);     // static_transport_write_complete （transport_write_complete）
-        p_context = (p_context_g);             // this
-
-
-
-----------------------
-
-UARTE 硬件收到字节
-    ↓
-nrfx 驱动触发中断 → 调用用户回调
-    ↓
-comms_uarte_siu_1wire 状态机处理（识别 timestamp 包还是 data 包）
-    ↓
-如果是 data 包 → 调用 transport_device 的读完成回调
-    ↓
-packetizer 收到字节 → COBS 解码 → 拼包
-    ↓
-拼好完整包 → 调用 msiu_1wire_packet_received()
-    ↓
-业务处理（解析命令、发回复）
-
-comms_packetizer::static_transport_read_complete(   actual_rx_length,    failed,    *p_context)
-
-    ((comms_packetizer*)p_context)->transport_read_complete(actual_rx_length, failed);
-
----
-
-comms_packetizer::transport_read_complete(   actual_rx_length,   failed)
-{
-    uint16_t i_raw;
-    uint16_t i_cobs;
-
-    // Note that errors may be reported synchronously
-    if (failed)
-    {
-        // Retry from the main event queue
-        rx_failed = true;
-        return;
-    }
-
-    OMMO_APP_ERROR_CHECK(in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous call of transport_read_complete"), 0);
-
-    if (rx_cobs_buffer_top + actual_rx_length > sizeof(rx_cobs_buffer))
-    {
-        rx_lost_packets++;
-        rx_cobs_buffer_top = rx_cobs_buffer_in_use;
-    }
-    else
-    {
-        memcpy(&rx_cobs_buffer[rx_cobs_buffer_top], rx_raw_buffer, actual_rx_length);
-        rx_cobs_buffer_top += actual_rx_length;
-
-        rx_data_ready = true;
-    }
-
-    // Set up next transfer (if opened and not suspended)
-    if (transport_device->is_connected())
-        setup_next_rx();
-}
-
-
-
- 
 
 
 

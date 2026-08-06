@@ -1,0 +1,204 @@
+
+
+
+[1-Wire 连接建立]
+    ↓
+on_connection()
+    ↓
+packetizer_enabled_target = true
+    ↓
+[主循环] event_queue_packetizer_enabled_change_process()
+    ↓
+packetizer.enable_packet_reading()
+    ↓
+或packetizer.initiate_rx() → setup_next_rx() → 设置 rx_raw_buffer
+
+
+
+
+
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+
+    ↓
+[等待数据...]
+    ↓
+收到 timestamp 包
+    ↓
+packetizer 解码 → msiu_1wire_packet_received()
+    ↓
+on_comms_uarte_event() → state == STATE_RX_TIMESTAMP
+    ↓
+MASTER_TX == 1 && rx_buffer != nullptr
+    ↓
+rx_data_now()   ★ 最终调用 ★
+
+
+
+
+
+
+---
+
+[UARTE 收到数据]
+    ↓
+DMA 写入 rx_raw_buffer   ← 原始字节流（COBS 编码）
+    ↓
+packetizer 处理 rx_raw_buffer
+    ↓
+COBS 解码
+    ↓
+解码后的数据存入 m_rx_buffer
+    ↓
+调用 m_packet_ready_handler(m_rx_buffer, ...)
+
+---
+
+
+
+rx_buffer的设置flow：
+
+[系统初始化] rx_buffer = nullptr
+    ↓
+[连接恢复] packetizer_enabled_target = true
+    ↓
+[主循环事件队列] event_queue_packetizer_enabled_change_process()
+    ↓
+packetizer.enable_packet_reading()
+    ↓
+comms_transport_rx() → rx_buffer = p_rx_buffer   ★ 不再是 nullptr ★
+    ↓
+[收到 timestamp 包，MASTER_TX = 1]
+    ↓
+检查 rx_buffer != nullptr → 可以接收数据包
+    ↓
+rx_data_now() → 进入 STATE_RX_DATA
+
+
+
+---
+
+ 
+[收到 timestamp 包，MASTER_TX = 1]
+    ↓
+rx_data_now()   ★ 启动数据包接收 ★
+    ├─ state = STATE_RX_DATA
+    ├─ 设置超时（7.1ms）
+    └─ rx_now(rx_buffer, 323) → 启动 UARTE 接收
+    ↓
+[UARTE 硬件接收 323 字节]
+    ↓
+[接收完成] → ENDRX 中断
+    ↓
+on_comms_uarte_event() → NRFX_UARTE_EVT_RX_DONE
+    ↓
+检测到 state == STATE_RX_DATA
+    ↓
+┌─────────────────────────────────────────────────────┐
+│  else if (state == STATE_RX_DATA)                   │
+│  {                                                  │
+│      if (on_rx_complete_in_isr())                   │
+│          rx_timestamp_now();   // 成功 → 切回听报时 │
+│      else                                           │
+│          initiate_handshake_now(...); // 失败→重握 │
+│  }                                                  │
+└─────────────────────────────────────────────────────┘
+
+
+
+
+
+------------------------------------------------------
+
+
+
+uint8_t           rx_raw_buffer[USB_SERIAL_RX_RAW_BUFFER_SIZE];   //512
+
+
+#define RTC_CHANNEL_UNINIT_VALUE    0xFF
+
+
+
+
+
+===============================待处理=================================================
+
+
+------------
+
+
+-----
+
+参数： buffer, length, false
+
+comms_packetizer::send_command_packet_blocking(  * buffer,   length,   block)
+
+    uint16_t tx_write_location;
+    ret_code_t err_code = NRF_SUCCESS;
+ 
+    if (transport_device->is_connected())
+    {
+        // Reserve space in buffer if USB packet fits in USB buffer
+        const size_t max_possible_output_length = COBS_CMD_CRC_POST0_MAX_LEN(length);
+
+        CRITICAL_REGION_ENTER();
+        if (tx_buffer_active_top + max_possible_output_length < USB_SERIAL_TX_BUFFER_SIZE)
+        {
+            tx_write_location = tx_buffer_active_top;
+            tx_buffer_active_top += max_possible_output_length;
+        }
+        else
+        {
+            // Buffer full
+            tx_lost_packets++;
+            err_code = NRF_ERROR_BUSY;
+        }
+        CRITICAL_REGION_EXIT();
+
+        // If data fit into the buffer, copy into reserved buffer location
+        // Note: usb event queue processing is done at the lowest priority level so this process
+        // cannot be interrupted
+        if (err_code == NRF_SUCCESS)
+        {
+            cobs_encode_usb_command_crc_post0_zero_pad(buffer, length, tx_buffer_active + tx_write_location, max_possible_output_length);
+
+            err_code = flush_tx_buffers(block);
+        }
+    }
+    else    
+        tx_lost_packets++;
+
+
+
+---------
+
+void comms_packetizer::transport_write_complete(size_t reported_tx_length, ret_code_t err_code)
+{
+    // Note that errors may be reported synchronously
+    if (err_code != NRF_SUCCESS)
+    {
+        // Retry up to 3 times from the main event queue
+        if (tx_retry_count >= 3)
+            on_tx_complete(err_code);
+        else
+            tx_failed = true;
+        return;
+    }
+
+    OMMO_APP_ERROR_CHECK(in_comms_transport_tx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous call of transport_write_complete"), 0);
+
+    tx_buffer_transport += reported_tx_length;
+    if (tx_buffer_transport >= tx_buffer_transport_end)
+    {
+        on_tx_complete(NRF_SUCCESS);
+    }
+    else
+    {
+        // Set up next transfer
+        setup_next_tx();
+    }
+}
+
+
+
+
