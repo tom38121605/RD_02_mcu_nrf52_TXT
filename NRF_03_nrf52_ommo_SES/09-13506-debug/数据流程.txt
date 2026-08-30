@@ -1,0 +1,129 @@
+
+
+1.  uart 收到时间戳包                              //state_start
+    ↓
+rxend
+    ↓
+TIMER0 CC0 自动捕获当前值 Trxend     //state_synch
+    ↓
+根据Trxend 计算下一次动作的时间：
+    ├─ 300us 后发送数据（这里只考虑发送sensor数据到主机，不考虑握手过程） → 设置TIMER0  CC1      //state_ready
+    ├─ 540us 内没收完 → 设置 TIMER0  CC2（超时）
+    └─ 3.5ms 后收下一个 timestamp（timer0） → 设置 CC1   
+    ↓
+TIMER0 计数到 CC1 → 触发 PPI → 自动启动 UARTE RX/TX    //state_read
+TIMER0 计数到 CC2 → 触发中断 → 超时处理
+
+
+
+1.  uart 收到时间戳包                              //state_start
+    ↓
+endrx（6 点） -->  ppi_channel_timestamp_capture (闹铃)  -->   TIMER3_CC0（开灯1 -- 拍照1）
+    ↓
+ TIMER3 计数到 CC_sample → 触发中断                 
+       ↓                                              
+  timestamp_timer_event_handler()                    
+       ↓                                              
+   1. 计算下一次采样时间 + 15984                   
+
+
+
+
+
+=====================================
+
+
+数据标识                     来源定时器           数据类型                                              频率                            核心作用                                          类比
+数据1 (响应数据)        Timer0 CC1         命令/响应 (Command/Response)    触发式 (300µs 后)       响应主机命令, 完成业务交互    “   信件” (Mail)
+数据2 (传感器数据)    Timer3 CC0         原始传感器数据 (Sensor Data)          1ms (1kHz)                 采集传感器数值, 系统核心任务      “货物” (Cargo)
+数据3 (同步包)           Timer3 CC1         时间戳/同步指令 (Timestamp)           4ms (250Hz)              维持时钟同步, 传输链路指令          “心跳” (Heartbeat)
+
+
+
+=========================================
+
+1. TIMER3 CC0（1ms 采样闹铃）
+作用：固定节奏，每 1ms 产生一次中断，驱动整个系统的"心跳"。
+
+它做的事：
+
+触发传感器采样（磁力计、IMU、温度计）
+
+更新系统时间戳
+
+驱动状态机（sensors_state_change）
+
+这是系统的"节拍器"，没有它，整个采样系统就停了。
+
+
+----------------
+
+从逻辑上看，确实可以用 CC0 中断计数 4 次来替代 CC1，而且代码更简单。
+
+这意味着 CC0 的触发时间会被主机的时钟拉着走，而不是固定 1ms。
+
+如果只靠“计数 4 次 CC0 中断”来判断 4ms 同步点，那当 CC0 的周期被外部同步拉偏时，你的“4 次计数”就会和真正的 4ms 周期产生漂移。
+
+问题 2：CC1 是“硬件独立跟踪”，不受 CC0 中断抖动影响
+
+用 CC1 不是为了“多个中断”，而是为了保持 4ms 同步周期不被 CC0 的漂移带歪。
+
+
+
+-----------------
+
+ 新的TIMER3_CC0是在哪里设置的（rxend的中断中，还是timer3的cc0中断中）：
+
+新的 TIMER3_CC0（下一次采样触发值）是在 timestamp_timer_event_handler() 中设置的，这个函数由 TIMER3_CC0 中断触发。
+
+也就是说：新的 CC0 是在旧的 CC0 中断里设置的，不是 rxend 中断里。 rxend 只负责“拍照”保存时间戳，不负责改 CC0。
+
+1. UART 收到时间戳包
+    ↓
+2. ENDRX（6 点）→ PPI → TIMER3_CAPTURE（拍照1）
+    ↓
+   （只保存当前 TIMER3 的值到 CC 寄存器，不改 CC0）
+    ↓
+3. TIMER3 继续计数，直到达到 CC0 的当前值
+    ↓
+4. TIMER3_CC0 中断触发 → timestamp_timer_event_handler()
+    ↓
+5. ★ 在中断里计算并设置下一次 CC0 的值 ★
+    sample_event_trigger_value += OMMO_TIMESTAMP_SAMPLE_PERIOD;
+    nrfx_timer_compare(CC0, sample_event_trigger_value, true);
+    ↓
+6. 同时检查 CC1 是否也到点（同步事件）
+
+----------------------------------------
+
+那么设置新的timer3 cc0，到底用的是哪一个拍照值
+答： 用 的是timer3 cc0的累计值 + 1ms， 在endrx中断对timer3 cc0的拍照值，或只是用来校准，消除累计误差
+
+【线 A】采样节奏（TIMER3_CC0）
+    ↓
+timer3_cc0 中断触发
+    ↓
+sample_event_trigger_value += 15984   // 自己累加，跟谁拍照无关
+    ↓
+设置下一次 CC0 = sample_event_trigger_value
+    ↓
+循环往复……
+
+
+【线 B】时间戳拍照（ENDRX）
+    ↓
+UART 收到数据包 → ENDRX 触发
+    ↓
+PPI 拍照 timer3 cc0 → 存入 CC 寄存器（某个通道）              //或用于校准，消除累计误差           
+    ↓
+CPU 读出来 → 传给 timestamp_synch_recieved()
+    ↓
+用于校正 sample_event_trigger_value（外部修正）
+
+
+
+
+
+
+
+
