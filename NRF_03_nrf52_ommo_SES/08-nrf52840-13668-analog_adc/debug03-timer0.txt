@@ -11,27 +11,23 @@ int main(void)
 ---------------------------------------
 
 
-void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
-
+adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
 
     。。。。。。
 
-    adc_ppi_init()
+    //adc_ppi_init()
 
+       // Init sampling timer and propagate START task.
+       nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+       timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+      APP_ERROR_CHECK(nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler));   // 回调函数 sampling_timer_event_handler
 
-    // Init sampling timer and propagate START task.
-    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
-    timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
-    APP_ERROR_CHECK(nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler));   // 回调函数 sampling_timer_event_handler
+       //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
+       nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
 
-
-
-    //计数器触发CC2后，继续计数
-    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
-
-    //计数器触发CC2后，停止计数，关闭计数器
-    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
-                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC3 -- 240 * 3 + 1
+       //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
+       nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
+                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
 
 
 
@@ -198,8 +194,11 @@ void sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
         {
             case ADC_SAMPLING_STATE_X_CHANNEL_PENDING:
             {
-                // Set new sample time (Y channel)  //设置下一次的比较时间
+                // Set new sample time (Y channel)  
+                //写入timer0 CC0的阈值 240 * 1us，不使能timer0 CC0中断，开启timer0， 用于切换到y通道
                 nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(1)), false);      // 240 * 1 
+
+                //写入timer0 CC1的阈值 60+240 * 1us，不使能timer0 CC1中断，开启timer0， 用于开启y通道的adc转换
                 nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(1)), true);   // 60 + 240*1
 
  
@@ -220,8 +219,11 @@ void sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
             case ADC_SAMPLING_STATE_Y_CHANNEL_PENDING:
             {
                 // Set new sample time (Z channel)
-                nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(2)), false);
-                nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(2)), false);
+                //写入timer0 CC0的阈值 240 * 2us，不使能timer0 CC0中断，开启timer0， 用于切换到z通道
+                nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(2)), false);      // 240 * 2 
+
+                //写入timer0 CC1的阈值 60+240 * 2us，不使能timer0 CC1中断，开启timer0， 用于开启z通道的adc转换
+                nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(2)), false);   // 60 + 240*2
 
  
                 // Configure MUX select 0b10 (0b00 -> 0b10) for Z channel

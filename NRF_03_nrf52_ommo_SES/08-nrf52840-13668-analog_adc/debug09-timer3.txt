@@ -36,7 +36,6 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
                                 US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC3 -- 240 * 3 + 1
 
 
-
     //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
 
         nrfx_ppi_channel_alloc(&sample_trigger_ppi);

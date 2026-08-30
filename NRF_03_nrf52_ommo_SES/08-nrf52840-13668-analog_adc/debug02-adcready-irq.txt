@@ -40,10 +40,10 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
     adc_ppi_init()
 
 
-    //计数器触发CC2后，继续计数
+    //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
     nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
 
-    //计数器触发CC2后，停止计数，关闭计数器
+    //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
     nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
                                 US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
 
@@ -105,7 +105,7 @@ static void adc_sensors_start_data_read_hold()
 -------------
 
 待索源
-void usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
+usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
 
    。。。。。。
 
@@ -114,7 +114,7 @@ void usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
 
 ---
 
-ret_code_t adc_sensors_enable()
+adc_sensors_enable()
 {
     //Make sure we are stopped
     VERIFY_TRUE(adc_sampling_state == ADC_SAMPLING_STATE_IDLE, NRF_ERROR_INVALID_STATE);
@@ -149,13 +149,16 @@ ret_code_t adc_sensors_enable()
 
 ---------
 
-static void adc_sensors_restart_state_machine()
+adc_sensors_restart_state_machine()
 {
     // Configure X channel time compare registers.
     adc_sampling_state = ADC_SAMPLING_STATE_X_CHANNEL_PENDING;
 
-    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false); //+1 to trigger right at start
-    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);
+    写入timer0 CC0的阈值 240 * 0 + 1us，不使能timer0 CC0中断，开启timer0， 用于切换到x通道
+    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false);    //+1  us
+ 
+    写入timer0 CC1的阈值 60+240 * 0us，不使能timer0 CC1中断，开启timer0， 用于开启x通道的adc转换
+    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);      //60us
 
     // Restore default PPI anf GPIOTE configuration.
     restore_default_sampling_ppi_config();
@@ -213,10 +216,9 @@ static void restore_default_sampling_ppi_config()
 }
 
 
-
 ---------------
 
-static void adc_sensors_start_state_machine()
+adc_sensors_start_state_machine()
 {
     // Stop and clear the timer.
     APP_ERROR_CHECK(nrfx_ppi_group_disable(adc_sampling_ppi_group));
