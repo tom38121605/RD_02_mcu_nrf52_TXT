@@ -1,4 +1,4 @@
-
+﻿
 
 
 ----------------------------------------------
@@ -180,7 +180,7 @@ static void adc_ppi_init()
 
 
 
-void sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
+sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
 {
     UNUSED_PARAMETER(p_context);
 

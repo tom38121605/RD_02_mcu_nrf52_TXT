@@ -1,5 +1,5 @@
-
-
+﻿
+FREQ_16M:
 
 //adc sampler
 #define OMMO_ADC_127L11

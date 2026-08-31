@@ -1,4 +1,4 @@
-
+﻿
 usb_serial_packet_receive
    ↓
 
@@ -12,20 +12,20 @@ adc_sensors_start_state_machine
     nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false);    //+1  us
    ↓
 
-写入timer0 CC1的阈值 60+240 * 0us，不使能timer0 CC1中断，开启timer0， 用于开启x通道的adc转换
+写入timer0 CC1的阈值 60+240 * 0us，使能timer0 CC1中断，开启timer0， 用于开启x通道的adc转换
     nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);      //60us
    ↓
 
 写入timer0 CC0的阈值 240 * 1us，不使能timer0 CC0中断，开启timer0， 用于切换到y通道
    ↓
 
-写入timer0 CC1的阈值 60+240 * 1us，不使能timer0 CC1中断，开启timer0， 用于开启y通道的adc转换
+写入timer0 CC1的阈值 60+240 * 1us，使能timer0 CC1中断，开启timer0， 用于开启y通道的adc转换
    ↓
 
 写入timer0 CC0的阈值 240 * 2us，不使能timer0 CC0中断，开启timer0， 用于切换到z通道
    ↓
 
-写入timer0 CC1的阈值 60+240 * 2us，不使能timer0 CC1中断，开启timer0， 用于开启z通道的adc转换
+写入timer0 CC1的阈值 60+240 * 2us，使能timer0 CC1中断，开启timer0， 用于开启z通道的adc转换
    ↓
 
 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输读取数据）
