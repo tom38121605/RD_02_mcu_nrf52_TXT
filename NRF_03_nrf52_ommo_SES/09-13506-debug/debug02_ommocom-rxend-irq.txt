@@ -122,7 +122,7 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
             //写入timer0 cc2 的阈值 rxend_time + data_end_offset(3530us) + 8640(540us)，使能timer0 CC2中断  
             //---设置rx的接收字符串p_rx_buffer为 rx_timestamp，长度为5，暂不接收(等ppi触发)
             //设置state为new_state
-            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,  new_state);   //56480
+            schedule_rx_timestamp(COMMS_1WIRE_DATA_PACKET_DELAY_TICKS + COMMS_1WIRE_DATA_PACKET_TX_TICKS,  new_state);   //56480 (3530us)
         
 
         //step2：接收时间戳包
@@ -242,7 +242,7 @@ comms_uarte_siu_1wire::on_comms_uarte_event(  *p_event)
                 //关闭 ppi_channel_schedule_rx_tx通道
                 //写入timer0 CC2的阈值 当前计数值 + 8640 (540us)，使能timer0 CC2中断。开启timer0
                 //设置rx的接收字符串为 rx_timestamp，长度为5，开启接收
-                rx_timestamp_now();
+                rx_timestamp_now();   //关timer0重启设置540us的理解，等待主机在 300us 后发来的“真正的数据包”（323 字节），如540us没发来则超时了 （待验证）
 
             else
 
