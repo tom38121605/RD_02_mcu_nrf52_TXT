@@ -40,10 +40,10 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
     adc_ppi_init()
 
 
-    //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
+    //计数器触发CC2后，继续计数
     nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
 
-    //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
+    //计数器触发CC2后，停止计数，关闭计数器
     nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
                                 US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
 
@@ -105,7 +105,7 @@ static void adc_sensors_start_data_read_hold()
 -------------
 
 待索源
-usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
+void usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
 
    。。。。。。
 
@@ -149,16 +149,13 @@ adc_sensors_enable()
 
 ---------
 
-adc_sensors_restart_state_machine()
+static void adc_sensors_restart_state_machine()
 {
     // Configure X channel time compare registers.
     adc_sampling_state = ADC_SAMPLING_STATE_X_CHANNEL_PENDING;
 
-    写入timer0 CC0的阈值 240 * 0 + 1us，不使能timer0 CC0中断，开启timer0， 用于切换到x通道
-    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false);    //+1  us
- 
-    写入timer0 CC1的阈值 60+240 * 0us，不使能timer0 CC1中断，开启timer0， 用于开启x通道的adc转换
-    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);      //60us
+    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false); //+1 to trigger right at start
+    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);
 
     // Restore default PPI anf GPIOTE configuration.
     restore_default_sampling_ppi_config();
@@ -186,7 +183,7 @@ adc_sensors_restart_state_machine()
 
 -----
 
-static void restore_default_sampling_ppi_config()
+restore_default_sampling_ppi_config()
 {
     nrfx_gpiote_clr_task_trigger(OMMO_ADC_START_PIN);
 
@@ -196,6 +193,8 @@ static void restore_default_sampling_ppi_config()
     adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Z_EN);
     adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_X_EN);
     adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_Z_EN);
+
+
  
     // channel_bridge_select_ppi 切换通道电源到x通道
     adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Z_EN);
@@ -207,6 +206,8 @@ static void restore_default_sampling_ppi_config()
 
     nrf_ppi_task_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_IO_X_EN));   //拉高 IO_X 引脚
  
+
+
     //切换mux到x通道
     mux_select_ppi事件触发时，同步执行两个硬件动作，纯硬件自动执行，无需 CPU。
     // 0b11(init)/0b10(z) -> 0b01 for x
@@ -214,6 +215,8 @@ static void restore_default_sampling_ppi_config()
     nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_ADC_MUX_A0_PIN));  //拉高 A0 引脚
  
 }
+
+
 
 
 ---------------
@@ -237,7 +240,7 @@ adc_sensors_start_state_machine()
 ----------------
 
 
-void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
+ comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
 {
     UNUSED_PARAMETER(comm_dev);
     UNUSED_PARAMETER(p_context);
