@@ -1,12 +1,35 @@
 ﻿
+
 timer0：   adc_sampling_timer
 
 
+TIMER3 (自由运行，从不停)
+   │
+   │ sample event (每 ~1ms)
+   │ (PPI)
+   ▼
+TIMER0 TASKS_START
+   │
+   │ CC0 → MUX 切换
+   │ CC1 → ADC START 脉冲 (中断)
+   │ CC2 → Set/Reset 开始
+   │ CC3 → Set/Reset 结束
+   │        ├── SHORT STOP  ──► TIMER0 停
+   │        └── SHORT CLEAR ──► TIMER0 计数器清零
+   │
+   ▼
+（等下一个 TIMER3 sample event 再次启动 TIMER0）
+
+
+TIMER3 是节拍源，永远在跑。
+
+TIMER0 是执行器，每轮被 TIMER3 打一拍跑一次，跑完自己停。
+
+TIMER0 停的时候，TIMER3 照常计数、照常产生 sample event。
 
 
 
-
-----------------------------------------------
+=======================================
 
 
 int main(void)
