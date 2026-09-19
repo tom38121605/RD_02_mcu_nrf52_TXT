@@ -1,0 +1,77 @@
+
+#ifndef SDK_CONFIG_H
+#define SDK_CONFIG_H
+
+#include "ommo_fw.pb.h"
+
+#define APPLY_OLD_CONFIG_H__    //This prevents old NRF configs from overwriting new NRFX configs.  Old configs are present in the master sdk_config file.
+
+#define APP_USBD_VID 0x3334
+#define APP_USBD_PID SIU_PID_13668_ANALOG_ADC
+#define APP_USBD_STRINGS_PRODUCT "Ommo 13668 Analog ADC Sampler"
+
+#define NRFX_SYSTICK_ENABLED 1
+
+#define APP_TIMER_V2 1
+#define APP_TIMER_V2_RTC1_ENABLED 1
+
+#define NRFX_CLOCK_ENABLED 1
+#define NRFX_CLOCK_CONFIG_LF_SRC 0
+#define NRF_CLOCK_ENABLED 1
+#define CLOCK_CONFIG_LF_SRC 0
+
+#define NRFX_SWI_ENABLED 1
+#define NRFX_EGU_ENABLED 1
+
+#define NRFX_GPIOTE_ENABLED 1
+
+#define NRFX_POWER_ENABLED 1
+#define POWER_ENABLED 1
+
+#define NRFX_PWM_ENABLED 1
+#define NRFX_PWM0_ENABLED 1
+
+#define NRFX_RTC_ENABLED 1
+#define NRFX_RTC0_ENABLED 1
+#define NRFX_RTC2_ENABLED 1
+
+#define NRFX_SWI_ENABLED 1
+
+#define NRFX_TIMER_ENABLED 1
+#define NRFX_TIMER0_ENABLED 1
+#define NRFX_TIMER3_ENABLED 1
+#define NRFX_TIMER4_ENABLED 1
+
+#define NRFX_UARTE_ENABLED 1
+#define NRFX_UARTE0_ENABLED 1
+#define NRFX_UARTE1_ENABLED 1
+
+#define NRFX_PPI_ENABLED 1
+
+#define NRFX_SPIM_ENABLED 1
+#define NRFX_SPIM0_ENABLED 1
+//#define NRFX_SPIM1_ENABLED 1
+//#define NRFX_SPIM3_ENABLED 1
+
+#define NRFX_TWIM_ENABLED 1
+#define NRFX_TWIM1_ENABLED 1
+
+#define NRFX_UARTE_ENABLED 1
+#define NRFX_UARTE0_ENABLED 1
+
+#define NRFX_SAADC_ENABLED 1
+#define NRFX_SAADC_CONFIG_IRQ_PRIORITY 1
+
+#define NRFX_COMP_ENABLED 1
+
+#define NRF_CRYPTO_ENABLED 1
+#define NRF_CRYPTO_BACKEND_CC310_ENABLED 1
+#define NRF_CRYPTO_BACKEND_CC310_PLATFORM_ENABLED 1
+#define NRF_CRYPTO_BACKEND_CC310_HASH_SHA256 1
+#define NRF_CRYPTO_BACKEND_CC310_ECC_SECP256R1 1
+#define NRF_CRYPTO_HASH_ENABLED 0
+
+#include "ommo_sdk_config_master.h"
+
+#endif //SDK_CONFIG_H
+

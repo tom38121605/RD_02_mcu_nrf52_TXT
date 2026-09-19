@@ -4,10 +4,10 @@
 1. D:\workspace-work\ommo_nrf-gauge
 
    //删除下面文件和目录    //300M + 10M    
-   .git                            //300M
+   .git                            //300M    //有的prj要保留
    key_vault
    latest_firmware 
-   stm32_common
+   stm32_common        //有的prj要保留
 
    .clang-format
    .gitignore
@@ -73,6 +73,7 @@
 
     //保留下面的目录  （其他都删除）   
     utf_converter
+    micro-ecc
 
 
 6. D:\workspace-work\ommo_nrf-gauge\nRF5_SDK_17.1.0_ddde560\components   

@@ -63,8 +63,8 @@ adc_sensors_restart_state_machine()
 ----------------
 
 
-void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
-{
+comm_device_event_handler(   comm_dev,   result,    p_context)
+ 
     UNUSED_PARAMETER(comm_dev);
     UNUSED_PARAMETER(p_context);
 
@@ -186,7 +186,7 @@ void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t 
     }
 
 
-}
+ 
 
 
 

@@ -1,4 +1,11 @@
-﻿
+﻿timer3： timer_timestamp
+
+
+
+=========================================================
+
+
+
 timestamp_timer_event_handler:
 
 timestamp_init_with_no_sample_event
@@ -24,16 +31,8 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
     // Init sampling timer and propagate START task.
     nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
     timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
-    APP_ERROR_CHECK(nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler));   // 回调函数 sampling_timer_event_handler
 
-
-
-    //计数器触发CC2后，继续计数， 后面的false是不开cc2中断
-    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
-
-    //计数器触发CC2后，停止计数，关闭计数器
-    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
-                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC3 -- 240 * 3 + 1
+    。。。。。。
 
 
     //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
@@ -46,7 +45,7 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
 
      
 
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group));
+    nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group);
 
 
     //TIMER3的函数设置
@@ -59,7 +58,7 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
 
 ---
 
-void timestamp_init_with_internal_sample_event(uint8_t isr_priority)
+timestamp_init_with_internal_sample_event(  isr_priority)
 {
     //Init timer
     nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
@@ -101,14 +100,14 @@ void timestamp_init_with_internal_sample_event(uint8_t isr_priority)
 
 ----------------------
 
-static void timestamp_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
-{
+timestamp_timer_event_handler(   event_type,  p_context)
+ 
     //Save last sample timestamp
     last_sample_event_trigger_value = sample_event_trigger_value;
 
 
     if(sample_event_compare_channel != (nrf_timer_cc_channel_t)0xFF)
-    {
+     
         NRFX_CRITICAL_SECTION_ENTER();
 
         //Setup sample time offset events based off of previous sample time
@@ -143,14 +142,14 @@ static void timestamp_timer_event_handler(nrf_timer_event_t event_type, void* p_
         }
 
         NRFX_CRITICAL_SECTION_EXIT();
-    }
+     
 
  
 
     //Call callback if supplied
     for(uint8_t i = 0; i < sample_event_callbacks_num; i++)
         sample_event_callbacks[i](event_type, p_context);       //sample_timer_event_handler
-}
+ 
 
 
 

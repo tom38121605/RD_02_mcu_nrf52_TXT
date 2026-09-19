@@ -82,8 +82,6 @@ static uint32_t adc_sensors_config_adc()
 
 
 
-
-
 //cmd sent on first frame and reg data received on 2nd frame
 static uint8_t adc_sensors_read_reg(uint8_t reg)
 {
@@ -112,7 +110,7 @@ static void adc_sensors_write_reg(uint8_t reg, uint8_t val)
     spi_tx_buffer[2] = val;
     spi_tx_buffer[3] = 0x00;
  
-    APP_ERROR_CHECK(comm_device_ptr->trx(spi_tx_buffer, frame_size, nullptr, 0));
+    comm_device_ptr->trx(spi_tx_buffer, frame_size, nullptr, 0);
 }
 
 

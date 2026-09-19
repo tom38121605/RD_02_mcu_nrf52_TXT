@@ -70,71 +70,80 @@ static void adc_ppi_init()
     APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&set_reset_end_ppi));
 
 
-    //把2个ppi同时绑定到timer0的cc0事件
-    nrf_ppi_event_endpoint_setup(mux_select_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));   // CC0 --> mux_select_ppi 
-    nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));   // CC0 --> channel_bridge_select_ppi
+
+    //分配和建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
+                             timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
+
+    nrf_ppi_event_endpoint_setup(mux_select_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));                  
+    nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));   
 
 
-    // 通过set_reset_start_ppi，把set脚的输出高电平，绑定到timer0的cc2通道 
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(set_reset_start_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL),  //CC2 --> set_reset_start_ppi  --> SET开始
-        nrfx_gpiote_set_task_addr_get(set_reset_pin_a)));
+    //分配和建立ppi：timer0 cc2（6 点） --  set_reset_start_ppi  (闹铃)   --  SET开始
+    nrfx_ppi_channel_assign(set_reset_start_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL),    
+        nrfx_gpiote_set_task_addr_get(set_reset_pin_a));
 
-
-    // 通过set_reset_end_ppi，把set脚的输出低电平，绑定到timer0的cc3通道 
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(set_reset_end_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL),    //CC3 --> set_reset_end_ppi  --> SET结束
+    //分配和建立ppi：timer0 cc3（6 点） --  set_reset_end_ppi  (闹铃)   --   SET结束
+    APP_ERROR_CHECK(nrfx_ppi_channel_assign(set_reset_end_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL),    
         nrfx_gpiote_clr_task_addr_get(set_reset_pin_a)));
 
 
-    // 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输）
-    // ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_ready_spi_read_ppi,
-        nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), ((spim_basic*)comm_device_ptr)->get_start_task()));  // DRDY --> adc_ready_spi_read_ppi --> get_start_task
 
 
-    // 通过adc_start_ppi，把start脚(P0.01)的输出，绑定到timer0的cc1通道 （CC1触发时，自动把start脚输出高电平）
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_start_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),       //CC1 --> adc_start_ppi --> start置高电平，开启adc数据转换
-        nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN)));
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI 自动发读数据指令）
+   // ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
+   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), ((spim_basic*)comm_device_ptr)->get_start_task());  
 
-    // 通过adc_start_ppi，把NRF_SAADC_TASK_SAMPLE，也绑定到timer0的cc1通道 
-    nrf_ppi_fork_endpoint_setup(adc_start_ppi, nrf_saadc_task_address_get(NRF_SAADC_TASK_SAMPLE));   //NRF_SAADC_TASK_SAMPLE似乎是单片机本机上的adc
+
+     //分配和建立ppi： timer0 cc1（6 点） --> adc_start_ppi (闹铃) --> start脚(P0.01)置高电平，开启adc数据转换
+    nrfx_ppi_channel_assign(adc_start_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),      
+        nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN));
+
+    //分配和建立ppi：  adc_start_ppi (闹铃) --> NRF_SAADC_TASK_SAMPLE （似乎是单片机本机上的adc）
+    nrf_ppi_fork_endpoint_setup(adc_start_ppi, nrf_saadc_task_address_get(NRF_SAADC_TASK_SAMPLE));   //NRF_SAADC_TASK_SAMPLE似乎是单片机本机上的adc的寄存器直接操作
     
 
 
-    APP_ERROR_CHECK(nrfx_ppi_group_alloc(&adc_sampling_ppi_group));
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(adc_start_ppi, adc_sampling_ppi_group));
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(adc_ready_spi_read_ppi, adc_sampling_ppi_group));
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(mux_select_ppi, adc_sampling_ppi_group));
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(channel_bridge_select_ppi, adc_sampling_ppi_group));
+    nrfx_ppi_group_alloc(&adc_sampling_ppi_group);
+    nrfx_ppi_channel_include_in_group(adc_start_ppi, adc_sampling_ppi_group);
+    nrfx_ppi_channel_include_in_group(adc_ready_spi_read_ppi, adc_sampling_ppi_group);
+    nrfx_ppi_channel_include_in_group(mux_select_ppi, adc_sampling_ppi_group));
+    nrfx_ppi_channel_include_in_group(channel_bridge_select_ppi, adc_sampling_ppi_group);
 
 
 ---
 
 __STATIC_INLINE void nrf_saadc_task_trigger(nrf_saadc_task_t task)
-{
-    *((volatile uint32_t *)((uint8_t *)NRF_SAADC + (uint32_t)task)) = 0x1UL;
-}
+
+    *( ( NRF_SAADC +  task)) = 0x1UL;
+
 
 
 
 ----------------------
 
 
-void sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
+sampling_timer_event_handler( event_type,  p_context)
 
             case ADC_SAMPLING_STATE_X_CHANNEL_PENDING:
 
                 // Set new sample time (Y channel)  //设置下一次的比较时间
+
                 nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(1)), false);
                 nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(1)), true);
 
-                // Configure MUX select 0b00 (0b01 -> 0b00) for Y channel  //把闹铃PPI连上事件切换引脚电平 
-                nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
+                
+                //分配和建立ppi：  mux_select_ppi (闹铃) --> nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN)
+                                           mux_select_ppi (闹铃) --> nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN)
+
+                nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));     //  MUX select 0b00 (0b01 -> 0b00) for Y channel     
                 nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+
+
+
+
+
+
+
 
 
 
