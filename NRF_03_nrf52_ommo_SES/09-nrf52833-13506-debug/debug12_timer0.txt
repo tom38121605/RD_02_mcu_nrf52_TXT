@@ -30,7 +30,9 @@ TIMER0 计数到 CC2 → 触发中断 → 超时处理
 答：   从“上一个包结束”到“下一个时间戳包开始”，中间要经过：数据包延迟（300us）+ 数据包传输时间（323字节，3.23ms）+ 安全余量（235us）
 
 
-
+疑问2：comms_1wire_timer 和 comms_1wire_timer_timer_id  区别
+     comms_1wire_timer   --   us级别 发送/接收/超时 
+     comms_1wire_timer_timer_id     --100ms 看门狗 
 
 
 
@@ -119,7 +121,7 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 =======================================timer0 中断响应（只响应 cc2超时中断）====================================================
 
 cc0  -- 拍照用，没开中断
-cc1  -- rxend和ppi触发，没看中断
+cc1  -- rxend和ppi触发，没开中断
 cc2  -- 开了中断
 cc3  -- 未使用
 cc4  -- 未使用
