@@ -44,7 +44,7 @@ main
 
 
 
-void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
 
 
     。。。。。。
