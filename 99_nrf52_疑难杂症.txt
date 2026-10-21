@@ -101,7 +101,26 @@
           是否需要临界区      需要                                                                                  不需要
 
 
-9.  OMMO_APP_ERROR_CHECK讲解:
+9.  问题： 在“examples\ommo\ommo_sensor_sampler\11663B-1p_microsd_2v8-standard-3p0mm”中， 下面的语句编译时出现错误提示
+
+       语句：
+       flag_idx     = __builtin_clzg(limit_flags, 31);
+
+       错误提示:
+       implicit declaration of function '__builtin_clzg'; did you mean '__builtin_clog'? [-Werror=implicit-function-declaration]
+
+
+解决： 暂时用下面的语句代替  （有待进一步验证）
+    flag_idx     = __CLZ(limit_flags); //Modified to please gcc analyzer, 0 arg already checked
+
+
+
+
+
+
+
+
+99.  OMMO_APP_ERROR_CHECK讲解:
 
  
       NRF_SUCCESS          -- 0
