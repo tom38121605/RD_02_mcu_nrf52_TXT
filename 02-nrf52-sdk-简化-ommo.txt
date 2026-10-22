@@ -273,6 +273,14 @@
    Output
 
 
+15.  D:\workspace-work\ommo_nrf-gauge\stm32_common
+
+      //删除下面文件和目录     //150M   
+      .git
+      toolchain
+      examples
+      sdk
+
 
 简化后只剩29.9M  （简化前大约990M）
 
