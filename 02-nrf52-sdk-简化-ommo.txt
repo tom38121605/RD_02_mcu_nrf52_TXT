@@ -4,7 +4,10 @@
 1. D:\workspace-work\ommo_nrf-gauge
 
    //删除下面文件和目录    //300M + 10M             
-   .git   （只保留 git\objects\pack 当中的一个）                         //1.25G   
+   .git\objects\   （只保留 git\objects\pack 当中的一个）                         //1.25G   
+     删除 .git\modules目录   2M
+     删除 .git\index文件        7M
+
 
    //key_vault       //以后这里不用删除
 
