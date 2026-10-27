@@ -121,7 +121,6 @@
 
 
 99.  OMMO_APP_ERROR_CHECK讲解:
-
  
       NRF_SUCCESS          -- 0
       NRF_ERROR_INTERNAL   -- 3
@@ -132,17 +131,14 @@
 
       OMMO_APP_ERROR_CHECK(in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS, STRING("unexpected synchronous"), 0);
 
-
       拆解如下：
 
-      AAA = in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS;
-      BBB = STRING("unexpected synchronous")
+       // 如果标志为 true，说明发生了意外的同步调用
+       //OMMO_APP_ERROR_CHECK( AAA,  BBB, 0);
+          AAA = in_comms_transport_rx ? NRF_ERROR_INTERNAL : NRF_SUCCESS;
+          BBB = STRING("unexpected synchronous")
 
-
-      if (AAA)  //NRF_ERROR_INTERNAL
-       
-          // 如果标志为 true，说明发生了意外的同步调用
-          OMMO_APP_ERROR_CHECK( AAA,  BBB, 0);
+          if (AAA)  //NRF_ERROR_INTERNAL
               ommo_app_error_fault_handler(..., BBB, ...); 
 
 
