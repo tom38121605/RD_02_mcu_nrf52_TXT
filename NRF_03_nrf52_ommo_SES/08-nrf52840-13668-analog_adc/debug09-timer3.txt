@@ -26,6 +26,117 @@ TIMER0 是执行器，每轮被 TIMER3 打一拍跑一次，跑完自己停。
 TIMER0 停的时候，TIMER3 照常计数、照常产生 sample event。
 
 
+
+
+=======================================
+
+
+一、 初始化链路图（谁调用了谁）
+展示了从 main() 开始，TIMER3 如何一步步建立 PPI 连接、分配 CC 通道，并挂载回调。
+
+
+main() [main.cpp]
+  │
+  ├─► timestamp_init_with_internal_sample_event(3) [timestamp_timer.cpp]
+  │     ├─► nrfx_timer_init()           // 初始化 TIMER3 硬件
+  │     ├─► nrfx_timer_enable()         // 启动 TIMER3 计时
+  │     ├─► timestamp_get_capture_compare_channel() // 分配采样 CC 通道
+  │     ├─► timestamp_get_capture_compare_channel() // 分配同步 CC 通道
+  │     └─► nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture)
+  │
+  ├─► timestamp_set_synch_lost_found_callback(timestamp_synch_lost_found)
+  │     └─► rtc_timer_get_timeout_channel() // 绑定丢失超时监控
+  │
+  ├─► adc_sensors_init() [ADS127L11_mux_sampler.cpp]
+  │     └─► timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(TIMER0, START))
+  │           └─► nrfx_ppi_channel_assign() // [PPI 连线] TIMER3 采样事件 ──► TIMER0 启动任务
+  │
+  └─► comms_uarte_init(OMMO_COMMS_UARTE_SYNCH_PIN) [comms_uarte.cpp]
+        └─► timestamp_add_capture_event_with_disable() // [PPI 连线] UARTE 接收事件 ──► TIMER3 捕获任务
+
+
+------
+
+二、 运行与中断链路图（硬件与软件的交汇）
+展示了 TIMER3 运行起来后，硬件 PPI 如何自动触发外设（零 CPU 消耗），以及中断触发后软件如何响应。
+
+
+
+              ┌────────────────────────-─┐
+              │                     TIMER3 (自由运行)             │
+              │                  OMMO_TIMESTAMP_TIMER             │
+              └───────────────-──────────┘
+                                          │
+                                   每 15984 ticks 产生 EVENTS_COMPARE
+                                          │
+       ┌───────────────-─┴────-───────┐
+       │                                                          │
+       ▼ [纯硬件 PPI 联动]                                        ▼ [中断处理]
+                                                                               
+触发 TIMER0 TASKS_START                                     触发 TIMER3_IRQHandler
+(启动一次 X/Y/Z 三通道采样)                                        │
+                                                                   ▼
+触发 UARTE TASKS_STARTTX                                  timestamp_timer_event_handler()
+(发送本地同步时间戳包)                                              │
+                                                                    ├─► 推进 sample_event_trigger_value
+                                                                    │
+                                                                    ├─► nrfx_timer_compare() // 设置下一次采样阈值
+                                                                    │
+                                                                    ├─► [若遇到 Synch 周期点]
+                                                                    │     ├─► timestamp_on_synch_event()
+                                                                    │     ├─► nrfx_timer_compare() // 设置下一次同步阈值
+                                                                    │     └─► 执行 timestamp_synch_execute_functions[] 回调
+                                                                    │           (如触发 UARTE 发送 Synch 包)
+                                                                    │
+                                                                    └─► 执行 sample_event_callbacks[] 回调
+                                                                           (如 sample_timer_event_handler)
+
+
+
+-------
+
+三、 外部干预：时间同步与捕获链路
+当基站发来同步脉冲时，流程会打断/修正 TIMER3 的轨迹。
+
+
+[基站发送同步脉冲]
+       │
+       ▼
+UARTE 接收到数据 (硬件)
+       │
+       ▼ [PPI 连线] (timestamp_add_capture_event_with_disable)
+TIMER3 硬件自动捕获当前计数器值 (TASKS_CAPTURE)
+       │
+       ▼
+UARTE_IRQHandler 触发 (软件)
+       │
+       ▼
+comms_uarte 解析数据
+       │
+       ▼
+timestamp_synch_recieved(basestation_ts, local_event_ts, source) [timestamp_timer.cpp]
+       │
+       ├─► 计算 timestamp_synch_offset = 基站时间 - 本地时间
+       ├─► 修正 sample_event_trigger_value
+       ├─► nrfx_timer_compare() // 强制把下一次采样时间对齐到基站时间轴
+       └─► timestamp_reset_synch_lost_timer() // 重置监控，防止报“同步丢失”
+
+
+------
+
+
+四、 总结视图（一句话串联）
+
+初始化阶段：main() 调起 timestamp_init_...() 启动 TIMER3，再通过 timestamp_add_task_on_sample_event() 把 TIMER3 的 Event 连到 TIMER0 的 Task。
+
+运行阶段：TIMER3 硬件每 1ms 直接通过 PPI 踹醒 TIMER0；一旦产生中断，进入 timestamp_timer_event_handler() 设置下一次阈值。
+
+同步阶段：UARTE 收到信号后，硬件 PPI 让 TIMER3 抓取瞬间值，软件通过 timestamp_synch_recieved() 计算偏移，校准 TIMER3 的未来轨迹。
+
+
+
+
+
 =========================================================
 
 
@@ -40,9 +151,12 @@ timestamp_init_with_external_sample_event
 main  
 
     timestamp_init_with_internal_sample_event(3)
-     adc_sensors_init(&sample_set_ready);
+
+    adc_sensors_init(&sample_set_ready);
 
 
+
+------
 
 adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
 
@@ -83,11 +197,11 @@ adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_functi
 ---
 
 timestamp_init_with_internal_sample_event(  isr_priority)
-{
+
     //Init timer
     nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
     timer_cfg.interrupt_priority = isr_priority;
-    APP_ERROR_CHECK(nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler));   // HERE
+    nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler);   // HERE
     nrfx_timer_enable(&timer_timestamp);
 
     //Setup sample event
@@ -108,19 +222,20 @@ timestamp_init_with_internal_sample_event(  isr_priority)
     nrf_timer_event_clear(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]);
 
     //Allocate group for capture disables
-    APP_ERROR_CHECK(nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture));
-    APP_ERROR_CHECK(nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture));
+    nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);
+    nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture);
 
     //Setup PPI for disabling timestamp capture on sample timer evt
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture));
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(), nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)));
-    APP_ERROR_CHECK(nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture));
+    nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);
+    nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, timestamp_get_sample_event_address(), nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture));
+    nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture);
 
     //Init timestamp debugging options
     timestamp_debug_init(isr_priority);
 
     initialized = true;
-}
+
+
 
 ----------------------
 
