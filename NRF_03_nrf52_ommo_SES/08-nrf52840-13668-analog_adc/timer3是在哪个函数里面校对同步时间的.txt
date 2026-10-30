@@ -1,0 +1,73 @@
+﻿ 
+
+TIMER3 的时间校准（校对同步）核心发生在 timestamp_synch_recieved() 这个函数里（位于 timestamp_timer.cpp）。
+
+但这个过程不是单纯由这一个函数完成的，而是硬件抓取 + 软件计算重设的组合拳。下面是完整的调用和校准流程：
+
+
+
+第一步：硬件抓取本地时间（PPI）
+当基站发来同步脉冲时，UARTE 接收完成，触发 PPI。PPI 直接让 TIMER3 把当前的计数器值锁存下来。
+(这步没函数，纯硬件)
+
+
+
+
+第二步：软件计算偏差并重设 TIMER3
+UARTE 接收中断触发后，底层会调用 timestamp_synch_recieved(basestation_ts, local_event_ts, source)。
+
+在这个函数里，完成了真正的“校对”动作：
+
+
+void timestamp_synch_recieved(uint32_t basestation_ts, uint32_t local_event_ts, timestamp_source_t source)
+{
+    // 1. 算出差值（也就是本地时钟跑快了还是跑慢了）
+    // timestamp_synch_offset = 基站时间 - (本地捕获时间 + 传输延迟)
+    timestamp_synch_offset = (basestation_ts + tx_delay) - local_event_ts;
+
+    // 2. 强行修改 TIMER3 的下一次“采样节拍”触发时间 (CC阈值)
+    sample_event_trigger_value = basestation_ts + OMMO_TIMESTAMP_SAMPLE_PERIOD - timestamp_synch_offset;
+    nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
+
+    // 3. 强行修改 TIMER3 的下一次“同步节拍”触发时间 (CC阈值)
+    synch_event_trigger_value = basestation_ts + OMMO_TIMESTAMP_SYNCH_PERIOD - timestamp_synch_offset;
+    nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
+    
+    // 4. 重置“同步丢失”的看门狗定时器
+    timestamp_reset_synch_lost_timer();
+}
+
+
+
+第三步：中断里的周期性“打卡”
+TIMER3 自己的中断函数 timestamp_timer_event_handler() 也会配合校对。
+如果发现当前时刻正好也是“同步周期”的节点（每 4 次采样一次），它会在中断里执行注册的回调函数：
+
+
+// 在 timestamp_timer_event_handler 中
+if (nrf_timer_event_check(...)) {
+    timestamp_on_synch_event(); // 统计错过次数
+    ...
+    for(uint8_t i = 0; i < timestamp_synch_execute_functions_num; i++)
+        timestamp_synch_execute_functions[i](synch_event_trigger_value); 
+        // 这个回调里面会调用 UARTE 的发送函数，把本地的时间戳发给基站。
+}
+
+
+总结
+抓时间：靠 PPI 硬件瞬间抓取。
+
+算偏差：在 timestamp_synch_recieved() 里算。
+
+改时间：也是 timestamp_synch_recieved() 里通过 nrfx_timer_compare() 强行拨动 TIMER3 的指针。
+
+保底处理：timestamp_timer_event_handler() 处理节拍和发送
+
+
+
+
+
+
+
+
+
