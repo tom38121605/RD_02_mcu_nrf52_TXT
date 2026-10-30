@@ -75,63 +75,53 @@ main() [main.cpp]
 展示 TIMER0 被触发启动后，硬件 PPI 如何自动执行动作（零 CPU 消耗），以及中断触发后软件状态机如何推进。
 
 
-              ┌──────────────────────────────────────────────────────────┐
-              │               TIMER0 (被 TIMER3 触发启动)                │
-              │               OMMO_ADC_SAMPLING_TIMER                    │
-              └────────────────────────────┬─────────────────────────────┘
-                                           │
-                                           ▼ 计数器开始从 0 递增
-       ┌───────────────────────────────────┴───────────────────────────────────┐
-       │                                                                       │
-       ▼ [硬件 PPI 联动]                                                      ▼ [硬件 PPI 联动]
-                                                                               
-CC0 时间到:                                                                CC1 时间到:
-触发 mux_select_ppi & channel_bridge_select_ppi                           触发 adc_start_ppi
-├─► 切换 MUX 引脚 (X/Y/Z)                                                   ├─► 翻转 OMMO_ADC_START_PIN 
-└─► 切换 桥接使能 引脚 (开新通道, 关旧通道)                                       │  (给外部 ADC 发转换脉冲)
-                                                                           └─► 触发 SAADC TASKS_SAMPLE
-                                                                                   (内部 ADC 采样)
-                                                                                   │
-                                                                                   ▼ [中断处理]
-                                                                              触发 TIMER0_IRQHandler
-                                                                                   │
-                                                                                   ▼
-                                                                          sampling_timer_event_handler()
-                                                                                   │
-                                                                                   ├─► 推进 adc_sampling_state 状态机
-                                                                                   │   (如从 PENDING 变为 COMPLETE)
-                                                                                   │
-                                                                                   ├─► nrfx_timer_compare() 
-                                                                                   │   (重写 CC0/CC1 阈值，为下一通道做准备)
-                                                                                   │
-                                                                                   └─► nrf_ppi_task_endpoint_setup()
-                                                                                       (重配 PPI，准备下一通道的 MUX 与桥接)
+时间轴 ──────────────────────────────►
 
-       ▼ [继续计数，等待外部 ADC 转换完成]                                     
-                                                                               
-外部 ADC 转换完毕，拉低 DRDY 引脚                                         
-触发 adc_ready_spi_read_ppi ──► SPIM START (读取数据)                     
-       │                                                                       
-       ▼                                                                       
-SPI END 中断 ──► comm_device_event_handler() [软件]                          
-       │                                                                       
-       └─► (完成 X 通道) 推进状态机 ──► (等待 Y 通道 CC1)                      
-                                                                               
-       ... (Y 通道重复上述 CC0/CC1 流程) ...                                   
-                                                                               
-       ▼ [Z 通道采样完毕]                                                      
-                                                                               
-CC2 时间到:                                                                CC3 时间到:
-触发 set_reset_start_ppi                                                  触发 set_reset_end_ppi
-└─► 拉高 Set/Reset 引脚                                                     ├─► 拉低 Set/Reset 引脚
-                                                                           ├─► [SHORT STOP]  停止 TIMER0
-                                                                           └─► [SHORT CLEAR] 计数器清零
-                                                                               
-                                                                               (等待下一次 TIMER3 触发重启)
+[TIMER3 触发] 
+    │
+    ▼
+TIMER0 TASKS_START (计数器从 0 开始跑)
+    │
+    │
+    ├─► [CC0 触发]  (ADC_MUX_SWITCH_TIME_US)
+    │     ├─ (PPI 硬件) 切换 MUX 到 X 通道
+    │     └─ (PPI 硬件) 开启 X 桥接，关闭上一通道桥接
+    │
+    │
+    ├─► [CC1 触发]  (ADC_START_SAMPLE_TIME_US)
+    │     ├─ (PPI 硬件) 翻转 OMMO_ADC_START_PIN，给外部 ADC 发转换脉冲
+    │     ├─ (PPI 硬件) 触发内部 SAADC 采样
+    │     └─ (中断软件) 进入 sampling_timer_event_handler()
+    │           └─ 推进状态机 (PENDING -> COMPLETE)，配置下一次 CC0/CC1 和 PPI
+    │
+    │
+    │    (外部 ADC 吭哧吭哧转换中... 转换完成拉低 DRDY)
+    │     ├─ (PPI 硬件) DRDY 触发 SPIM START，读回 24-bit 数据
+    │     └─ (中断软件) SPI END 触发 comm_device_event_handler()
+    │           └─ 保存 X 通道数据，原子操作推进状态机，预装下一次 SPI
+    │
+    │    (TIMER0 继续计数，等待 Y 通道和 Z 通道的重复流程...)
+    │    (Y 通道: CC0' -> CC1' -> SPI读)
+    │    (Z 通道: CC0'' -> CC1'' -> SPI读)
+    │
+    │
+    ├─► [CC2 触发]  (ADC_SET_RESET_START_TIME_US)
+    │     └─ (PPI 硬件) 拉高 Set/Reset 引脚
+    │
+    │
+    └─► [CC3 触发]  (ADC_SET_RESET_START_TIME_US + 1us)
+          ├─ (PPI 硬件) 拉低 Set/Reset 引脚
+          ├─ (SHORT 硬件) COMPARE3_STOP  ──► 停 TIMER0
+          └─ (SHORT 硬件) COMPARE3_CLEAR ──► 清 TIMER0 计数器
+    │
+    ▼
+(本轮结束，等待下一次 TIMER3 触发)
+
 
 ------
 
 三、 总结
+
 从上面的图可以清晰看出 TIMER0 的设计哲学：
 
 初始化阶段：不配中断（除了 CC1），拼命配 PPI 和 SHORTS。把所有“准点该干活”的琐事全交给了硬件。
