@@ -40,7 +40,7 @@ main() [main.cpp]
   │
   └─► adc_sensors_init() [ADS127L11_mux_sampler.cpp]
         │
-        ├─► adc_ppi_init()  // [PPI 硬件连线核心]
+        ├─► adc_ppi_init()  // [PPI 硬件连线核心]                                                                  //timer0 初始化前的准备
         │     ├─► nrfx_ppi_channel_assign(adc_start_ppi) 
         │     │     // CC1 比较事件 ──► OMMO_ADC_START_PIN (GPIOTE SET) 产生 ADC 启动脉冲
         │     │     // 同时 fork 至 NRF_SAADC_TASK_SAMPLE 触发内部 SAADC
@@ -55,7 +55,7 @@ main() [main.cpp]
         │     └─► nrfx_ppi_channel_assign(set_reset_end_ppi)
         │           // CC3 比较事件 ──► Set/Reset 引脚拉低
         │
-        ├─► nrfx_timer_init(&adc_sampling_timer, ..., sampling_timer_event_handler)
+        ├─► nrfx_timer_init(&adc_sampling_timer, ..., sampling_timer_event_handler)              //timer0 初始化
         │     // 初始化 TIMER0 硬件，绑定 CC1 中断处理函数，优先级 0
         │
         ├─► nrfx_timer_compare(CC2, START_TIME, false)
@@ -97,7 +97,7 @@ TIMER0 TASKS_START (计数器从 0 开始跑)
     │
     │    (外部 ADC 吭哧吭哧转换中... 转换完成拉低 DRDY)
     │     ├─ (PPI 硬件) DRDY 触发 SPIM START，读回 24-bit 数据
-    │     └─ (中断软件) SPI END 触发 comm_device_event_handler()
+    │     └─ (中断软件) SPI END 触发 comm_device_event_handler()   -->  sample_set_ready 
     │           └─ 保存 X 通道数据，原子操作推进状态机，预装下一次 SPI
     │
     │    (TIMER0 继续计数，等待 Y 通道和 Z 通道的重复流程...)
@@ -146,27 +146,26 @@ int main(void)
 ---------------------------------------
 
 
-adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
+参数: sample_set_ready
+adc_sensors_init(  sample_set_ready_callback_function  )
 
     。。。。。。
 
     //adc_ppi_init()
 
-       // Init sampling timer and propagate START task.
-       nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
-       timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+    //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
+    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
 
-
-      nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler);   // 回调函数 sampling_timer_event_handler
-
-
-       //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
-       nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
-
-       //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
-       nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
+    //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
+    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
                                 US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
 
+
+    // Init sampling timer and propagate START task.
+    nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+    timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+
+    nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler);   // 回调函数 sampling_timer_event_handler
 
 
     //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
@@ -177,9 +176,8 @@ adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_functi
         // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
         nrfx_ppi_channel_assign(sample_trigger_ppi, timestamp_get_sample_event_address(), nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
 
-     
 
-    APP_ERROR_CHECK(nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group));
+    nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group);
 
 
     //TIMER3的函数设置
@@ -278,28 +276,6 @@ __STATIC_INLINE void nrf_timer_frequency_set(NRF_TIMER_Type * p_reg,
 }
 
 
-
---------------------------------
-
-#define ADC_SET_RESET_START_CC_CHANNEL NRF_TIMER_CC_CHANNEL2   
-#define ADC_SET_RESET_END_CC_CHANNEL   NRF_TIMER_CC_CHANNEL3
-#define ADC_SET_RESET_END_CC_SHORT_MASK (nrf_timer_short_mask_t)(NRF_TIMER_SHORT_COMPARE3_STOP_MASK | NRF_TIMER_SHORT_COMPARE3_CLEAR_MASK)
-
-
-static void adc_ppi_init()
-
-
-    // Set PPI for external ADC sample/conversion start.        //timer0 
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_start_ppi,
-        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),
-        nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN)));
-
-
-    // Configure CC for set/reset.
-    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);   // 3*240
-
-    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), // 3*240 + 1
-                                  ADC_SET_RESET_END_CC_SHORT_MASK, false);
 
 
 ------------------------

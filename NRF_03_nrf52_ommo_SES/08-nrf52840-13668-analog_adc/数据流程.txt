@@ -1,40 +1,58 @@
 ﻿
-usb_serial_packet_receive
-   ↓
 
-adc_sensors_enable
-   ↓
+[TIMER3] (1ms 触发)
+    │
+    ▼ (PPI)
 
-adc_sensors_start_state_machine
-   ↓
+[TIMER0 START]
+    │
+    ├─ CC0 (PPI) ──► MUX 切换引脚
+    │
+    ├─ CC1 触发 (同一个硬件事件，兵分两路) ──────────┐
+    │                                                                           │
+    │ 1. 触发外部 ADC 启动 (通过 adc_start_ppi)               │ 2. 触发内部 SAADC (通过 PPI fork)
+    │    └─► 翻转 OMMO_ADC_START_PIN 引脚                   └─► 触发 NRF_SAADC_TASK_SAMPLE
+    │        (外部 ADS127L11 开始转换)                          (内部 SAADC 开始采电压/电流)
+    │
+    │
+   ├─ [外部 ADC 转换完成]
+    │   └─ DRDY (PPI) ──► SPIM 开始读取
+    │       └─ SPI END 中断 ──► comm_device_event_handler() (存数据，推状态)    -->  sample_set_ready 
+    │           └─ (重复三次：X→Y→Z)
+    │           └─► 当 Z 通道完成时：立刻调用 sample_set_ready() ──► USB/无线发送
+    │
+    ├─ CC2 (PPI) ──► Set/Reset 脉冲开始 (通常在 Z 通道采样结束后)
+    ├─ CC3 (PPI) ──► Set/Reset 脉冲结束 + (SHORT) 停表/清零
+    │
+    ▼
+(本轮彻底结束，等待下一个 TIMER3 节拍)
 
-写入timer0 CC0的阈值 240 * 0 + 1us，不使能timer0 CC0中断，开启timer0， 用于切换到x通道
-    nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(0)) + 1, false);    //+1  us
-   ↓
 
-写入timer0 CC1的阈值 60+240 * 0us，使能timer0 CC1中断，开启timer0， 用于开启x通道的adc转换
-    nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(0)), true);      //60us
-   ↓
 
-写入timer0 CC0的阈值 240 * 1us，不使能timer0 CC0中断，开启timer0， 用于切换到y通道
-   ↓
+------
 
-写入timer0 CC1的阈值 60+240 * 1us，使能timer0 CC1中断，开启timer0， 用于开启y通道的adc转换
-   ↓
+sample_set_ready 是由 comm_device_event_handler() （SPI 读取完成的中断回调）触发的。
 
-写入timer0 CC0的阈值 240 * 2us，不使能timer0 CC0中断，开启timer0， 用于切换到z通道
-   ↓
+准确地说，是在一整轮采样（X、Y、Z 三个通道）的最后一个通道（Z 通道）的数据读取完成后，通过函数指针回调触发的。
 
-写入timer0 CC1的阈值 60+240 * 2us，使能timer0 CC1中断，开启timer0， 用于开启z通道的adc转换
-   ↓
+具体的调用链路如下：
+1. 硬件层：Z 通道的外部 ADC 转换完毕，拉低 DRDY 引脚，PPI 触发 SPI 硬件读取 24-bit 数据。
 
-通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输读取数据）
-   ↓
+2. 驱动层：SPI 读取完毕，触发 SPI 中断，进入 spim_basic::spim_handler()。
 
-写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
-    ↓
+3. 回调层：spim_handler 调用用户注册的回调函数 comm_device_event_handler()。
 
-写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
+4. 状态机层：在 comm_device_event_handler() 的 switch(adc_sampling_state) 中，命中了 ADC_SAMPLING_STATE_Z_CHANNEL 分支。
+
+5. 触发点：在 Z 通道分支的最后，代码调用了：
+
+    (*adc_sample_set_ready_callback)((uint8_t *)adc_data_buffer, adc_sample_data_size, curent_sample_timestamp, current_sample_timestamp_offest);
+
+
+
+
+
+
 
 
 

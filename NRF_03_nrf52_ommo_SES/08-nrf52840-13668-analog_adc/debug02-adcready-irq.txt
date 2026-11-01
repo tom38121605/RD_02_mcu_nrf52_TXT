@@ -54,16 +54,66 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
 
 static void adc_ppi_init()
 
+
+//-------------gpio 相关-----------------------------
+
+    // Init GPIOTE.
+    if (!nrfx_gpiote_is_init())
+    {
+        APP_ERROR_CHECK(nrfx_gpiote_init());
+    }
+
+    nrfx_gpiote_in_config_t input_config = NRFX_GPIOTE_CONFIG_IN_SENSE_HITOLO(true);
+
+    APP_ERROR_CHECK(nrfx_gpiote_in_init_errata155(OMMO_ADC_DATA_READY_PIN, &input_config, NULL, NULL, false));  //NOTE If OMMO_DEBUG_ABSOLUTE_ALIGN_TEST the errata fix causes this pin not to work
+    // APP_ERROR_CHECK(nrfx_gpiote_in_init(OMMO_ADC_DATA_READY_PIN, &input_config, NULL));
+    nrfx_gpiote_in_event_enable(OMMO_ADC_DATA_READY_PIN, false);
+
+    // GPIOTE output pin config.
+    nrfx_gpiote_out_config_t output_config = NRFX_GPIOTE_CONFIG_OUT_TASK_TOGGLE(true);
+
+#ifndef OMMO_ADC_IOXYZ_MUX_CTRL
+    // Configure MUX pins.
+    APP_ERROR_CHECK(nrfx_gpiote_out_init(OMMO_ADC_MUX_A0_PIN, &output_config));
+    APP_ERROR_CHECK(nrfx_gpiote_out_init(OMMO_ADC_MUX_A1_PIN, &output_config));
+    nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A0_PIN);
+    nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A1_PIN);
+#endif
+
+    output_config.init_state = NRF_GPIOTE_INITIAL_VALUE_LOW;
+    APP_ERROR_CHECK(nrfx_gpiote_out_init(OMMO_ADC_START_PIN, &output_config));
+    nrfx_gpiote_out_task_enable(OMMO_ADC_START_PIN);
+
+    //Set bridge pin
+    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Y_EN);
+    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Z_EN);
+
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_start_ppi));
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi));
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&mux_select_ppi));
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&channel_bridge_select_ppi));
+#ifndef OMMO_MAG_IDLE_BRIDGE_ON
+    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&channel_bridge_off_ppi));
+#endif
+
+    // Setup select event for the MUX and channel bridge.
+    nrf_ppi_event_endpoint_setup(mux_select_ppi,
+        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
+    nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,
+        nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
+
+
+
+//-------------gpio 相关-----end------------------------
+
+
  
     APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi));
 
 
-    // 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输）
-    //Once the ADC data is ready, start the SPI transfer.
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_ready_spi_read_ppi,
-        nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN),
-        ((spim_basic*)comm_device_ptr)->get_start_task()));
-
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
+   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
 
 
 

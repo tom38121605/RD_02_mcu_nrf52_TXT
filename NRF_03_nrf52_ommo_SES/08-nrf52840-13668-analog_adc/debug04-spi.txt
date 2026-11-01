@@ -32,15 +32,13 @@ void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_f
 
 ---------------------------
 
-static void adc_ppi_init()
+adc_ppi_init()
 
 
     。。。。。。
 
-    // 通过adc_ready_spi_read_ppi，把开启spi传输的函数，绑定到DRDY引脚的输入中断事件 （一有中断，就开启spi传输）
-    // ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
-    APP_ERROR_CHECK(nrfx_ppi_channel_assign(adc_ready_spi_read_ppi,
-        nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), ((spim_basic*)comm_device_ptr)->get_start_task()));  // DRDY --> adc_ready_spi_read_ppi --> get_start_task
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
+   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
 
 
 
