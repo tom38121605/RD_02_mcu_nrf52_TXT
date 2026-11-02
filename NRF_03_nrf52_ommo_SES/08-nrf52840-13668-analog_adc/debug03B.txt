@@ -1,4 +1,4 @@
-
+﻿
 
 --------------------------------
 
@@ -173,15 +173,15 @@ nrfx_timer_t adc_sampling_timer = OMMO_ADC_SAMPLING_TIMER;
 #define NRFX_TIMER_DEFAULT_CONFIG_MODE 0
 
 
+
 #define NRFX_TIMER_DEFAULT_CONFIG                                                    \
 {                                                                                    \
-    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\     // 0
-    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,          \     // 0
-    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,\
-    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                    \
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\     //0 , 16MHz
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,          \     //0 , Timer mode
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,\     //3 , 32 bit
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                    \     //6
     .p_context          = NULL                                                       \
 }
-
 
 ----
 
