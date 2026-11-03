@@ -29,8 +29,8 @@ TIMER0 停的时候，TIMER3 照常计数、照常产生 sample event。
 
 
 
-
 ====================
+
 
 一、 初始化链路图（谁调用了谁）
 展示了从 main() 开始，TIMER0 是如何被初始化的，以及它与各个外设、PPI 之间是如何建立连线的
@@ -186,6 +186,59 @@ adc_sensors_init(  sample_set_ready_callback_function  )
         sample_event_callbacks[1] = sample_timer_event_handler
         sample_event_callbacks[2] = sample_timer_event_handler
         sample_event_callbacks[3] = sample_timer_event_handler
+
+
+
+--------
+
+
+
+//使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
+
+nrfx_gpiote_init( )
+
+    if (m_cb.state != NRFX_DRV_STATE_UNINITIALIZED)  //m_cb是GPIOE的结构体
+        return err_code;
+
+
+    //把所有存在的 GPIO 引脚都标记为‘空闲可用  （只是防止gpio的外部中断自己重复，固即使p0.7已配置了为RXD引脚也没关系）  //相当于班主任的献血登记表里的空闲，跟学生短跑跳高无关
+    for (i = 0; i < MAX_PIN_NUMBER; i++)   //42    
+
+        if (nrf_gpio_pin_present_check(i))  // 检查引脚是否存在      
+  
+           //pin_in_use_clear(i);
+             m_cb.pin_assignments[pin] = PIN_NOT_USED;
+
+
+    // 清空回调函数，清空上下文
+    for (i = 0; i < (GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS); i++)   // 8 + 1    
+
+        //channel_free(i);
+            m_cb.handlers[i]                =  FORBIDDEN_HANDLER_ADDRESS;   // 清空回调函数
+            m_cb.handlers_context[i]        =  NULL;                        // 清空上下文
+
+            if (8)
+               m_cb.port_handlers_pins[8 - 8]  =  PIN_NOT_USED;     // 如果是低功耗通道，清空引脚号
+
+
+    //把 GPIOTE 驱动中所有已配置引脚的记录全部清零
+    memset(m_cb.configured_pins, 0, sizeof(m_cb.configured_pins));
+    m_cb.event_channels = 0;
+
+    //设置 GPIOTE 外设的中断优先级为6
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_GPIOTE), NRFX_GPIOTE_CONFIG_IRQ_PRIORITY);
+
+    //使能 GPIOTE 外设的中断 （房间总开关）
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_GPIOTE)); 
+
+    //清除 GPIOTE PORT 引脚变化外部中断事件标志位
+    nrf_gpiote_event_clear(NRF_GPIOTE_EVENTS_PORT);
+
+    //使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+    nrf_gpiote_int_enable(GPIOTE_INTENSET_PORT_Msk);
+
+
+    m_cb.state = NRFX_DRV_STATE_INITIALIZED;
 
 
 
