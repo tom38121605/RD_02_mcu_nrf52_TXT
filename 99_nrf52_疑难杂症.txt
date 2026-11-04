@@ -219,6 +219,48 @@
 
 
 
+11.    nRF52 芯片有一个硬件缺陷（Errata 155）：当 GPIOTE 配置为高精度输入时，可能会漏掉非常窄的信号脉冲。
+
+         Nordic 官方提供了这个带修复补丁的函数， 带有 errata155 后缀的初始化函数，确保 DRDY 信号绝对不会被漏掉。
+         APP_ERROR_CHECK(nrfx_gpiote_in_init_errata155(OMMO_ADC_DATA_READY_PIN, &input_config, NULL, NULL, false));
+
+         //设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
+         参数： pin,   p_config,   imu_irq_pin_handler,   NULL,   true
+         nrfx_gpiote_in_init_errata155(   pin,   *p_config,   evt_handler,   context,   apply_fix_for_fast_signal_transitions  )
+
+                 if (p_config->hi_accuracy)  //yes
+                     channel = channel_port_alloc_event(pin, evt_handler, context);
+                 else
+                     channel = channel_port_alloc_low_power(pin, evt_handler, context);
+
+                 if (channel != NO_CHANNELS)      //0xffffffff
+                 
+                     if (!p_config->skip_gpio_setup)
+                     {
+                         if (p_config->is_watcher)                         
+                             nrf_gpio_cfg_watcher(pin);                         
+                         else                         
+                             nrf_gpio_cfg_input(pin, p_config->pull);
+                         
+                         pin_configured_set(pin);
+                     }
+
+                     if (p_config->hi_accuracy)                     
+                         nrf_gpiote_event_configure((uint32_t)channel, pin, p_config->sense);                     
+                     else
+                         m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<   POLARITY_FIELD_POS;
+                                                  
+                     //Fix for 52840 Errata 155: increases current consumption
+                     //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
+                     if (apply_fix_for_fast_signal_transitions)
+                     {
+                         *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;
+                     }
+                 
+                 else
+                     err_code = NRFX_ERROR_NO_MEM;
+
+
 
 
 
