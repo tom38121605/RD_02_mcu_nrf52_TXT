@@ -3,60 +3,6 @@
 
 
 
-//设置P0.12引脚配置为输入，上升沿触发 GPIOTE 中，中断触发就执行 imu_irq_pin_handler   //先忽略，跳过
-
-参数： pin,   p_config,   imu_irq_pin_handler,   NULL,   true
-
-nrfx_gpiote_in_init_errata155(   pin,   *p_config,   evt_handler,   context,   apply_fix_for_fast_signal_transitions  )
-
-
-        if (p_config->hi_accuracy)  //yes
-            channel = channel_port_alloc_event(pin, evt_handler, context);
-        else
-            channel = channel_port_alloc_low_power(pin, evt_handler, context);
-
-
-        if (channel != NO_CHANNELS)      //0xffffffff
-        {
-            if (!p_config->skip_gpio_setup)
-            {
-                if (p_config->is_watcher)
-                {
-                    nrf_gpio_cfg_watcher(pin);
-                }
-                else
-                {
-                    nrf_gpio_cfg_input(pin, p_config->pull);
-                }
-                pin_configured_set(pin);
-            }
-
-            if (p_config->hi_accuracy)
-            {
-                nrf_gpiote_event_configure((uint32_t)channel, pin, p_config->sense);
-            }
-            else
-            {
-                m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<
-                                                                    POLARITY_FIELD_POS;
-            }
-                    
-            //Fix for 52840 Errata 155: increases current consumption
-            //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
-            if (apply_fix_for_fast_signal_transitions)
-            {
-                *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;
-            }
-        }
-        else
-        {
-            err_code = NRFX_ERROR_NO_MEM;
-        }
-
-
-
-
-
 --------------------------------
 
 
@@ -68,37 +14,47 @@ nrfx_gpiote_in_init_errata155(   pin,   *p_config,   evt_handler,   context,   a
 adc_ppi_init()
 
 
-----------------------待整理-----------------------------------
+----------------------已整理-----------------------------------
+
 
     //使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
     nrfx_gpiote_init();
 
-
-    nrfx_gpiote_in_config_t    input_config = NRFX_GPIOTE_CONFIG_IN_SENSE_HITOLO(true);   //falling
-
+    //设置P1.15引脚配置为输入，无上拉，下降沿触发，无中断函数 （这里其实设置的时任务）   
+    nrfx_gpiote_in_config_t    input_config = NRFX_GPIOTE_CONFIG_IN_SENSE_HITOLO(true);          //falling
     nrfx_gpiote_in_init_errata155(OMMO_ADC_DATA_READY_PIN, &input_config, NULL, NULL, false);    //NOTE If OMMO_DEBUG_ABSOLUTE_ALIGN_TEST the errata fix causes this pin not to work
 
+    //不使能端口中断
     nrfx_gpiote_in_event_enable(OMMO_ADC_DATA_READY_PIN, false);
 
 
-
-    // GPIOTE output pin config.
+    // 配置特性：toggle，初始高电平
     nrfx_gpiote_out_config_t    output_config = NRFX_GPIOTE_CONFIG_OUT_TASK_TOGGLE(true);
 
-
-    // Configure MUX pins.
+    // 设置mux0,mux1 为 toggle，初始高电平
     nrfx_gpiote_out_init(OMMO_ADC_MUX_A0_PIN, &output_config);
     nrfx_gpiote_out_init(OMMO_ADC_MUX_A1_PIN, &output_config);
-    nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A0_PIN);
+
+    //设置mux0,mux1引脚为task模式
+    //nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A0_PIN);
+    //  nrf_gpiote_task_enable( m_cb.pin_assignments[mux0] );
+        NRF_GPIOTE->CONFIG[idx] |= GPIOTE_CONFIG_MODE_Task;    //3<<0 , 设置引脚为task模式
     nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A1_PIN);
 
-
     output_config.init_state = NRF_GPIOTE_INITIAL_VALUE_LOW;
+
+    // 设置adc start引脚 为 toggle，初始低电平
     nrfx_gpiote_out_init(OMMO_ADC_START_PIN, &output_config);
+
+
+    // 设置adc start引脚为task模式
     nrfx_gpiote_out_task_enable(OMMO_ADC_START_PIN);
 
-    //Set bridge pin
-    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_X_EN);
+
+    //配置en xyz为输出，连接输入，无上拉，s0s1标准驱动，关闭边沿检测
+    //adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_X_EN);
+          nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
+
     adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Y_EN);
     adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Z_EN);
 
@@ -107,37 +63,40 @@ adc_ppi_init()
 ----------------------已整理-----------------------------------
 
 
-
+    //分配下面的4个ppi
     nrfx_ppi_channel_alloc(&adc_start_ppi);
     nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi);
     nrfx_ppi_channel_alloc(&mux_select_ppi);
     nrfx_ppi_channel_alloc(&channel_bridge_select_ppi);
 
 
-    //分配和建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
-                             timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
-
+    //建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
+               timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
     nrf_ppi_event_endpoint_setup(mux_select_ppi,   nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
     nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
 
 
-    /* ATTENTION !!! SET/RESET pin configuration, modify carefully, it may damage the IC !!! */
+    //分配下面的2个ppi
     nrfx_ppi_channel_alloc(&set_reset_start_ppi);
     nrfx_ppi_channel_alloc(&set_reset_end_ppi);
+
 
     const uint32_t    set_reset_pin_a = OMMO_ADC_SET_RESET_INA_PIN;
     const uint32_t    set_reset_pin_b = OMMO_ADC_SET_RESET_INB_PIN;
 
-    // Low active output pins.
+    // 设置下面2个引脚为输出，初始低电平
     nrf_gpio_pin_clear(set_reset_pin_a);
     nrf_gpio_pin_clear(set_reset_pin_b);
     nrf_gpio_cfg_output(set_reset_pin_a);
     nrf_gpio_cfg_output(set_reset_pin_b);
 
 
-    // Configure set/reset PPI (Initial value is high).
+    // 设置set_reset_pin_a引脚 为 toggle，初始高电平
     nrfx_gpiote_out_init(set_reset_pin_a, &output_config);
+
+    // 设置set_reset_pin_a引脚为task模式
     nrfx_gpiote_out_task_enable(set_reset_pin_a);
+
 
     //分配和建立ppi：timer0 cc2（6 点） --  set_reset_start_ppi  (闹铃)   --  SET开始
     nrfx_ppi_channel_assign(set_reset_start_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL),    
@@ -215,10 +174,17 @@ adc_ppi_init()
 
 
 
-
-
-
 =====================================================================
+
+
+#define NRFX_GPIOTE_CONFIG_OUT_TASK_TOGGLE(init_high)                                           \
+    {                                                                                           \
+        .action     = NRF_GPIOTE_POLARITY_TOGGLE,                                               \
+        .init_state = init_high ? NRF_GPIOTE_INITIAL_VALUE_HIGH : NRF_GPIOTE_INITIAL_VALUE_LOW, \
+        .task_pin   = true,                                                                     \
+        .skip_gpio_setup = false,                                                               \
+    }
+
 
 
 #define NRFX_GPIOTE_CONFIG_IN_SENSE_HITOLO(hi_accu) \

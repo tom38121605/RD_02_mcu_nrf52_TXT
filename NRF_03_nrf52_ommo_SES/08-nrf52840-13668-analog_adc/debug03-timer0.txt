@@ -192,6 +192,105 @@ adc_sensors_init(  sample_set_ready_callback_function  )
 --------
 
 
+//设置P1.15引脚配置为输入，无上拉，下降沿触发，无中断函数 （这里其实设置的时任务）   
+
+参数： P1.15(以下简称15),   input_config,   NULL(无中断),   NULL(无上下文),   false
+
+nrfx_gpiote_in_init_errata155(   pin,  *p_config,   evt_handler,  context,  apply_fix_for_fast_signal_transitions  )
+
+        int8_t channel;
+
+        if (p_config->hi_accuracy)  //yes
+ 
+            //寻找空的座位，如有空的座位则标记为本引脚的事件中断函数（如没有中断函数应为task），如果坐满了则退出
+            channel = channel_port_alloc_event(pin, evt_handler, context);
+
+        else
+            //类似，上面是在0-7号找空座位，这里是从第8个座位开始找起
+            channel = channel_port_alloc_low_power(pin, evt_handler, context);
+
+
+        //引脚输入配置和标记
+        if (channel != NO_CHANNELS)      //0xffffffff    //yes
+        
+            //设置引脚为输入，无上拉，s0s1, nosense
+            //标记引脚已被使用
+            if (!p_config->skip_gpio_setup)    //yes
+            
+                if (p_config->is_watcher)      //no          
+                    //nrf_gpio_cfg_watcher(pin);                                                 // 引脚输出时装个“内窥镜”，能在代码里 nrf_gpio_pin_read看清它到底拉高
+                    reg->PIN_CNF[15] $=  GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos;   // 0<<1 , connect input buffer
+               
+                else            //yes    
+                    //设置引脚为输入，无上拉，s0s1, nosense
+                    nrf_gpio_cfg_input(pin, p_config->pull);
+                
+
+                //标记引脚已被使用
+                //pin_configured_set(pin);
+                  nrf_bitmask_bit_set(pin, m_cb.configured_pins);   //m_cb.configured_pins | 1<<pin   
+            
+
+            if (p_config->hi_accuracy)    //yes 
+       
+                //高精度时，直接用引脚触发falling中断
+                nrf_gpiote_event_configure( channel, pin, p_config->sense );     
+                  NRF_GPIOTE->CONFIG[idx] |= pin << GPIOTE_CONFIG_PSEL_Pos | p_config->sense << GPIOTE_CONFIG_POLARITY_Pos;   //  15<<8 | 2<<16 ,  pin, falling
+       
+            else      
+                //低精度时，应是端口触发中断 （先忽略跳过）      
+                m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<  POLARITY_FIELD_POS;
+            
+                    
+            //增加电流解决52840 Errata 155的问题
+            //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
+            if (apply_fix_for_fast_signal_transitions)            
+                *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;            
+        
+        else        
+            err_code = NRFX_ERROR_NO_MEM;
+        
+     
+------
+
+
+//寻找空的座位，如有空的座位则标记为本引脚的事件，如果坐满了则退出
+
+//可以这样理解FORBIDDEN，校长走进食堂，看到桌子上写着“禁止入坐(学生)”，然后校长喜上眉梢。。。
+
+参数：P1.15， evt_handler(null)，  null
+channel_port_alloc_event(  pin,  handler,   context)
+ 
+    int8_t   channel_id = NO_CHANNELS;   //-1  //ff
+
+    for (i = 0; i < GPIOTE_CH_NUM; i++)
+     
+        if (m_cb.handlers[i] == FORBIDDEN_HANDLER_ADDRESS)   // FFFF FFFF  //假如i=6
+         
+            //pin_in_use_by_te_set(pin, i, handler, context, true);
+                m_cb.pin_assignments[15] = channel_id;
+                m_cb.handlers[6] = handler;
+                m_cb.handlers_context[channel_id] = context;
+
+            channel_id = i;   //6
+
+
+            //SET_BIT(m_cb.event_channels, i);
+              m_cb.event_channels |= i<<1;
+
+            break;
+
+
+        else if (!IS_SET(m_cb.event_channels, i))  //如果最小的可用通道关联的是task（不是event），则退出  （因为task是从上往下遍历的，说明上面的座位都被task占满了）
+         
+            break;
+
+    return channel_id;  //6
+ 
+
+-----------
+
+
 
 //使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
 
