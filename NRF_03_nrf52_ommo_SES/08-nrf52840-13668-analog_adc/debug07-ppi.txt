@@ -56,34 +56,119 @@
 
 ------------------------------------------------
 
-
+ 
+ 
+//设置个引脚的ppi联接
+//设置timer cc0的ppi联接
+//设置comp过压保护
 adc_ppi_init()
 
+    //使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
+    nrfx_gpiote_init();
 
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_start_ppi));
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi));
+//----------------------DRDY P1.15 引脚设置-----------------------------------
 
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&mux_select_ppi));              // mux切换
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&channel_bridge_select_ppi));   // xyz电源切换
+    //设置P1.15引脚配置为输入，无上拉，下降沿触发，无中断函数 （或纯输入事件）   
+    nrfx_gpiote_in_config_t    input_config = NRFX_GPIOTE_CONFIG_IN_SENSE_HITOLO(true);        //falling
+    nrfx_gpiote_in_init_errata155(OMMO_ADC_DATA_READY_PIN, &input_config, NULL, NULL, false);  //如开启 OMMO_DEBUG_ABSOLUTE_ALIGN_TEST调试模式， 这里的err155修复将不能工作 (忽略跳过)
 
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&set_reset_start_ppi));
-    APP_ERROR_CHECK(nrfx_ppi_channel_alloc(&set_reset_end_ppi));
+    //不使能的P1.15端口中断
+    nrfx_gpiote_in_event_enable(OMMO_ADC_DATA_READY_PIN, false);
 
+//----------------------DRDY P1.15 引脚设置----end-------------------------------
+
+
+
+//----------------------MUX0,1 引脚设置-----------------------------------
+
+
+    // 配置特性：toggle，初始高电平
+    nrfx_gpiote_out_config_t    output_config = NRFX_GPIOTE_CONFIG_OUT_TASK_TOGGLE(true);
+
+    // 设置mux0,mux1 为 toggle，初始高电平
+    nrfx_gpiote_out_init(OMMO_ADC_MUX_A0_PIN, &output_config);
+    nrfx_gpiote_out_init(OMMO_ADC_MUX_A1_PIN, &output_config);
+
+    //设置mux0,mux1引脚为task模式
+    //nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A0_PIN);
+    //  nrf_gpiote_task_enable( m_cb.pin_assignments[mux0] );
+        NRF_GPIOTE->CONFIG[idx] |= GPIOTE_CONFIG_MODE_Task;    //3<<0 , 设置引脚为task模式
+    nrfx_gpiote_out_task_enable(OMMO_ADC_MUX_A1_PIN);
+
+//----------------------MUX0,1 引脚设置-----end------------------------------
+
+
+
+//----------------------ADC START 引脚设置-----------------------------------
+
+    output_config.init_state = NRF_GPIOTE_INITIAL_VALUE_LOW;
+
+    // 设置adc start引脚 为 toggle，初始低电平
+    nrfx_gpiote_out_init(OMMO_ADC_START_PIN, &output_config);
+
+
+    // 设置adc start引脚为task模式
+    nrfx_gpiote_out_task_enable(OMMO_ADC_START_PIN);
+
+//----------------------ADC START 引脚设置-----end------------------------------
+
+
+
+//----------------------EN IO XYZ 引脚设置-----------------------------------
+
+
+    //配置en io xyz为输出，连接输入，无上拉，s0s1标准驱动，关闭边沿检测
+    //adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_X_EN);
+          nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
+
+    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Y_EN);
+    adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Z_EN);
+
+
+
+//----------------------EN IO XYZ 引脚设置-----end------------------------------
+
+    //分配下面的4个ppi
     nrfx_ppi_channel_alloc(&adc_start_ppi);
     nrfx_ppi_channel_alloc(&adc_ready_spi_read_ppi);
     nrfx_ppi_channel_alloc(&mux_select_ppi);
     nrfx_ppi_channel_alloc(&channel_bridge_select_ppi);
 
 
-    //分配和建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
-                             timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
+//---------------------timer0 cc0的两个ppi建立之一  ---------------------------------------------
+   ( 之二所在： sampling_timer_event_handler )
 
+    //建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
+               timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
     nrf_ppi_event_endpoint_setup(mux_select_ppi,   nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
     nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
 
+//---------------------timer0 cc0的两个ppi建立之一  ------end---------------------------------------
 
+
+
+//---------------------set reset 引脚设置，ppi分配和建立---------------------------------------------
+
+    //分配下面的2个ppi
     nrfx_ppi_channel_alloc(&set_reset_start_ppi);
     nrfx_ppi_channel_alloc(&set_reset_end_ppi);
+
+
+    const uint32_t    set_reset_pin_a = OMMO_ADC_SET_RESET_INA_PIN;
+    const uint32_t    set_reset_pin_b = OMMO_ADC_SET_RESET_INB_PIN;
+
+    // 设置下面2个引脚为输出，初始低电平
+    nrf_gpio_pin_clear(set_reset_pin_a);
+    nrf_gpio_pin_clear(set_reset_pin_b);
+    nrf_gpio_cfg_output(set_reset_pin_a);
+    nrf_gpio_cfg_output(set_reset_pin_b);
+
+
+    // 设置set_reset_pin_a引脚 为 toggle，初始高电平
+    nrfx_gpiote_out_init(set_reset_pin_a, &output_config);
+
+    // 设置set_reset_pin_a引脚为task模式
+    nrfx_gpiote_out_task_enable(set_reset_pin_a);
 
 
     //分配和建立ppi：timer0 cc2（6 点） --  set_reset_start_ppi  (闹铃)   --  SET开始
@@ -94,33 +179,367 @@ adc_ppi_init()
     nrfx_ppi_channel_assign(set_reset_end_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL),    
         nrfx_gpiote_clr_task_addr_get(set_reset_pin_a));
 
+    // 使能下面两个ppi，注意顺序不能搞反
+    nrfx_ppi_channel_enable(set_reset_end_ppi);      //先开刹车
+    nrfx_ppi_channel_enable(set_reset_start_ppi);    //再开启动
+
+//---------------------set reset 引脚初始化，ppi分配和建立--------end-------------------------------------
 
 
-    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
-   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
+//----------------------DRDY 的ppi的分配和建立 -----------------------------------
 
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）  //已分配 07 04 02
+    nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
 
     //分配和建立ppi：  adc_ready_spi_read_ppi  (闹铃)   --    --> start脚(P0.01)置低电平(翻转后变低)
     nrfx_ppi_channel_fork_assign(adc_ready_spi_read_ppi,   nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN));
 
+//----------------------DRDY 的ppi的分配和建立 ---end--------------------------------
+
+
+//----------------------ADC START 的ppi的分配和建立 -----------------------------------
+
 
     //分配和建立ppi： timer0 cc1（6 点） --> adc_start_ppi (闹铃) --> start脚(P0.01)置高电平(翻转后变高)，开启adc数据转换
-    nrfx_ppi_channel_assign( adc_start_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),      
-                                          nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN));
+    nrfx_ppi_channel_assign( adc_start_ppi, nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL),  nrfx_gpiote_out_task_addr_get(OMMO_ADC_START_PIN));
 
-    //分配和建立ppi：  adc_start_ppi (闹铃) --> NRF_SAADC_TASK_SAMPLE （似乎是单片机本机上的adc）
-    nrf_ppi_fork_endpoint_setup(adc_start_ppi, nrf_saadc_task_address_get(NRF_SAADC_TASK_SAMPLE));   //NRF_SAADC_TASK_SAMPLE似乎是单片机本机上的adc的寄存器直接操作
+    //分配和建立ppi：  adc_start_ppi (闹铃) --> NRF_SAADC_TASK_SAMPLE （似乎是单片机本机上的adc寄存器直接操作）
+    nrf_ppi_fork_endpoint_setup(adc_start_ppi, nrf_saadc_task_address_get(NRF_SAADC_TASK_SAMPLE));      
+
+//----------------------ADC START 的ppi的分配和建立 ----end-------------------------------
+
     
-
-
+    // 分配ppi group，把下面的ppi包含到 adc_sampling_ppi_group 
     nrfx_ppi_group_alloc(&adc_sampling_ppi_group);
     nrfx_ppi_channel_include_in_group(adc_start_ppi, adc_sampling_ppi_group);
     nrfx_ppi_channel_include_in_group(adc_ready_spi_read_ppi, adc_sampling_ppi_group);
-    nrfx_ppi_channel_include_in_group(mux_select_ppi, adc_sampling_ppi_group));
+    nrfx_ppi_channel_include_in_group(mux_select_ppi, adc_sampling_ppi_group);
     nrfx_ppi_channel_include_in_group(channel_bridge_select_ppi, adc_sampling_ppi_group);
 
 
----
+
+
+//---------------------- VBRIDGE_EN 引脚设置-----------------------------------
+
+    // 设置VBRIDGE_EN引脚 为 toggle，初始低电平
+    output_config.init_state = NRF_GPIOTE_INITIAL_VALUE_LOW;
+    nrfx_gpiote_out_init(OMMO_VBRIDGE_EN, &output_config);
+
+    // 设置VBRIDGE_EN引脚为task模式
+    nrfx_gpiote_out_task_enable(OMMO_VBRIDGE_EN);
+
+
+//---------------------- VBRIDGE_EN 引脚设置----end-------------------------------
+
+ 
+
+//---------------------- 用comp设置过压保护-----------------------------------
+
+
+    //配置比较器（设定报警阈值2.7v）
+    nrfx_comp_config_t comp_config = NRFX_COMP_DEFAULT_CONFIG(OMMO_VBRIDGE_ANALOG);
+    comp_config.reference = NRF_COMP_REF_VDD;
+    comp_config.threshold.th_up = NRFX_VOLTAGE_THRESHOLD_TO_INT(OMMO_ADC_OVERVOLTAGE_TRIGGER_POINT, 3.3);
+    comp_config.threshold.th_down = 0;   
+    comp_config.hyst = NRF_COMP_HYST_NoHyst;
+    comp_config.speed_mode = NRF_COMP_SP_MODE_High;
+    nrfx_comp_init(&comp_config, overvoltage_event_handler);
+
+
+    //分配和建立ppi： COMP_EVENT_UP（6 点） --> overvoltage_ppi (闹铃) --> VBRIDGE_EN脚置低电平
+    nrf_ppi_channel_t overvoltage_ppi;
+    nrfx_ppi_channel_alloc(&overvoltage_ppi);
+    nrfx_ppi_channel_assign( overvoltage_ppi, nrfx_comp_event_address_get(NRF_COMP_EVENT_UP),  nrfx_gpiote_clr_task_addr_get(OMMO_VBRIDGE_EN)));
+    nrfx_ppi_channel_enable(overvoltage_ppi);
+
+
+    //使能比较器
+    nrfx_comp_start(NRFX_COMP_EVT_EN_UP_MASK, 0x00);
+
+//---------------------- 用comp设置过压保护----end-------------------------------
+
+
+    //把采样ppi的相关设置恢复到初始值
+    restore_default_sampling_ppi_config();
+
+
+
+------------
+
+//把采样ppi的相关设置恢复到初始值
+restore_default_sampling_ppi_config()
+
+    //拉低ADC_START引脚
+    //nrfx_gpiote_clr_task_trigger(OMMO_ADC_START_PIN);
+       nrf_gpiote_tasks_t task = TE_CLR_IDX_TO_TASK_ADDR( channel_port_get(pin));
+
+       //nrf_gpiote_task_set(task);
+         NRF_GPIOTE + task = 1;
+
+
+    // 把task设置的读缓冲里面高电平/低电平，备份到普通gpio的写缓冲里面去；从gpiote里收回到普通gpio 
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Y_EN);
+    adc_sensors_intermittent_gpiote_pin_disable_gpiote(OMMO_IO_Z_EN);
+
+    // 把task设置的读缓冲里面高电平/低电平，备份到普通gpio的写缓冲里面去；从普通 GPIO 交接给 GPIOTE 硬件控制
+    adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_enable_gpiote(OMMO_IO_Z_EN);
+
+    //通过触发task拉高引脚电平，通过普通gpio拉高引脚电平(both)
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Z_EN);
+
+    //建立ppi：channel_bridge_select_ppi  (闹铃)   --  拉低IO_Z_EN     
+    nrf_ppi_fork_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_IO_Z_EN));
+
+    //通过触发task拉低引脚电平，通过普通gpio拉低引脚电平(both)
+    adc_sensors_intermittent_gpiote_pin_clear(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_clear(OMMO_IO_Y_EN);
+
+    //建立ppi：channel_bridge_select_ppi  (闹铃)   --  拉高IO_X_EN     
+    nrf_ppi_task_endpoint_setup(channel_bridge_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_IO_X_EN));
+
+
+//---------------------timer0 cc0的两个ppi建立之二  ---------------------------------------------
+
+     //建立ppi：mux_select_ppi  (闹铃)   --  拉低MUX1    //b10(z) -> b01(y)
+                                         --  拉高MUX0 
+
+    nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
+    nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+
+//---------------------timer0 cc0的两个ppi建立之二  ------end---------------------------------------
+
+
+
+------
+
+//通过触发task拉高引脚电平，通过普通gpio拉高引脚电平(both)
+adc_sensors_intermittent_gpiote_pin_set(  pin)
+ 
+    uint64_t pin_mask = (1<<pin);
+
+    //通过触发task拉高引脚电平
+    if(pin_mask & adc_sensors_intermittent_pin_gpiote) 
+        nrfx_gpiote_set_task_trigger(pin);
+    
+    //通过普通gpio拉高引脚电平
+    nrf_gpio_pin_set(pin);
+ 
+
+-------
+
+//通过触发task拉低引脚电平，通过普通gpio拉低引脚电平(both)
+ adc_sensors_intermittent_gpiote_pin_clear(  pin)
+ 
+    uint64_t pin_mask = (1<<pin);
+
+    //通过触发task拉低引脚电平
+    if(pin_mask & adc_sensors_intermittent_pin_gpiote) 
+        nrfx_gpiote_clr_task_trigger(pin);
+    
+    //通过普通gpio拉低引脚电平
+    nrf_gpio_pin_clear(pin);
+ 
+
+
+------
+
+//把task设置的读缓冲里面高电平/低电平，备份到普通gpio的写缓冲里面去；从gpiote里收回到普通gpio 
+adc_sensors_intermittent_gpiote_pin_disable_gpiote(  pin)
+
+    uint64_t pin_mask = (1ul<<pin);
+
+
+    //把task设置的读缓冲里面高电平/低电平，备份到普通gpio的写缓冲里面去
+    nrf_gpio_pin_write(pin, nrf_gpio_pin_read(pin));
+
+    //从gpiote里收回到普通gpio （先忽略跳过）
+    if(pin_mask & adc_sensors_intermittent_pin_gpiote) 
+       nrfx_gpiote_out_uninit(pin);
+
+    //清除gpiote里该引脚的标志
+    adc_sensors_intermittent_pin_gpiote &= ~(1<<pin);
+
+
+
+------
+
+// 把task设置的读缓冲里面高电平/低电平，备份到普通gpio的写缓冲里面去；从普通 GPIO 交接给 GPIOTE 硬件控制
+
+adc_sensors_intermittent_gpiote_pin_enable_gpiote( pin )
+ 
+
+    //读出刚才的电平
+    bool pin_value = nrf_gpio_pin_read(pin);
+
+    // 设置mux0,mux1 为 toggle，初始为刚才读出的电平
+    adc_sensors_intermittent_pin_gpiote_config.init_state = (pin_value ? NRF_GPIOTE_INITIAL_VALUE_HIGH : NRF_GPIOTE_INITIAL_VALUE_LOW);
+    nrfx_gpiote_out_init(pin, &adc_sensors_intermittent_pin_gpiote_config);
+
+    //把读缓冲里面的高/低电平，备份到普通gpio的写缓冲里面
+    nrf_gpio_pin_write(pin, pin_value);
+
+    //设置引脚为task模式
+    nrfx_gpiote_out_task_enable(pin);
+
+    //置位gpiote里该引脚的标志
+    adc_sensors_intermittent_pin_gpiote |= 1<<pin;
+
+
+
+-----------------
+
+
+//设置P1.15引脚配置为输入，无上拉，下降沿触发，无中断函数 （这里其实设置的时任务）   
+
+参数： P1.15(以下简称15),   input_config,   NULL(无中断),   NULL(无上下文),   false
+
+nrfx_gpiote_in_init_errata155(   pin,  *p_config,   evt_handler,  context,  apply_fix_for_fast_signal_transitions  )
+
+        int8_t channel;
+
+        if (p_config->hi_accuracy)  //yes
+ 
+            //寻找空的座位，如有空的座位则标记为本引脚的事件中断函数（如没有中断函数应为task），如果坐满了则退出
+            channel = channel_port_alloc_event(pin, evt_handler, context);
+
+        else
+            //类似，上面是在0-7号找空座位，这里是从第8个座位开始找起
+            channel = channel_port_alloc_low_power(pin, evt_handler, context);
+
+
+        //引脚输入配置和标记
+        if (channel != NO_CHANNELS)      //0xffffffff    //yes
+        
+            //设置引脚为输入，无上拉，s0s1, nosense
+            //标记引脚已被使用
+            if (!p_config->skip_gpio_setup)    //yes
+            
+                if (p_config->is_watcher)      //no          
+                    //nrf_gpio_cfg_watcher(pin);                                                 // 引脚输出时装个“内窥镜”，能在代码里 nrf_gpio_pin_read看清它到底拉高
+                    reg->PIN_CNF[15] $=  GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos;   // 0<<1 , connect input buffer
+               
+                else            //yes    
+                    //设置引脚为输入，无上拉，s0s1, nosense
+                    nrf_gpio_cfg_input(pin, p_config->pull);
+                
+
+                //标记引脚已被使用
+                //pin_configured_set(pin);
+                  nrf_bitmask_bit_set(pin, m_cb.configured_pins);   //m_cb.configured_pins | 1<<pin   
+            
+
+            if (p_config->hi_accuracy)    //yes 
+       
+                //高精度时，直接用引脚触发falling中断
+                nrf_gpiote_event_configure( channel, pin, p_config->sense );     
+                  NRF_GPIOTE->CONFIG[idx] |= pin << GPIOTE_CONFIG_PSEL_Pos | p_config->sense << GPIOTE_CONFIG_POLARITY_Pos;   //  15<<8 | 2<<16 ,  pin, falling
+       
+            else      
+                //低精度时，应是端口触发中断 （先忽略跳过）      
+                m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<  POLARITY_FIELD_POS;
+            
+                    
+            //增加电流解决52840 Errata 155的问题
+            //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
+            if (apply_fix_for_fast_signal_transitions)            
+                *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;            
+        
+        else        
+            err_code = NRFX_ERROR_NO_MEM;
+        
+     
+------
+
+
+//寻找空的gpioe的事件座位，如有空的座位则标记为本引脚的事件，如果坐满了则退出
+
+//可以这样理解FORBIDDEN，校长走进食堂，看到桌子上写着“禁止入坐(学生)”，然后校长高兴。。。
+
+参数：P1.15， evt_handler(null)，  null
+channel_port_alloc_event(  pin,  handler,   context)
+ 
+    int8_t   channel_id = NO_CHANNELS;   //-1  //ff
+
+    for (i = 0; i < GPIOTE_CH_NUM; i++)
+     
+        if (m_cb.handlers[i] == FORBIDDEN_HANDLER_ADDRESS)   // FFFF FFFF  //假如i=6
+         
+            //pin_in_use_by_te_set(pin, i, handler, context, true);
+                m_cb.pin_assignments[15] = channel_id;
+                m_cb.handlers[6] = handler;
+                m_cb.handlers_context[channel_id] = context;
+
+            channel_id = i;   //6
+
+
+            //SET_BIT(m_cb.event_channels, i);
+              m_cb.event_channels |= i<<1;
+
+            break;
+
+
+        else if (!IS_SET(m_cb.event_channels, i))  //如果最小的可用通道关联的是task（不是event），则退出  （因为task是从上往下遍历的，说明上面的座位都被task占满了）
+         
+            break;
+
+    return channel_id;  //6
+ 
+
+-----------
+
+
+//使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
+
+nrfx_gpiote_init( )
+
+    if (m_cb.state != NRFX_DRV_STATE_UNINITIALIZED)  //m_cb是GPIOE的结构体
+        return err_code;
+
+
+    //把所有存在的 GPIO 引脚都标记为‘空闲可用  （只是防止gpio的外部中断自己重复，固即使p0.7已配置了为RXD引脚也没关系）  //相当于班主任的献血登记表里的空闲，跟学生短跑跳高无关
+    for (i = 0; i < MAX_PIN_NUMBER; i++)   //42    
+
+        if (nrf_gpio_pin_present_check(i))  // 检查引脚是否存在      
+  
+           //pin_in_use_clear(i);
+             m_cb.pin_assignments[pin] = PIN_NOT_USED;
+
+
+    // 清空回调函数，清空上下文
+    for (i = 0; i < (GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS); i++)   // 8 + 1    
+
+        //channel_free(i);
+            m_cb.handlers[i]                =  FORBIDDEN_HANDLER_ADDRESS;   // 清空回调函数
+            m_cb.handlers_context[i]        =  NULL;                        // 清空上下文
+
+            if (8)
+               m_cb.port_handlers_pins[8 - 8]  =  PIN_NOT_USED;     // 如果是低功耗通道，清空引脚号
+
+
+    //把 GPIOTE 驱动中所有已配置引脚的记录全部清零
+    memset(m_cb.configured_pins, 0, sizeof(m_cb.configured_pins));
+    m_cb.event_channels = 0;
+
+    //设置 GPIOTE 外设的中断优先级为6
+    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_GPIOTE), NRFX_GPIOTE_CONFIG_IRQ_PRIORITY);
+
+    //使能 GPIOTE 外设的中断 （房间总开关）
+    NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_GPIOTE)); 
+
+    //清除 GPIOTE PORT 引脚变化外部中断事件标志位
+    nrf_gpiote_event_clear(NRF_GPIOTE_EVENTS_PORT);
+
+    //使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
+    nrf_gpiote_int_enable(GPIOTE_INTENSET_PORT_Msk);
+
+
+    m_cb.state = NRFX_DRV_STATE_INITIALIZED;
+
+
+-------
+
 
 __STATIC_INLINE void nrf_saadc_task_trigger(nrf_saadc_task_t task)
 

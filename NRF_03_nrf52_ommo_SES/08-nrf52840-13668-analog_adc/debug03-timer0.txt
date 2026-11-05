@@ -134,7 +134,9 @@ TIMER0 TASKS_START (计数器从 0 开始跑)
 
 
 
-======================================================
+
+=============================================================== timer0 初始化 ===========================================================
+
 
 
 
@@ -149,9 +151,16 @@ int main(void)
 参数: sample_set_ready
 adc_sensors_init(  sample_set_ready_callback_function  )
 
+
     。。。。。。
 
-    //adc_ppi_init()
+ 
+    //设置个引脚的ppi联接
+    //设置timer cc0的ppi联接
+    //设置comp过压保护
+    adc_ppi_init()
+
+
 
     //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
     nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
@@ -168,10 +177,10 @@ adc_sensors_init(  sample_set_ready_callback_function  )
     nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler);   // 回调函数 sampling_timer_event_handler
 
 
+
     //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
 
         nrfx_ppi_channel_alloc(&sample_trigger_ppi);
-
 
         // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
         nrfx_ppi_channel_assign(sample_trigger_ppi, timestamp_get_sample_event_address(), nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
@@ -188,156 +197,25 @@ adc_sensors_init(  sample_set_ready_callback_function  )
         sample_event_callbacks[3] = sample_timer_event_handler
 
 
-
---------
-
-
-//设置P1.15引脚配置为输入，无上拉，下降沿触发，无中断函数 （这里其实设置的时任务）   
-
-参数： P1.15(以下简称15),   input_config,   NULL(无中断),   NULL(无上下文),   false
-
-nrfx_gpiote_in_init_errata155(   pin,  *p_config,   evt_handler,  context,  apply_fix_for_fast_signal_transitions  )
-
-        int8_t channel;
-
-        if (p_config->hi_accuracy)  //yes
- 
-            //寻找空的座位，如有空的座位则标记为本引脚的事件中断函数（如没有中断函数应为task），如果坐满了则退出
-            channel = channel_port_alloc_event(pin, evt_handler, context);
-
-        else
-            //类似，上面是在0-7号找空座位，这里是从第8个座位开始找起
-            channel = channel_port_alloc_low_power(pin, evt_handler, context);
+//设置timer cc0的ppi联接
+adc_ppi_init()
 
 
-        //引脚输入配置和标记
-        if (channel != NO_CHANNELS)      //0xffffffff    //yes
-        
-            //设置引脚为输入，无上拉，s0s1, nosense
-            //标记引脚已被使用
-            if (!p_config->skip_gpio_setup)    //yes
-            
-                if (p_config->is_watcher)      //no          
-                    //nrf_gpio_cfg_watcher(pin);                                                 // 引脚输出时装个“内窥镜”，能在代码里 nrf_gpio_pin_read看清它到底拉高
-                    reg->PIN_CNF[15] $=  GPIO_PIN_CNF_INPUT_Connect << GPIO_PIN_CNF_INPUT_Pos;   // 0<<1 , connect input buffer
-               
-                else            //yes    
-                    //设置引脚为输入，无上拉，s0s1, nosense
-                    nrf_gpio_cfg_input(pin, p_config->pull);
-                
-
-                //标记引脚已被使用
-                //pin_configured_set(pin);
-                  nrf_bitmask_bit_set(pin, m_cb.configured_pins);   //m_cb.configured_pins | 1<<pin   
-            
-
-            if (p_config->hi_accuracy)    //yes 
-       
-                //高精度时，直接用引脚触发falling中断
-                nrf_gpiote_event_configure( channel, pin, p_config->sense );     
-                  NRF_GPIOTE->CONFIG[idx] |= pin << GPIOTE_CONFIG_PSEL_Pos | p_config->sense << GPIOTE_CONFIG_POLARITY_Pos;   //  15<<8 | 2<<16 ,  pin, falling
-       
-            else      
-                //低精度时，应是端口触发中断 （先忽略跳过）      
-                m_cb.port_handlers_pins[channel - GPIOTE_CH_NUM] |= (p_config->sense) <<  POLARITY_FIELD_POS;
-            
-                    
-            //增加电流解决52840 Errata 155的问题
-            //https://docs.nordicsemi.com/bundle/errata_nRF52840_EngA/page/ERR/nRF52840/EngineeringA/latest/anomaly_840_155.html
-            if (apply_fix_for_fast_signal_transitions)            
-                *(volatile uint32_t *)(NRF_GPIOTE_BASE + 0x600 + (4 * channel)) = 1;            
-        
-        else        
-            err_code = NRFX_ERROR_NO_MEM;
-        
-     
-------
+    。。。。。。
 
 
-//寻找空的座位，如有空的座位则标记为本引脚的事件，如果坐满了则退出
+//---------------------timer0 cc0的两个ppi建立之一  ---------------------------------------------
+   ( 之二所在： sampling_timer_event_handler )
 
-//可以这样理解FORBIDDEN，校长走进食堂，看到桌子上写着“禁止入坐(学生)”，然后校长喜上眉梢。。。
+    //建立ppi：timer0 cc0（6 点） --  mux_select_ppi  (闹铃)  
+               timer0 cc0（6 点） --  channel_bridge_select_ppi  (闹铃)  
+    nrf_ppi_event_endpoint_setup(mux_select_ppi,   nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
+    nrf_ppi_event_endpoint_setup(channel_bridge_select_ppi,  nrfx_timer_compare_event_address_get(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL));
 
-参数：P1.15， evt_handler(null)，  null
-channel_port_alloc_event(  pin,  handler,   context)
- 
-    int8_t   channel_id = NO_CHANNELS;   //-1  //ff
-
-    for (i = 0; i < GPIOTE_CH_NUM; i++)
-     
-        if (m_cb.handlers[i] == FORBIDDEN_HANDLER_ADDRESS)   // FFFF FFFF  //假如i=6
-         
-            //pin_in_use_by_te_set(pin, i, handler, context, true);
-                m_cb.pin_assignments[15] = channel_id;
-                m_cb.handlers[6] = handler;
-                m_cb.handlers_context[channel_id] = context;
-
-            channel_id = i;   //6
+//---------------------timer0 cc0的两个ppi建立之一  ------end---------------------------------------
 
 
-            //SET_BIT(m_cb.event_channels, i);
-              m_cb.event_channels |= i<<1;
-
-            break;
-
-
-        else if (!IS_SET(m_cb.event_channels, i))  //如果最小的可用通道关联的是task（不是event），则退出  （因为task是从上往下遍历的，说明上面的座位都被task占满了）
-         
-            break;
-
-    return channel_id;  //6
- 
-
------------
-
-
-
-//使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
-
-nrfx_gpiote_init( )
-
-    if (m_cb.state != NRFX_DRV_STATE_UNINITIALIZED)  //m_cb是GPIOE的结构体
-        return err_code;
-
-
-    //把所有存在的 GPIO 引脚都标记为‘空闲可用  （只是防止gpio的外部中断自己重复，固即使p0.7已配置了为RXD引脚也没关系）  //相当于班主任的献血登记表里的空闲，跟学生短跑跳高无关
-    for (i = 0; i < MAX_PIN_NUMBER; i++)   //42    
-
-        if (nrf_gpio_pin_present_check(i))  // 检查引脚是否存在      
-  
-           //pin_in_use_clear(i);
-             m_cb.pin_assignments[pin] = PIN_NOT_USED;
-
-
-    // 清空回调函数，清空上下文
-    for (i = 0; i < (GPIOTE_CH_NUM + NRFX_GPIOTE_CONFIG_NUM_OF_LOW_POWER_EVENTS); i++)   // 8 + 1    
-
-        //channel_free(i);
-            m_cb.handlers[i]                =  FORBIDDEN_HANDLER_ADDRESS;   // 清空回调函数
-            m_cb.handlers_context[i]        =  NULL;                        // 清空上下文
-
-            if (8)
-               m_cb.port_handlers_pins[8 - 8]  =  PIN_NOT_USED;     // 如果是低功耗通道，清空引脚号
-
-
-    //把 GPIOTE 驱动中所有已配置引脚的记录全部清零
-    memset(m_cb.configured_pins, 0, sizeof(m_cb.configured_pins));
-    m_cb.event_channels = 0;
-
-    //设置 GPIOTE 外设的中断优先级为6
-    NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(NRF_GPIOTE), NRFX_GPIOTE_CONFIG_IRQ_PRIORITY);
-
-    //使能 GPIOTE 外设的中断 （房间总开关）
-    NRFX_IRQ_ENABLE(nrfx_get_irq_number(NRF_GPIOTE)); 
-
-    //清除 GPIOTE PORT 引脚变化外部中断事件标志位
-    nrf_gpiote_event_clear(NRF_GPIOTE_EVENTS_PORT);
-
-    //使能 GPIOTE 的 PORT 事件中断 （小灯插排开关）
-    nrf_gpiote_int_enable(GPIOTE_INTENSET_PORT_Msk);
-
-
-    m_cb.state = NRFX_DRV_STATE_INITIALIZED;
+    。。。。。。
 
 
 
@@ -355,7 +233,6 @@ uint32_t timestamp_get_sample_event_address()
 ---------------------------------------------
 
  
-
 
 参数： sampling_timer_event_handler
 
@@ -419,18 +296,14 @@ nrfx_timer_init( p_instance, p_config, timer_event_handler )
 
 ---
 
-__STATIC_INLINE void nrf_timer_frequency_set(NRF_TIMER_Type * p_reg,
-                                             nrf_timer_frequency_t frequency)
-{
-    p_reg->PRESCALER = (p_reg->PRESCALER & ~TIMER_PRESCALER_PRESCALER_Msk) |
-                         ((frequency << TIMER_PRESCALER_PRESCALER_Pos) &
-                              TIMER_PRESCALER_PRESCALER_Msk);
-}
+nrf_timer_frequency_set( p_reg,   requency)
+ 
+    p_reg->PRESCALER = (p_reg->PRESCALER & ~TIMER_PRESCALER_PRESCALER_Msk) |  ((frequency << TIMER_PRESCALER_PRESCALER_Pos) &  TIMER_PRESCALER_PRESCALER_Msk);
+ 
 
 
 
-
-------------------------
+=============================================================== timer0 中断处理 ===========================================================
 
 
 #define ADC_MUX_SWITCH_CC_CHANNEL      NRF_TIMER_CC_CHANNEL0
@@ -443,7 +316,7 @@ __STATIC_INLINE void nrf_timer_frequency_set(NRF_TIMER_Type * p_reg,
 #define ADC_START_SAMPLE_TIME_US(x) (ADS127L11_MUX_SETTLING_TIME_US + ADC_MUX_SWITCH_TIME_US(x))   // 60 + 240 * x
 
 
-
+cc0的中断入口函数
 sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
 {
     UNUSED_PARAMETER(p_context);
@@ -465,10 +338,15 @@ sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
                 //写入timer0 CC1的阈值 60+240 * 1us，使能timer0 CC1中断，开启timer0， 用于开启y通道的adc转换
                 nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(1)), true);   // 60 + 240*1
 
- 
-                // Configure MUX select 0b00 (0b01 -> 0b00) for Y channel  //把闹铃PPI连上事件切换引脚电平 
+
+//---------------------timer0 cc0的两个ppi建立之二  ---------------------------------------------
+
+                //建立ppi：mux_select_ppi  (闹铃)   --  拉低MUX1    //b01(x) -> b00(y)
+                                                    --  拉低MUX0
                 nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
                 nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+
+//---------------------timer0 cc0的两个ppi建立之二  ------end---------------------------------------
  
 
                 // Configure bridge select on for Y channel and bridge select off for X channel
@@ -489,10 +367,15 @@ sampling_timer_event_handler(nrf_timer_event_t event_type, void* p_context)
                 //写入timer0 CC1的阈值 60+240 * 2us，不使能timer0 CC1中断，开启timer0， 用于开启z通道的adc转换
                 nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(2)), false);   // 60 + 240*2
 
- 
-                // Configure MUX select 0b10 (0b00 -> 0b10) for Z channel
+//---------------------timer0 cc0的两个ppi建立之二  ---------------------------------------------
+
+                //建立ppi：mux_select_ppi  (闹铃)   --  拉高MUX1    //b00(y) -> b10(z)
+                                                    --  拉低MUX0 
+
                 nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_set_task_addr_get(OMMO_ADC_MUX_A1_PIN));
                 nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
+
+//---------------------timer0 cc0的两个ppi建立之二  ------end---------------------------------------
  
 
                 // Configure bridge select on for Z channel and bridge select off for Y channel
