@@ -1,16 +1,31 @@
 ﻿
 
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    \
+{                                                                                    \
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,          \
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,\
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                    \
+    .p_context          = NULL                                                       \
+}
+
+nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
+timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
 
 
+---
 
---------------------------------
+#define OMMO_ADC_SAMPLING_TIMER   RFX_TIMER_INSTANCE(0)
+nrfx_timer_t adc_sampling_timer = OMMO_ADC_SAMPLING_TIMER;
 
+#define NRFX_TIMER_INSTANCE(id)                                   \
+{                                                                 \
+    .p_reg            = NRFX_CONCAT_2(NRF_TIMER, id),             \
+    .instance_id      = NRFX_CONCAT_3(NRFX_TIMER, id, _INST_IDX), \
+    .cc_channel_count = NRF_TIMER_CC_CHANNEL_COUNT(id),           \
+}
 
-
-
-=====================================================================
-
-
+------
 
 adc_sensors_intermittent_pin_gpiote    //gpiote里该引脚的标志
 
