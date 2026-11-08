@@ -23,11 +23,48 @@ const spi_bus_t port_master_spi_busses[] = {FOR_EACH(SPI_BUS_DEF, OMMO_PM_SPI_BU
 -------------------------------------------------------------------------------------
 
 
-void adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_function)
-{
+main
+
+    //对所有的spi的cs引脚（P1.12, P0,5），设置为输出，初始为高电平
+    port_master_init();
+
+
+    adc_sensors_init(&sample_set_ready);
+
+
+
+----------
+
+//对所有的spi的cs引脚（P1.12, P0,5），设置为输出，初始为高电平
+
+port_master_init() 
+ 
+    // ommocomm_instances 这个uarte的容器里，挨个拿出，它的类型必须是 ommocomm_uarte，让它们全部执行一遍 init()
+    for (ommocomm_uarte &ommocomm: ommocomm_instances)    
+
+        //ommocomm.init();                //这里只是返回1，走一下形式
+            return NRF_SUCCESS; 
+   
+    //对所有的spi的cs引脚（P1.12, P0,5），设置为输出，初始为高电平
+    for (const uint8_t &pin: port_master_ss_pins)
+        nrf_gpio_pin_set(pin);
+        port_master_configure_high_speed_output(pin);
+
+    port_master_initialized = true;
+
+
+
+-----------
+
+
+
+adc_sensors_init( sample_set_ready_callback_function)
+
 
     //Acquire SPI connection permanently
-    APP_ERROR_CHECK(port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr));   //here
+    port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr);   //here
+
+
 
 
 ---------------------------

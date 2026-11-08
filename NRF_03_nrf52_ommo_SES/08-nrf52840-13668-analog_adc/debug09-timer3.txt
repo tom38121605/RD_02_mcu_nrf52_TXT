@@ -178,10 +178,13 @@ adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_functi
         nrfx_ppi_channel_alloc(&sample_trigger_ppi);
 
 
-        // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
-        nrfx_ppi_channel_assign(sample_trigger_ppi, timestamp_get_sample_event_address(), nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
+        //AAA =  timestamp_get_sample_event_address();
+           AAA = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel]);   //sample_event_compare_channel ?
 
-     
+        // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
+        nrfx_ppi_channel_assign(sample_trigger_ppi,  AAA,  nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
+
+      
 
     nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group);
 
@@ -194,7 +197,7 @@ adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_functi
         sample_event_callbacks[3] = sample_timer_event_handler
 
 
----
+-----
 
 timestamp_init_with_internal_sample_event(  isr_priority)
 

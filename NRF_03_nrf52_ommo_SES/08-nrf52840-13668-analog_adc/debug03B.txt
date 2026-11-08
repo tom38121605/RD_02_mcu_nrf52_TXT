@@ -1,5 +1,10 @@
 ﻿
 
+
+ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location, comm_device ** comm_device_ptr, comm_device_config_t *config = nullptr);
+
+------
+
 #define NRFX_TIMER_DEFAULT_CONFIG                                                    \
 {                                                                                    \
     .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\

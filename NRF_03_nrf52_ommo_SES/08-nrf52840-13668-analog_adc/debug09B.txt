@@ -1,0 +1,12 @@
+﻿
+timer3： timer_timestamp
+
+
+
+
+#define OMMO_TIMESTAMP_TIMER                   NRFX_TIMER_INSTANCE(3) //Timers 3 & 4 have 6 CC registers
+static nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
+
+
+static  nrf_timer_cc_channel_t      sample_event_compare_channel = 0xFF;
+
