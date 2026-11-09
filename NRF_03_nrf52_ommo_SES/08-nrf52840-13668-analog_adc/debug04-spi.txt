@@ -31,9 +31,22 @@ main
     port_master_init();
 
 
+    //判断spi的组号，片选号是否在规定的范围内
+    //取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
+    //spi初始化
+       标记spi引脚已使用
+       spi中断函数设置
+       spi引脚设置
+       设置FREQUENCY, spi的频率为16M
+       设置spi的中断优先级为1，使能spi的irq总中断
+       关闭spi0
+       设置spi的acq为成普通模式   
+
     //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
     adc_sensors_init(&sample_set_ready);
 
+
+    。。。。。。
 
 
 ----------
@@ -62,14 +75,27 @@ port_master_init()
 
 adc_sensors_init( sample_set_ready_callback_function)
 
+    。。。。。。
 
-    //待整理
-    //Acquire SPI connection permanently   
+
+    //判断spi的组号，片选号是否在规定的范围内
+    //取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
+    //spi初始化
+       标记spi引脚已使用
+       spi中断函数设置
+       spi引脚设置
+       设置FREQUENCY, spi的频率为16M
+       设置spi的中断优先级为1，使能spi的irq总中断
+       关闭spi0
+       设置spi的acq为成普通模式    
     port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr);   //here
 
 
     //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
     adc_ppi_init();
+
+
+    。。。。。。
 
 
 
@@ -92,7 +118,14 @@ adc_ppi_init()
 
 //判断spi的组号，片选号是否在规定的范围内
 //取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
-//spi初始化-（待整理）
+//spi初始化
+   标记spi引脚已使用
+   spi中断函数设置
+   spi引脚设置
+   设置FREQUENCY, spi的频率为16M
+   设置spi的中断优先级为1，使能spi的irq总中断
+   关闭spi0
+   设置spi的acq为成普通模式   
 
 全局变量 
 spi_peripheral[0] ：       
@@ -327,7 +360,8 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 
 
     p_cb->handler = handler;       //spim_handler ，spi中断回调函数
-    p_cb->p_context = p_context;
+    p_cb->p_context = p_context;   //this
+
 
     //-----------------spi中断函数设置----end------------
 
@@ -411,11 +445,6 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 
 
 
-------------------
-
-
-
-
 
 
 
@@ -427,48 +456,134 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 
 
 
+main
+
+    
+    //adc_sensors_init(&sample_set_ready);
+    //  port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr);   //here
+    //  spim_instance.acquire(&config);   //初始化spi0
+         reconfigure(p_cfg, false);
 
 
-参数：spim_instance,    spim_cfg,   spim_handler,    this   //spim_instance就是指向 spi_peripheral[0] 的指针  //spim_handler是作为spi的中断callback函数
-nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
+    
 
-    spim_control_block_t * p_cb = &m_cb[0];
-
-    p_spim =  p_instance->p_reg;    //NRF_SPIM0
-
-    irq_handlers[1] = {  nrfx_spim_0_irq_handler,  };
+    。。。。。。
 
 
-    p_cb->handler = handler;
+
+
+
+---------------
+
+参数： config, false
+spim_basic::reconfigure(  * p_cfg, direct)
+
+   。。。。。。
+
+
+    //spi中断函数设置
+    //spi引脚设置
+    //设置FREQUENCY, spi的频率为16M
+    //设置spi的中断优先级为1，使能spi的irq总中断
+    //nrfx_spim_init(spim_instance, spim_cfg, spim_handler, this);
+
+       nrfx_prs_acquire( NRF_SPIM0, nrfx_spim_0_irq_handler );
+
+       p_cb->handler = handler;   //spim_handler    //spim_handler ，spi中断回调函数
+
+
+
+
+------------
+
+//spi中断入口函数
+nrfx_spim_0_irq_handler( )
+
+    irq_handler(NRF_SPIM0, &m_cb[0]);
+
+
+-------
+
+
+参数：NRF_SPIM0, &m_cb[0]
+
+irq_handler(  p_spim,  p_cb)
+
+
+    if (nrf_spim_event_check(p_spim, NRF_SPIM_EVENT_END))   //有传输完成标志
+    
+        nrf_spim_event_clear(p_spim, NRF_SPIM_EVENT_END);
+
+        finish_transfer(p_cb);
+    
+ 
+
+--------------
+
+
+finish_transfer( * p_cb)
+ 
+    // 设置ss为高电平到空闲状态
+    nrf_gpio_pin_set(p_cb->ss_pin);
+       
+    p_cb->transfer_in_progress = false;
+
+
+    p_cb->evt.type = NRFX_SPIM_EVENT_DONE;
+
+
+    //进入中断回调函数
+    //p_cb->handler(&p_cb->evt, p_cb->p_context);
+       spim_basic::spim_handler(&p_cb->evt, this);
+ 
+
+
+
+
+
 
 
 -----------------
 
 
-void spim_basic::spim_handler(const nrfx_spim_evt_t * p_event, void * p_context)
-{
-    UNUSED_PARAMETER(p_event);
-    spim_basic * p_this  = static_cast<spim_basic *>(p_context);
+全局变量
+   p_cb->evt.type = NRFX_SPIM_EVENT_DONE
+
+
+参数：p_cb->evt, this
+
+pim_basic::spim_handler( p_event,  p_context)
+      
+    //spim_basic * p_this  = static_cast<spim_basic *>(p_context);
+      p_this = this;     //this 是指spim_instance，即spim_basic(&spi_peripheral[0])
+
+
     OMMO_TRACE_ISR_ENTER_CALLBACK(TRACE_ISR_SPI_BASIC, p_this->evt_handler);
+
+
     p_this->trx_complete = true;
+
     if (!p_this->is_repeated)
         nrf_spim_disable(p_this->spim_instance->p_reg);
 
+
     // Copy the received data to the provided buffer
     if (p_this->acq == SPIMB_ACQ_NORMAL)
-    {
+    
         // Copy rx data into output buffer (skipping rx during tx)
         memcpy(p_this->evt_rx_buffer, p_this->io_buffer + p_event->xfer_desc.tx_length,
                p_event->xfer_desc.rx_length - p_event->xfer_desc.tx_length);
-    }
+    
+
 
     // Fire event handle if specified
     comm_device_event_handler_t handler = p_this->evt_handler;
+
     if (handler)
         handler(p_this, COMM_DEVICE_TRX_RESULT_SUCCESS, p_this->evt_context);
 
     OMMO_TRACE_ISR_EXIT_CALLBACK(TRACE_ISR_SPI_BASIC, handler);
-}
+ 
 
 
 
