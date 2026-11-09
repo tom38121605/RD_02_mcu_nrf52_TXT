@@ -1,0 +1,39 @@
+﻿
+
+[触发错误] TIMER0 CC1 中断 (sampling_timer_event_handler)
+    │ 发现状态机卡在 COMPLETE，直接置为 ERROR
+    │ 关闭 CC1 中断 (防止反复进中断死循环)
+    ▼
+============================ [等待异步事件] ============================
+    │
+    │ 此时，外部 ADC 的 SPI 数据终于读完了
+    ▼
+[SPI 中断] comm_device_event_handler()
+    │ 进入 switch(adc_sampling_state)
+    │ 命中 case ADC_SAMPLING_STATE_ERROR:
+    ▼
+[执行错误恢复逻辑]
+    │ 1. adc_state_errors++ (错误计数器+1)
+    │ 2. stop_state_machine_bit = true (设置停机标志)
+    │ 3. check_stop_statemachine_bit() 
+    │      ├─ 禁用 TIMER0 中断
+    │      ├─ 状态切回 IDLE
+    │      ├─ 禁用 PPI 组
+    │      ├─ 恢复 MUX/桥接 默认安全电平
+    │      └─ 关闭 SAADC
+    │ 4. adc_sensors_start_state_machine() (重头戏！重启！)
+    │      ├─ 禁用 TIMER0 并清零
+    │      ├─ 重新开启 SAADC
+    │      ├─ adc_sensors_restart_state_machine()
+    │      │    ├─ 状态设为 X_CHANNEL_PENDING
+    │      │    ├─ 重设 CC0 (1us) 和 CC1 (60us)
+    │      │    ├─ 恢复 PPI 配置
+    │      │    └─ 重新预装 SPI (等待 DRDY)
+    │      └─ 开启 PPI 组 (nrfx_ppi_group_enable)
+    ▼
+[恢复完毕] 
+等待下一个 TIMER3 Sample Event 触发 TIMER0 START
+(系统满血复活，继续采集 X/Y/Z)
+
+
+
