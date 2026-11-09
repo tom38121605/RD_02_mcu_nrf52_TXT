@@ -20,7 +20,9 @@ const spi_bus_t port_master_spi_busses[] = {FOR_EACH(SPI_BUS_DEF, OMMO_PM_SPI_BU
 
 #define GPIO_DEF(arg) NRF_GPIO_PIN_MAP arg,
 
--------------------------------------------------------------------------------------
+
+
+===============================================spi初始化==========================================================
 
 
 main
@@ -29,6 +31,7 @@ main
     port_master_init();
 
 
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
     adc_sensors_init(&sample_set_ready);
 
 
@@ -57,24 +60,28 @@ port_master_init()
 -----------
 
 
-
 adc_sensors_init( sample_set_ready_callback_function)
 
 
-    //Acquire SPI connection permanently
+    //待整理
+    //Acquire SPI connection permanently   
     port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr);   //here
 
+
+    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
+    adc_ppi_init();
 
 
 
 ---------------------------
 
-adc_ppi_init()
+//分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
 
+adc_ppi_init()
 
     。。。。。。
 
-    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
+   //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
    nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
 
 
@@ -82,189 +89,385 @@ adc_ppi_init()
 
 ------------------------
 
-ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location, comm_device ** comm_device_ptr, comm_device_config_t *config = nullptr);
 
-//看上面的声明，后面一个参数comm_dev_config可以不传
-ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location_ss_line, comm_device ** comm_device_ptr, comm_device_config_t *comm_dev_config)
-{
-    VERIFY_TRUE(port_master_initialized, NRF_ERROR_MODULE_NOT_INITIALIZED);
-    VERIFY_TRUE(port < OMMO_PM_PORTS_COUNT, NRF_ERROR_NOT_FOUND);
+//判断spi的组号，片选号是否在规定的范围内
+//取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
+//spi初始化-（待整理）
+
+全局变量 
+spi_peripheral[0] ：       
+                                              
+    .p_reg        = NRF_SPIM0,              
+    .drv_inst_idx = 0,  
+
+
+
+
+参数：OMMO_ADC_PORT,  OMMO_ADC_BUS_TYPE,  OMMO_ADC_SS_INDEX,  &comm_device_ptr      // 0,  0(IC_BUS_TYPE_SPI),  0,  comm_device_ptr   (看声明，最后的参数comm_dev_config= nullptr可不传)
+输出：comm_device_ptr
+
+port_master_acquire( port,  bus_type,  bus_location_ss_line,   comm_device_ptr,   *comm_dev_config)   
 
     switch (bus_type)
-    {
+    
         case IC_BUS_TYPE_SPI:
-        {
-            // Verify SPI bus exists
-            spi_slice_index_t slice_index = port_master_decode_spi_slice_index(bus_location_ss_line);
-            spi_ss_index_t ss_index = port_master_decode_spi_ss_index(bus_location_ss_line);
-            if (slice_index >= port_master_ports[port].spi_count
-                || (ss_index != 0xFF
-                    && (ss_index >= port_master_ports[port].spi_buses[slice_index].ss_index_count
-                        || port_master_ports[port].spi_buses[slice_index].ss_index_list[ss_index] >= NRFX_ARRAY_SIZE(port_master_ss_pins))))
-            {
-                return NRF_ERROR_NOT_FOUND;
-            }
+        
+            // --------------------判断spi的组号，片选号是否在规定的范围内--------已理解，忽略跳过------------------------
 
-            spi_bus_index_t spi_bus_index = port_master_ports[port].spi_buses[slice_index].spi_bus_index;
+            slice_index = port_master_decode_spi_slice_index( bus_location_ss_line );   //0.7-4 为0， 第0组spi   （实际的spi_bus_index）
+            ss_index = port_master_decode_spi_ss_index( bus_location_ss_line );      // //0.3-0 为0， ss的第0个片选
 
-            // Setup SPI config
-            nrfx_spim_config_t config;
-            VERIFY_SUCCESS(port_master_get_spi_bus_config(spi_bus_index, &config));
-            if (ss_index != 0xFF)
-                config.ss_pin = port_master_ss_pins[port_master_ports[port].spi_buses[slice_index].ss_index_list[ss_index]];
-            if(comm_dev_config != nullptr) port_master_apply_comm_device_config(&config, comm_dev_config);
+            AAA =   slice_index   >=   port_master_ports[0].spi_count ;  // 0 >= 1  //no     （spi_bus_index第0组spi不能大于spi_count总spi组数）
+            BBB1 =  ss_index >= port_master_ports[0].spi_buses[0].ss_index_count ;    //   0 >= 1  //no       （ss_index第0个片选不能大于ss_index_count总片选数 ）
+            BBB2 =  port_master_ports[0].spi_buses[0].ss_index_list[0] >= NRFX_ARRAY_SIZE(port_master_ss_pins);   // 0 >= 2， ss的第0个片选号，不能大于本工程定义的总ss片选数量
+
+            if (   AAA  || 
+                  (   ss_index != 0xFF &&   ( BBB1  ||  BBB2 )   )
+               )            
+               return NRF_ERROR_NOT_FOUND;
+            
+            // --------------------判断spi的组号，片选号是否在规定的范围内------end--------------------------
 
 
-            for (spim_basic & spim_instance : spim_basic_instances)
-            {
-                if (!spim_instance.is_acquired())
+            // --------------------取得spi参数-------------------------------
+
+            spi_bus_index = port_master_ports[0].spi_buses[0].spi_bus_index;  //0，   //第0组spi  
+
+            //port_master_get_spi_bus_config( 0, &config );
+                config =  
                 {
-                    ret_code_t rvalue = spim_instance.acquire(&config);       // 初始化 spi
-                    if (rvalue == NRF_SUCCESS)
-                    {
-                        *comm_device_ptr = &spim_instance;
-                    }
-                    return rvalue;
-                }
-            }
+                    .sck_pin        = port_master_spi_busses[0].sck_pin,       //P1.10
+                    .mosi_pin       = port_master_spi_busses[0].mosi_pin,    //P1.14
+                    .miso_pin       = port_master_spi_busses[0].miso_pin,    //P1.13
+                    .ss_pin         = NRFX_SPIM_PIN_NOT_USED,                 //null
+
+                    .ss_active_high = false,
+                    .irq_priority   = port_master_spi_busses[0].irq_priority,    //OMMO_PM_SPI_IRQ_PRIORITY  //1
+                    .orc            = 0xFF,
+                    .frequency      = port_master_spi_busses[0].frequency,     //16M
+                    .mode           = port_master_spi_busses[0].mode,               //spi模式1， sck空闲低电平，下降沿采样
+                    .bit_order      = port_master_spi_busses[0].bit_order,          //MSB
+                    NRFX_SPIM_DEFAULT_EXTENDED_CONFIG                         //空define
+                };
+
+            config.ss_pin = port_master_ss_pins[port_master_ports[0].spi_buses[0].ss_index_list[0]];   //P1.12
+
+            // --------------------取得spi参数------end--------------------------
 
 
-        }
-
-        case IC_BUS_TYPE_I2C:
-        {
-        {
-            。。。。。。
-        }
+            // --------------------spi初始化--------------------------------
 
 
-           //Setup twi config
-            twi_basic_config_t config;
-            VERIFY_SUCCESS(port_master_get_twi_bus_config(port, bus_location_ss_line, &config));
-            if(comm_dev_config != nullptr) port_master_apply_comm_device_config(&config, comm_dev_config);
+            //AAA = spim_basic_instances:
+               AAA = { 
+                             spim_basic(&spi_peripheral[0]) 
+                           };
+
+            for (spim_basic &spim_instance :  AAA )
+            
+                if (!spim_instance.is_acquired())          //如果spi0没有初始化 
 
 
-            return NRF_ERROR_NO_MEM;f OMMOCOMM_ENABLED
-        case IC_BUS_TYPE_OMMOCOMM_I2C:
-        case IC_BUS_TYPE_OMMOCOMM_SPI:
-        case IC_BUS_TYPE_CUSTOM:
-        {
-            if (port_master_ports[port].supports_ommocomm_virtual_port_pin == 0xFF)
-            {
-                return NRF_ERROR_NOT_SUPPORTED;
-            }
+                    //标记spi引脚已使用
+                    //spi中断函数设置
+                    //spi引脚设置
+                    //设置FREQUENCY, spi的频率为16M
+                    //设置spi的中断优先级为1，使能spi的irq总中断
+                    //关闭spi0
+                    //设置spi的acq为成普通模式     
+                    //spim_instance.acquire(&config);   //初始化spi0
+                       reconfigure(p_cfg, false);
 
-            // Verify pin is free
-            ommocomm_acqmode_t mode   = bus_type == IC_BUS_TYPE_OMMOCOMM_I2C   ? OMMOCOMM_ACQMODE_TWI
-                                        : bus_type == IC_BUS_TYPE_OMMOCOMM_SPI ? OMMOCOMM_ACQMODE_SPI
-                                                                               : OMMOCOMM_ACQMODE_DIRECT;
-            return port_master_acquire_ommocomm_internal(mode, port, true, bus_location_ss_line, (ommocomm_uarte**)comm_device_ptr);
-        }
-#endif
+                    *comm_device_ptr = &spim_instance;
 
-        default:
-            return NRF_ERROR_NOT_SUPPORTED;
-    }
-}
+                    
+             // --------------------spi初始化------end--------------------------
+      
 
 
-----
 
 
-------------
+---------------------------
+
+//标记spi引脚已使用
+
+//spi中断函数设置
+//spi引脚设置
+//设置FREQUENCY, spi的频率为16M
+//设置spi的中断优先级为1，使能spi的irq总中断
+
+//关闭spi0
+//设置spi的acq为成普通模式
+
+全局变量 
+      config =  
+      {
+          .sck_pin        = port_master_spi_busses[0].sck_pin,       //P1.10
+          .mosi_pin       = port_master_spi_busses[0].mosi_pin,    //P1.14
+          .miso_pin       = port_master_spi_busses[0].miso_pin,    //P1.13
+          .ss_pin         = NRFX_SPIM_PIN_NOT_USED,                 //null
+
+          .ss_active_high = false,
+          .irq_priority   = port_master_spi_busses[0].irq_priority,    //OMMO_PM_SPI_IRQ_PRIORITY  //1
+          .orc            = 0xFF,
+          .frequency      = port_master_spi_busses[0].frequency,     //16M
+          .mode           = port_master_spi_busses[0].mode,               //spi模式1， sck空闲低电平，下降沿采样
+          .bit_order      = port_master_spi_busses[0].bit_order,          //MSB
+          NRFX_SPIM_DEFAULT_EXTENDED_CONFIG                         //空define
+      };
 
 
-ret_code_t spim_basic::acquire(const nrfx_spim_config_t * p_cfg, bool direct)
-{
-    if (acq != SPIMB_ACQ_NONE)
-    {
-        return NRF_ERROR_BUSY;
-    }
+参数： config, false
 
-    return reconfigure(p_cfg, direct);
-}
+spim_basic::reconfigure(  * p_cfg, direct)
 
-
-------------
-
-ret_code_t spim_basic::reconfigure(const nrfx_spim_config_t * p_cfg, bool direct)
-{
     // Uninitialize the SPIM instance and release pins if already acquired
+
     if (acq != SPIMB_ACQ_NONE)
-    {
+    
         port_master_release_pins(get_pin_mask(&spim_config, acq == SPIMB_ACQ_DIRECT));
         nrfx_spim_uninit(spim_instance);
-    }
+    
+    spim_cfg = p_cfg ;
 
-    const nrfx_spim_config_t * spim_cfg = p_cfg ? p_cfg : &spim_config;
-    if (port_master_acquire_pins(get_pin_mask(spim_cfg, direct)) != NRF_SUCCESS)
-    {
-        return NRF_ERROR_NOT_FOUND;
-    }
+    //---------标记spi引脚已使用----------------
 
-    // Сannot be not used(NRFX_SPIM_PIN_NOT_USED), or spi will not function correctly
-    if (spim_cfg->sck_pin == NRFX_SPIM_PIN_NOT_USED)
-    {
-        return NRF_ERROR_INVALID_PARAM; // Ensure SCK pin is connected
-    }
+    //AAA = get_pin_mask(spim_cfg, false);
+        pin_mask |= PORT_PIN_TO_MASK(p_cfg->miso_pin);      //P1.13
+        pin_mask |= PORT_PIN_TO_MASK(p_cfg->mosi_pin);      //P1.14
+        pin_mask |= PORT_PIN_TO_MASK(p_cfg->ss_pin);          //P1.12
+        pin_mask |= PORT_PIN_TO_MASK(p_cfg->sck_pin);        //P1.10
 
-    const ret_code_t ret = nrfx_spim_init(spim_instance, spim_cfg, spim_handler, this);
-    if (ret == NRF_SUCCESS)
-    {
-        // Disable the SPIM instance to prevent unintended transfers
-        nrf_spim_disable(spim_instance->p_reg);
+    //port_master_acquire_pins( AAA ) ;
+      pins_in_use_mask |= pin_mask;
 
-        // Copy the configuration to the internal buffer
-        if (p_cfg)
-        {
-            spim_config = *p_cfg;
-        }
-
-        port_master_configure_high_speed_output(spim_config.sck_pin);
-        port_master_configure_high_speed_output(spim_config.mosi_pin);
-        nrf_gpio_pin_set(spim_config.mosi_pin); //Default to high while not in use
-        acq = direct ? SPIMB_ACQ_DIRECT : SPIMB_ACQ_NORMAL;
-    }
-    else
-    {
-        acq = SPIMB_ACQ_NONE;
-    }
-    return ret;
-}
+    //---------标记spi引脚已使用----end------------
 
 
+    //spi中断函数设置
+    //spi引脚设置
+    //设置FREQUENCY, spi的频率为16M
+    //设置spi的中断优先级为1，使能spi的irq总中断
+    nrfx_spim_init(spim_instance, spim_cfg, spim_handler, this);
 
-----------------
 
-参数：comm_dev_config
-ret_code_t port_master_get_spi_bus_config(spi_bus_index_t spi_bus_index, nrfx_spim_config_t * p_out_config)
+    
+    //关闭spi0
+    //nrf_spim_disable(spim_instance->p_reg);
+      p_reg->ENABLE = 0<<0;
+
+    //保存config配置参数
+    spim_config = *p_cfg;
+       
+    //把sck引脚修改为H0H1大功率驱动H0H
+    //port_master_configure_high_speed_output(spim_config.sck_pin);
+      nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_DISCONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_H0H1, NRF_GPIO_PIN_NOSENSE);
+
+    //把MO引脚修改为H0H1大功率驱动H0H1
+      port_master_configure_high_speed_output(spim_config.mosi_pin);
+
+    //设置mo为高电平
+    nrf_gpio_pin_set(spim_config.mosi_pin); 
+
+    //设置spi的acq为成普通模式
+    //acq = direct ? SPIMB_ACQ_DIRECT : SPIMB_ACQ_NORMAL;
+    //  acq = fasle ? 2 : 1;
+        acq = 1;
+    
+     
+
+
+--------------
+
+//spi中断函数设置
+//spi引脚设置
+//设置FREQUENCY, spi的频率为16M
+//设置spi的中断优先级为1，使能spi的irq总中断
+
+
+全局变量 
+spi_peripheral[0] ：                                                  
+    .p_reg        = NRF_SPIM0,              
+    .drv_inst_idx = 0,  
+
+
+全局变量 
+      config =  
+      {
+          .sck_pin        = port_master_spi_busses[0].sck_pin,       //P1.10
+          .mosi_pin       = port_master_spi_busses[0].mosi_pin,    //P1.14
+          .miso_pin       = port_master_spi_busses[0].miso_pin,    //P1.13
+          .ss_pin         = NRFX_SPIM_PIN_NOT_USED,                 //null
+
+          .ss_active_high = false,
+          .irq_priority   = port_master_spi_busses[0].irq_priority,    //OMMO_PM_SPI_IRQ_PRIORITY  //1
+          .orc            = 0xFF,
+          .frequency      = port_master_spi_busses[0].frequency,     //16M
+          .mode           = port_master_spi_busses[0].mode,               //spi模式1， sck空闲低电平，下降沿采样
+          .bit_order      = port_master_spi_busses[0].bit_order,          //MSB
+          NRFX_SPIM_DEFAULT_EXTENDED_CONFIG                         //空define
+      };
+
+
+参数：spim_instance,    spim_cfg,   spim_handler,    this   //spim_instance就是指向 spi_peripheral[0] 的指针  //spim_handler是作为spi的中断callback函数
+nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
+
+    spim_control_block_t * p_cb = &m_cb[0];
+
+    p_spim =  p_instance->p_reg;    //NRF_SPIM0
+
+
+    //-----------------spi中断函数设置----------------
+
+    irq_handlers[0] = nrfx_spim_0_irq_handler;
+   
+    //nrfx_prs_acquire(p_instance->p_reg, irq_handlers[0]);     //无操作，忽略跳过
+    //  nrfx_prs_acquire( NRF_SPIM0, nrfx_spim_0_irq_handler );
+        无操作;
+
+
+    p_cb->handler = handler;       //spim_handler ，spi中断回调函数
+    p_cb->p_context = p_context;
+
+    //-----------------spi中断函数设置----end------------
+
+
+
+    //-----------------spi引脚设置----------------
+
+
+    if (p_config->mode <= NRF_SPIM_MODE_1)      //1， yes    
+        nrf_gpio_pin_clear(p_config->sck_pin);  //sck置低电平
+
+    //设置sck引脚：输出，连接输入缓冲，无上下拉，S0S1标准驱动或2ma，无边缘检测
+    nrf_gpio_cfg(p_config->sck_pin,
+                 NRF_GPIO_PIN_DIR_OUTPUT,
+                 NRF_GPIO_PIN_INPUT_CONNECT,
+                 NRF_GPIO_PIN_NOPULL,
+                 NRF_GPIO_PIN_S0S1,
+                 NRF_GPIO_PIN_NOSENSE);
+
+    //设置MO引脚：输出，初始低电平
+    mosi_pin = p_config->mosi_pin;
+    nrf_gpio_pin_clear(mosi_pin);
+    nrf_gpio_cfg_output(mosi_pin);
+ 
+    //设置MO引脚：输入
+    miso_pin = p_config->miso_pin;
+    nrf_gpio_cfg_input(miso_pin, (nrf_gpio_pin_pull_t)NRFX_SPIM_MISO_PULL_CFG);
+ 
+
+    p_cb->miso_pin = p_config->miso_pin;
+    p_cb->ss_pin = p_config->ss_pin;
+
+ 
+    //设置SS引脚：输出，初始高电平
+    nrf_gpio_pin_set(p_config->ss_pin);       
+    nrf_gpio_cfg_output(p_config->ss_pin);
+
+    p_cb->ss_active_high = p_config->ss_active_high;  //false
+ 
+
+    //设置spi引脚的外设功能
+    //nrf_spim_pins_set(p_spim, p_config->sck_pin, mosi_pin, miso_pin);
+      p_reg->PSEL.SCK  = sck_pin;
+      p_reg->PSEL.MOSI = mosi_pin;
+      p_reg->PSEL.MISO = miso_pin;
+
+    //-----------------spi引脚设置----end------------
+
+
+    //设置FREQUENCY, spi的频率为16M
+    //nrf_spim_frequency_set(p_spim, p_config->frequency);
+       p_reg->FREQUENCY =  frequency;                           //16M
+
+    //设置CONFIG, 模式1， MSB
+    //nrf_spim_configure(p_spim, p_config->mode, p_config->bit_order);
+       p_reg->CONFIG =  0<<0 | 0<<2 | 1<< 1
+ 
+    //nrf_spim_orc_set(p_spim, p_config->orc);
+      p_reg->ORC = 0xff;
+
+    //nrf_spim_enable(p_spim);
+      p_reg->ENABLE =  7<<0;
+
+
+    //设置spi的中断优先级为1，使能spi的irq总中断
+    if (p_cb->handler)  //spim_handler ，spi中断回调函数
+
+        //设置spi的中断优先级为1
+        //NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),   p_config->irq_priority);
+          NVIC_SetPriority(irq_number, priority);
+
+
+        //使能spi的irq总中断
+        //NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
+          NVIC_EnableIRQ(irq_number);
+
+
+    p_cb->transfer_in_progress = false;
+    p_cb->state = NRFX_DRV_STATE_INITIALIZED;
+
+
+
+
+------------------
+
+
+
+
+
+
+
+
+
+
+
+===============================================spi中断处理==========================================================
+
+
+
+
+
+参数：spim_instance,    spim_cfg,   spim_handler,    this   //spim_instance就是指向 spi_peripheral[0] 的指针  //spim_handler是作为spi的中断callback函数
+nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
+
+    spim_control_block_t * p_cb = &m_cb[0];
+
+    p_spim =  p_instance->p_reg;    //NRF_SPIM0
+
+    irq_handlers[1] = {  nrfx_spim_0_irq_handler,  };
+
+
+    p_cb->handler = handler;
+
+
+-----------------
+
+
+void spim_basic::spim_handler(const nrfx_spim_evt_t * p_event, void * p_context)
 {
-    if (spi_bus_index >= OMMO_PM_SPI_BUSSES_COUNT)
+    UNUSED_PARAMETER(p_event);
+    spim_basic * p_this  = static_cast<spim_basic *>(p_context);
+    OMMO_TRACE_ISR_ENTER_CALLBACK(TRACE_ISR_SPI_BASIC, p_this->evt_handler);
+    p_this->trx_complete = true;
+    if (!p_this->is_repeated)
+        nrf_spim_disable(p_this->spim_instance->p_reg);
+
+    // Copy the received data to the provided buffer
+    if (p_this->acq == SPIMB_ACQ_NORMAL)
     {
-        return NRF_ERROR_NOT_FOUND;
+        // Copy rx data into output buffer (skipping rx during tx)
+        memcpy(p_this->evt_rx_buffer, p_this->io_buffer + p_event->xfer_desc.tx_length,
+               p_event->xfer_desc.rx_length - p_event->xfer_desc.tx_length);
     }
 
-    if (p_out_config == NULL)
-    {
-        return NRF_ERROR_NULL;
-    }
+    // Fire event handle if specified
+    comm_device_event_handler_t handler = p_this->evt_handler;
+    if (handler)
+        handler(p_this, COMM_DEVICE_TRX_RESULT_SUCCESS, p_this->evt_context);
 
-    *p_out_config = (nrfx_spim_config_t)                               //here
-    {
-        .sck_pin        = port_master_spi_busses[spi_bus_index].sck_pin,
-        .mosi_pin       = port_master_spi_busses[spi_bus_index].mosi_pin,
-        .miso_pin       = port_master_spi_busses[spi_bus_index].miso_pin,
-        .ss_pin         = NRFX_SPIM_PIN_NOT_USED,
-        .ss_active_high = false,
-        .irq_priority   = port_master_spi_busses[spi_bus_index].irq_priority,
-        .orc            = 0xFF,
-        .frequency      = port_master_spi_busses[spi_bus_index].frequency,
-        .mode           = port_master_spi_busses[spi_bus_index].mode,
-        .bit_order      = port_master_spi_busses[spi_bus_index].bit_order,
-        NRFX_SPIM_DEFAULT_EXTENDED_CONFIG
-    };
-
-    return NRF_SUCCESS;
+    OMMO_TRACE_ISR_EXIT_CALLBACK(TRACE_ISR_SPI_BASIC, handler);
 }
 
 
@@ -273,7 +476,12 @@ ret_code_t port_master_get_spi_bus_config(spi_bus_index_t spi_bus_index, nrfx_sp
 
 
 
------------------------------------------------------------------------------
+
+
+
+
+
+================================================== 参考1 ===========================================================
 
 
 int main(void)
@@ -354,7 +562,7 @@ ret_code_t spim_basic::trx(const uint8_t * p_tx_buffer, const size_t tx_length, 
 
 
 
-================================================== 参考 ===========================================================
+================================================== 参考2 ===========================================================
 
 
 
