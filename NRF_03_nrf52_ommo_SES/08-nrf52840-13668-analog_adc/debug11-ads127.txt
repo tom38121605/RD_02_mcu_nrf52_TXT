@@ -1,0 +1,45 @@
+﻿
+
+
+
+
+
+
+
+
+int main(void)
+
+
+
+   //SAADC 初始化 （待完成）
+   adc_sensors_init(&sample_set_ready);
+
+
+    。。。。。。
+
+
+
+
+---------------------------------------
+
+//SAADC 初始化 （待完成）
+
+参数: sample_set_ready
+adc_sensors_init(  sample_set_ready_callback_function  )
+
+
+    。。。。。。
+
+
+    //ADS127L11初始化
+    nrf_delay_ms(200);           //Let ADC boot up
+    adc_sensors_config_adc();
+
+
+
+
+
+
+
+
+

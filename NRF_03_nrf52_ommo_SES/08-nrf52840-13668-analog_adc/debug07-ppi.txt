@@ -56,11 +56,66 @@
 
 ------------------------------------------------
 
+
+//设置timer0 cc2,cc3的ppi联接
+//设置timer3 cc0的ppi联接
+//把ppi通道timer_channel包含到adc_sampling_ppi_group
+
+参数: sample_set_ready
+adc_sensors_init(  sample_set_ready_callback_function  )
+
+   adc_sample_set_ready_callback = sample_set_ready_callback_function;  //sample_set_ready 发送数据函数
+ 
+
+
+    。。。。。。
+ 
+
+    //写入timer0 CC2的阈值 240 * 3us，不使能timer0 CC2中断，开启timer0， 用于拉高开启reset
+    nrfx_timer_compare(&adc_sampling_timer, ADC_SET_RESET_START_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US), false);  // CC2 -- 240 * 3
+
+    //写入timer0 CC3的阈值 240 * 3us + 1，不使能timer0 CC2中断，开启timer0， 用于拉低停止reset
+    nrfx_timer_extended_compare(&adc_sampling_timer, ADC_SET_RESET_END_CC_CHANNEL, 
+                                US_TO_TICKS_16MHZ(ADC_SET_RESET_START_TIME_US + ADC_SET_RESET_DURATION_US), ADC_SET_RESET_END_CC_SHORT_MASK, false);  // CC2 -- 240 * 3 + 1
+
+
+    //建立ppi：timer3 cc0(6 点)  -- sample_trigger_ppi (闹铃)  --  timer0 start (开灯)
+    AAA = nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START);   //timer0 start 
+    //timer_channel = timestamp_add_task_on_sample_event( AAA, false);
+
+        //分配 sample_trigger_ppi
+        nrfx_ppi_channel_alloc(&sample_trigger_ppi);
+
+       //BBB = timestamp_get_sample_event_address();
+         BBB = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel];   //timer3 cc0
+
+        //建立ppi：timer3 cc0(6 点)  -- sample_trigger_ppi (闹铃)  --  timer0 start (开灯)
+        nrfx_ppi_channel_assign(sample_trigger_ppi, BBB, AAA );
+
+        timer_channel = sample_trigger_ppi;
+
+
+    //把ppi通道timer_channel包含到adc_sampling_ppi_group
+    nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group);
+
+
+    。。。。。。
+
+
+
+-----------------------------
+
  
  
 //设置个引脚的ppi联接
-//设置timer cc0的ppi联接
+//设置timer0 cc0的ppi联接
 //设置comp过压保护
+// 分配ppi group，把下面的ppi包含到 adc_sampling_ppi_group 
+    adc_start_ppi
+    adc_ready_spi_read_ppi
+    mux_select_ppi
+    channel_bridge_select_ppi
+
 adc_ppi_init()
 
     //使能 GPIOTE 外设的中断 （房间总开关），使能 GPIOTE 的 PORT 事件中断 （小灯子插排开关）
@@ -553,20 +608,7 @@ __STATIC_INLINE void nrf_saadc_task_trigger(nrf_saadc_task_t task)
 
 sampling_timer_event_handler( event_type,  p_context)
 
-            case ADC_SAMPLING_STATE_X_CHANNEL_PENDING:
-
-                // Set new sample time (Y channel)  //设置下一次的比较时间
-
-                nrfx_timer_compare(&adc_sampling_timer, ADC_MUX_SWITCH_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_MUX_SWITCH_TIME_US(1)), false);
-                nrfx_timer_compare(&adc_sampling_timer, ADC_START_SAMPLE_CC_CHANNEL, US_TO_TICKS_16MHZ(ADC_START_SAMPLE_TIME_US(1)), true);
-
-                
-                //分配和建立ppi：  mux_select_ppi (闹铃) --> nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN)
-                                           mux_select_ppi (闹铃) --> nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN)
-
-                nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));     //  MUX select 0b00 (0b01 -> 0b00) for Y channel     
-                nrf_ppi_fork_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A0_PIN));
-
+           。。。。。。（待完成）
 
 
 

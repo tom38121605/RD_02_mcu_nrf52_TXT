@@ -1,8 +1,6 @@
 ﻿
 
 
-ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_location, comm_device ** comm_device_ptr, comm_device_config_t *config = nullptr);
-
 ------
 
 #define NRFX_TIMER_DEFAULT_CONFIG                                                    \
@@ -15,7 +13,7 @@ ret_code_t port_master_acquire(uint8_t port, ICBusType bus_type, uint8_t bus_loc
 }
 
 nrfx_timer_config_t timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
-timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
+timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;   //0
 
 
 ---

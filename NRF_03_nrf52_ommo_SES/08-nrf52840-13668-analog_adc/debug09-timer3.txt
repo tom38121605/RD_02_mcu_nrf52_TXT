@@ -137,7 +137,8 @@ timestamp_synch_recieved(basestation_ts, local_event_ts, source) [timestamp_time
 
 
 
-=========================================================
+=============================================================== timer3 初始化 ===========================================================
+
 
 
 
@@ -150,7 +151,7 @@ timestamp_init_with_external_sample_event
 
 main  
 
-    timestamp_init_with_internal_sample_event(3)
+    timestamp_init_with_internal_sample_event(3);
 
     adc_sensors_init(&sample_set_ready);
 
@@ -173,20 +174,26 @@ adc_sensors_init(adc_sensors_callback_func_type sample_set_ready_callback_functi
     。。。。。。
 
 
-    //nrf_ppi_channel_t timer_channel = timestamp_add_task_on_sample_event(nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START), false);
+    //建立ppi：timer3 cc0(6 点)  -- sample_trigger_ppi (闹铃)  --  timer0 start (开灯)
+    AAA = nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START);   //timer0 start 
+    //timer_channel = timestamp_add_task_on_sample_event( AAA, false);
 
+        //分配 sample_trigger_ppi
         nrfx_ppi_channel_alloc(&sample_trigger_ppi);
 
+       //BBB = timestamp_get_sample_event_address();
+         BBB = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel];   //timer3 cc0
 
-        //AAA =  timestamp_get_sample_event_address();
-           AAA = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel]);   //sample_event_compare_channel ?
+        //建立ppi：timer3 cc0(6 点)  -- sample_trigger_ppi (闹铃)  --  timer0 start (开灯)
+        nrfx_ppi_channel_assign(sample_trigger_ppi, BBB, AAA );
 
-        // 定时器三 timestamp_get_sample_event_address()  -- sample_trigger_ppi  --  定时器零 NRF_TIMER_TASK_START
-        nrfx_ppi_channel_assign(sample_trigger_ppi,  AAA,  nrfx_timer_task_address_get(&adc_sampling_timer, NRF_TIMER_TASK_START));
+        timer_channel = sample_trigger_ppi;
 
-      
 
+    //把ppi通道timer_channel包含到adc_sampling_ppi_group
     nrfx_ppi_channel_include_in_group(timer_channel, adc_sampling_ppi_group);
+
+
 
 
     //TIMER3的函数设置
@@ -208,7 +215,7 @@ timestamp_init_with_internal_sample_event(  isr_priority)
     nrfx_timer_enable(&timer_timestamp);
 
     //Setup sample event
-    sample_event_compare_channel = timestamp_get_capture_compare_channel();
+    sample_event_compare_channel = timestamp_get_capture_compare_channel();   //或cc0
 
     //Grab next event compare time
     nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel);
@@ -240,7 +247,25 @@ timestamp_init_with_internal_sample_event(  isr_priority)
 
 
 
-----------------------
+
+
+
+
+
+
+
+
+
+
+
+=============================================================== timer3 中断 ===========================================================
+
+
+
+
+
+-----------
+
 
 timestamp_timer_event_handler(   event_type,  p_context)
  

@@ -1,3 +1,70 @@
+
+
+
+主机下指令开启采样
+
+【开机 / 初始化】
+main() 
+  └─? adc_sensors_init()
+        ├─> nrfx_timer_init(TIMER0)           // 初始化硬件定时器
+        ├─> adc_ppi_init()                    // 初始化 PPI
+        │     └─> restore_default_sampling_ppi_config() 
+        │           // （重点：这里第一次调用了复位函数，预设好 X 通道的 PPI 连线）
+        └─> 等待用户下发开启命令
+
+
+[上位机 PC] 
+    │ 发送 USB 指令 (OMMO_COMMAND_GET_PACKET_DESCRIPTOR 或 DATA_ENABLE)
+    ▼
+[MCU USB 中断] usb_serial_packet_received() [main.cpp]
+    │
+    ├─> 如果是获取描述符指令: 
+    │     └─> adc_process_packet_received() [ADS127L11_mux_sampler.cpp]
+    │           └─> adc_scan_bus_generate_data_descriptor() 
+    │                 └─> adc_sensors_dry_run_blocking()
+    │                       └─> 首次调用 adc_sensors_start_state_machine() (仅在此处首次触发!)
+    │
+    └─> 如果是开启采样指令 (OMMO_COMMAND_USB_DATA_ENABLE):
+          └─> adc_sensors_enable()
+                └─> adc_sensors_start_state_machine() 
+                      │
+                      ▼
+======================================================================
+ [adc_sensors_start_state_machine() 内部]
+ 1. 关 PPI 组
+ 2. TIMER0 禁用并清零
+ 3. 开启 SAADC
+ 4. ──> adc_sensors_restart_state_machine()
+======================================================================
+                      │
+                      ▼
+ [adc_sensors_restart_state_machine() 核心门槛设置]
+ 1. 状态设为: ADC_SAMPLING_STATE_X_CHANNEL_PENDING
+ 2. 设 CC0 门槛: CC0 = MUX_SWITCH_TIME_US(0) + 1 us
+ 3. 设 CC1 门槛: CC1 = START_SAMPLE_TIME_US(0) (即 60us)
+ 4. 恢复 PPI 默认配置: restore_default_sampling_ppi_config()
+ 5. 开启 SAADC (交替采 Vbias/Vsense)
+ 6. 预装 SPI (HOLD模式等待 DRDY)
+                      │
+                      ▼
+ [返回 start_state_machine]
+ 5. ──> 开启 PPI 组 (nrfx_ppi_group_enable)
+                      │
+                      ▼
+======================================================================
+ [纯硬件时间线] 
+ TIMER3 Sample Event (PPI) ──> TIMER0 TASKS_START (计数器清零开始跑)
+                      │
+                      ├─> 计到 1 us (CC0触发) ──> PPI 切 MUX 到 X
+                      │
+                      └─> 计到 60 us (CC1触发) ──> PPI 发 ADC START 脉冲 + 进中断
+                                                    └─> sampling_timer_event_handler
+                                                          └─> 配置 Y 通道的 CC0(1us) 和 CC1(60us)
+
+======================================================================
+
+
+
 adc_sampling_state
 stop_state_machine_bit
 

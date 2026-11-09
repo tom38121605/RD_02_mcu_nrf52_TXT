@@ -334,6 +334,17 @@
              adc_sensors_intermittent_pin_gpiote |= 1<<pin;
              
 
+13. 在nrf52中测试中断运行时间
+
+         OMMO_TRACE_ISR_ENTER(TRACE_ISR_TIMER0);
+         ......
+          OMMO_TRACE_ISR_EXIT(TRACE_ISR_TIMER0);
+
+
+
+
+
+
 
 
 

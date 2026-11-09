@@ -75,6 +75,8 @@ port_master_init()
 
 adc_sensors_init( sample_set_ready_callback_function)
 
+   adc_sample_set_ready_callback = sample_set_ready_callback_function;  //sample_set_ready 发送数据函数
+
     。。。。。。
 
 
