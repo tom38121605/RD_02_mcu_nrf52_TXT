@@ -1,4 +1,4 @@
-
+﻿
 TIMER3 是系统主时钟 
 
     产生 1ms 采样事件（触发传感器采集）  //CC0
@@ -65,7 +65,7 @@ int main(void)
 
 
  
-    //timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M，开启timer3开始计数
+    //timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，预分频为0，开启timer3开始计数
     //写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
     //写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
     //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组
@@ -151,7 +151,7 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
     timer_cfg.p_context = this;
     timer_cfg.interrupt_priority = isr_priority;  //1
 
-    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，1M，开启timer0开始计数
+    //timer0初始化，设置timer0的中断回调函数和中断优先级1，使能timer0中断,设置timer0为定时器模式，32位，预分频为0，开启timer0开始计数
     nrfx_timer_init(timer, &timer_cfg, timer_event_handler);  
 
 
@@ -189,7 +189,7 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 -------------
 
 
-//timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M，开启timer3开始计数
+//timer3初始化，设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，预分频为0，开启timer3开始计数
 //写入timer3 CC0的阈值 当前计数值 + 15984 * 4 (4ms)，使能timer3 CC0中断  //cc0做采样用，第一次4ms，以后会设置成1ms
 //写入timer3 CC1的阈值 当前计数值 + 15984 * 4 (4ms)，不使能timer3 CC1中断  //cc1做同步用
 //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组
@@ -200,16 +200,16 @@ comms_uarte_siu_1wire::init(    *timer,    *app_timer_id,   packet_ready_callbac
 timestamp_init_with_internal_sample_event( isr_priority)
  
     //Init timer
-    timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;         //初始配置： 1M，定时器模式，32位，优先级6
+    timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;         //初始配置： 预分频为0，定时器模式，32位，优先级6
     timer_cfg.interrupt_priority = isr_priority;   //3
 
-    //设置timer3的中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M
+    //设置timer3的中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，预分频为0
     nrfx_timer_init(&timer_timestamp, &timer_cfg, timestamp_timer_event_handler);
 
     nrfx_timer_enable(&timer_timestamp);           //开启timer3开始计数
 
 
-    //---取得timer3第一个未使用的通道，即CC0
+    //------取得timer3第一个未使用的通道，即CC0------
     sample_event_compare_channel = timestamp_get_capture_compare_channel();   //timer3 cc0
 
 
@@ -223,7 +223,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
     nrfx_timer_compare(&timer_timestamp, sample_event_compare_channel, sample_event_trigger_value, true);
 
 
-    //---取得timer3第二个未使用的通道，即CC1
+    //------取得timer3第二个未使用的通道，即CC1------
     timestamp_synch_event_compare_channel = timestamp_get_capture_compare_channel();
 
     //写入timer3 CC1的阈值 当前计数值 + 15984 * 4(初始值相同)，不使能timer3 CC1中断
@@ -232,26 +232,21 @@ timestamp_init_with_internal_sample_event( isr_priority)
     //清timer3 CC1的比较事件标记
     nrf_timer_event_clear(timer_timestamp.p_reg, compare_events[timestamp_synch_event_compare_channel]);
 
-
     //分配一个ppi group组 ppi_group_disable_timestamp_capture，使能ppi group组   //在哪里用到group？
     nrfx_ppi_group_alloc(&ppi_group_disable_timestamp_capture);
     nrfx_ppi_group_enable(ppi_group_disable_timestamp_capture);
 
- 
 
-    //分配ppi通道ppi_channel_disable_timestamp_capture
+    //------分配ppi通道ppi_channel_disable_timestamp_capture------
     nrfx_ppi_channel_alloc(&ppi_channel_disable_timestamp_capture);
 
-
-    //建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group）
-    //AAA = nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)  //关闭ppi group通道
-       AAA = nrf_ppi_task_group_disable_address_get(group);
+    AAA = nrfx_ppi_task_addr_group_disable_get(ppi_group_disable_timestamp_capture)  //关闭ppi group通道
 
     //BBB = timestamp_get_sample_event_address()  //timer3 cc0 发生比较事件
        BBB = nrfx_timer_event_address_get(&timer_timestamp, compare_events[sample_event_compare_channel])   //NRF_TIMER_EVENT_COMPARE0
 
+    //建立ppi：timer3 cc0（6点）  --  ppi_channel_disable_timestamp_capture（闹铃）  --  AAA（关group）
     nrfx_ppi_channel_assign(ppi_channel_disable_timestamp_capture, BBB, AAA );
-
 
     //使能ppi_channel_disable_timestamp_capture
     nrfx_ppi_channel_enable(ppi_channel_disable_timestamp_capture);
@@ -266,7 +261,7 @@ timestamp_init_with_internal_sample_event( isr_priority)
 
 ---------------
 
-//设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，1M
+//设置timer3的中断回调函数和中断优先级1，使能timer3中断,设置timer3为定时器模式，32位，预分频为0
 
 参数：timer_timestamp,  timer_cfg, timestamp_timer_event_handler
 
@@ -286,7 +281,7 @@ nrfx_timer_init(  *p_instance,   *p_config,  timer_event_handler)
     NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),  p_config->interrupt_priority);
     NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));
 
-    //设置timer3为定时器模式，32位，1M
+    //设置timer3为定时器模式，32位，预分频为0
     nrf_timer_mode_set(p_instance->p_reg, p_config->mode);
     nrf_timer_bit_width_set(p_instance->p_reg, p_config->bit_width);
     nrf_timer_frequency_set(p_instance->p_reg, p_config->frequency);

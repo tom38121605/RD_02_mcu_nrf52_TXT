@@ -143,7 +143,10 @@
          代码里调用了 trx(..., COMM_DEVICE_FLAGS_HOLD)，配合 PPI 直接走 DMA 读数据，这就必须用 DIRECT 模式。
 
 
-
+12. 问题：TIMER3_CC_NUM在ses中搜索不到定义
+    解决：在sdk的一个h文件或c文件中 （如 nrfx_common.h）
+            把TIMER3_CC_NUM拷贝到一个空行  -- 右键  -- 定义 -- 就会自动找到在nrf52840_peripherals.h有定义
+    注意：不能拷贝到main.c和用户自己写的文件中
 
 
 
