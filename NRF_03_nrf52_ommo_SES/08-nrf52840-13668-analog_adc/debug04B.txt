@@ -2,7 +2,35 @@
 名词解释:  ORC    --   Over-read Character  //过读字符，或者叫默认填充字符0XFF
 
 
+-------------
 
+
+
+FREQ_16M:
+
+//adc sampler
+#define OMMO_ADC_127L11
+#define OMMO_ADC_SPI_CS_PIN      (1,12)
+#define OMMO_ADC_SPI_MISO_PIN    NRF_GPIO_PIN_MAP(1,13)
+#define OMMO_ADC_SPI_MOSI_PIN    NRF_GPIO_PIN_MAP(1,14)
+#define OMMO_ADC_SPI_SCK_PIN     NRF_GPIO_PIN_MAP(1,10)
+#define OMMO_ADC_BUS_TYPE        IC_BUS_TYPE_SPI
+#define OMMO_ADC_PORT            0
+#define OMMO_ADC_SS_INDEX        0
+
+
+#define OMMO_PM_SPI_BUSSES  ( .miso_pin = OMMO_ADC_SPI_MISO_PIN, .mosi_pin = OMMO_ADC_SPI_MOSI_PIN, .sck_pin = OMMO_ADC_SPI_SCK_PIN, \
+                              .frequency = NRF_SPIM_FREQ_16M, .mode = NRF_SPIM_MODE_1 )
+
+const spi_bus_t port_master_spi_busses[] = {FOR_EACH(SPI_BUS_DEF, OMMO_PM_SPI_BUSSES)};
+
+
+#define GPIO_DEF(arg) NRF_GPIO_PIN_MAP arg,
+
+
+
+
+-----------------
 
 #define NRFX_SPIM_INSTANCE(id)                              
 {                                                           

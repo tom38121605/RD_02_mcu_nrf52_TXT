@@ -1,24 +1,123 @@
 ﻿
-FREQ_16M:
+[系统上电 / 复位]
+      │
+      ▼
+[main()] [main.cpp]
+      │
+      ├─► 初始化各个外设底层驱动 (USB, TIMER3, ESB等)
+      ├─► comms_esb_init() 
+      ├─► usb_serial_init()
+      └─► adc_sensors_init() [ADS127L11_mux_sampler.cpp]
+            │
+            ├─► 1. 初始化 SPI (port_master_acquire)
+            ├─► 2. 初始化内部 SAADC (配置引脚、分辨率、过采样)
+            ├─► 3. adc_ppi_init() (极其关键！把 MUX、START引脚、DRDY、SPI 用 PPI 连好)
+            ├─► 4. 初始化 TIMER0 并挂载中断 (sampling_timer_event_handler)
+            └─► 5. 配置 Set/Reset 的 CC2/CC3 阈值及 SHORT 停表
+      │
+      ▼
+[等待上位机指令]
+      │
+      ▼
+[USB 或 ESB 接收指令] (例: OMMO_COMMAND_USB_DATA_ENABLE)
+      │
+      ▼
+[usb_serial_packet_received] [main.cpp]
+      │
+      ├─► 若指令为“开启数据流”
+      └─► 调用 adc_sensors_enable() [ADS127L11_mux_sampler.cpp]
+            │
+            ├─► 1. 打开桥式电路电源 (VBRIDGE_EN)
+            ├─► 2. 检查是否过压 (比较器)
+            └─► 3. 调用 adc_sensors_start_state_machine()
+                  │
+                  ├─► 关闭 PPI 组 (防止中途乱触发)
+                  ├─► 禁用并清零 TIMER0
+                  ├─► 开启内部 SAADC
+                  │
+                  ▼
+            [adc_sensors_restart_state_machine] (软件) ────────┐
+                  │                                          │
+                  ├─► 设置 TIMER0 的 CC0 阈值 (1us，用于切 MUX)  │
+                  ├─► 设置 TIMER0 的 CC1 阈值 (60us，用于发 START)│
+                  ├─► 恢复 PPI 的默认配置                        │
+                  ├─► 配置内部 SAADC 采 Vbias/Vsense            │
+                  └─► 调用 comm_device_ptr->trx(HOLD模式)       │
+                        └─► 预装 SPI 接收和回调                 │
+                  │                                          │
+                  ▼                                          │
+            [adc_sensors_start_state_machine 收尾]               │
+                  │                                          │
+                  └─► 使能 PPI 组 (开启全部硬件触发链路) ──────────┘
+                        │
+                        ▼ (自此，TIMER3 的节拍可以踹醒 TIMER0 了)
+======================================================================
+ [纯硬件时间线] 
+ TIMER3 Sample Event ──(PPI)──► TIMER0 TASKS_START
+                                   │
+                                   ├─ CC0 到点 ──(PPI)──► 切换 MUX 到 X 通道
+                                   │
+                                   └─ CC1 到点 ──(PPI)──► 发 START 脉冲
 
-//adc sampler
-#define OMMO_ADC_127L11
-#define OMMO_ADC_SPI_CS_PIN      (1,12)
-#define OMMO_ADC_SPI_MISO_PIN    NRF_GPIO_PIN_MAP(1,13)
-#define OMMO_ADC_SPI_MOSI_PIN    NRF_GPIO_PIN_MAP(1,14)
-#define OMMO_ADC_SPI_SCK_PIN     NRF_GPIO_PIN_MAP(1,10)
-#define OMMO_ADC_BUS_TYPE        IC_BUS_TYPE_SPI
-#define OMMO_ADC_PORT            0
-#define OMMO_ADC_SS_INDEX        0
 
 
-#define OMMO_PM_SPI_BUSSES  ( .miso_pin = OMMO_ADC_SPI_MISO_PIN, .mosi_pin = OMMO_ADC_SPI_MOSI_PIN, .sck_pin = OMMO_ADC_SPI_SCK_PIN, \
-                              .frequency = NRF_SPIM_FREQ_16M, .mode = NRF_SPIM_MODE_1 )
+//===============================================
 
-const spi_bus_t port_master_spi_busses[] = {FOR_EACH(SPI_BUS_DEF, OMMO_PM_SPI_BUSSES)};
+[系统启动 / 开启采样]
+      │
+      ▼
+[adc_sensors_restart_state_machine] (软件)
+      │
+      ├─► 调用 comm_device_ptr->trx(..., COMM_DEVICE_FLAGS_HOLD) 
+      │     │
+      │     ▼
+      │   [spim_basic::trx] (软件)
+      │     1. 把 evt_handler = comm_device_event_handler 存起来
+      │     2. 把 spi_rx_buffer 接收地址和长度配给硬件
+      │     3. 因为带 HOLD 标志，不启动 SPI，武装待命！
+      │
+      ▼
+======================================================================
+ [纯硬件时间线] 
+ TIMER3 Sample Event ──(PPI)──► TIMER0 TASKS_START
+                                   │
+                                   ├─ CC0 到点 ──(PPI)──► 切换 MUX 到 X 通道
+                                   │
+                                   └─ CC1 到点 ──(PPI)──► 翻转 OMMO_ADC_START_PIN
+                                                            (外部 ADC 开始转换)
+======================================================================
+                                   │
+                                   ▼ (几十微秒后)
+ [外部 ADC 转换完成，拉低 DRDY 引脚]
+                                   │
+                                   ▼
+ [硬件 PPI 联动] 
+ DRDY 事件 ──(PPI)──► SPIM TASKS_START (SPI 硬件瞬间启动，开始疯狂收数据)
+                                   │
+                                   ▼
+ [SPI 硬件收发完毕，触发 END 事件]
+                                   │
+                                   ▼
+ [CPU 介入：进入中断]
+ [nrfx_spim_0_irq_handler] (底层)
+                                   │
+                                   ▼
+ [spim_basic::spim_handler] (软件回调)
+      │
+      ├─ 1. 把内部缓冲区的数据 memcpy 到用户指定的 spi_rx_buffer
+      ├─ 2. 备份 handler = p_this->evt_handler (掏出小本本抄号码)
+      └─ 3. 执行 handler() 
+            │
+            ▼
+ [comm_device_event_handler] (ADC 采样回调)
+      │
+      ├─ 解析 24-bit 数据存进 adc_data_buffer
+      ├─ 用原子操作把状态机推进到下一通道 (如 X -> Y)
+      └─ 再次调用 adc_sensors_start_data_read_hold()
+            │
+            ▼
+         [spim_basic::trx] (重新武装 HOLD，准备下一次 Y 通道的 DRDY)
 
-
-#define GPIO_DEF(arg) NRF_GPIO_PIN_MAP arg,
 
 
 
