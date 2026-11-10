@@ -171,15 +171,12 @@ adc_ppi_init()
 
 //----------------------EN IO XYZ 引脚设置-----------------------------------
 
-
     //配置en io xyz为输出，连接输入，无上拉，s0s1标准驱动，关闭边沿检测
     //adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_X_EN);
           nrf_gpio_cfg(pin, NRF_GPIO_PIN_DIR_OUTPUT, NRF_GPIO_PIN_INPUT_CONNECT, NRF_GPIO_PIN_NOPULL, NRF_GPIO_PIN_S0S1, NRF_GPIO_PIN_NOSENSE);
 
     adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Y_EN);
     adc_sensors_intermittent_gpiote_pin_init(OMMO_IO_Z_EN);
-
-
 
 //----------------------EN IO XYZ 引脚设置-----end------------------------------
 

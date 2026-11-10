@@ -449,6 +449,12 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 
 
 
+===============================================spi传输数据==========================================================
+
+
+
+
+
 
 
 
@@ -458,45 +464,8 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 
 
 
-main
 
-    
-    //adc_sensors_init(&sample_set_ready);
-    //  port_master_acquire(OMMO_ADC_PORT, OMMO_ADC_BUS_TYPE, OMMO_ADC_SS_INDEX, &comm_device_ptr);   //here
-    //  spim_instance.acquire(&config);   //初始化spi0
-         reconfigure(p_cfg, false);
-
-
-    
-
-    。。。。。。
-
-
-
-
-
----------------
-
-参数： config, false
-spim_basic::reconfigure(  * p_cfg, direct)
-
-   。。。。。。
-
-
-    //spi中断函数设置
-    //spi引脚设置
-    //设置FREQUENCY, spi的频率为16M
-    //设置spi的中断优先级为1，使能spi的irq总中断
-    //nrfx_spim_init(spim_instance, spim_cfg, spim_handler, this);
-
-       nrfx_prs_acquire( NRF_SPIM0, nrfx_spim_0_irq_handler );
-
-       p_cb->handler = handler;   //spim_handler    //spim_handler ，spi中断回调函数
-
-
-
-
-------------
+--------------
 
 //spi中断入口函数
 nrfx_spim_0_irq_handler( )
@@ -512,9 +481,8 @@ nrfx_spim_0_irq_handler( )
 irq_handler(  p_spim,  p_cb)
 
 
-    if (nrf_spim_event_check(p_spim, NRF_SPIM_EVENT_END))   //有传输完成标志
-    
-        nrf_spim_event_clear(p_spim, NRF_SPIM_EVENT_END);
+    if (nrf_spim_event_check(p_spim, NRF_SPIM_EVENT_END))   //有传输完成中断标志    
+        nrf_spim_event_clear(p_spim, NRF_SPIM_EVENT_END);   //清中断标志
 
         finish_transfer(p_cb);
     
@@ -530,7 +498,6 @@ finish_transfer( * p_cb)
        
     p_cb->transfer_in_progress = false;
 
-
     p_cb->evt.type = NRFX_SPIM_EVENT_DONE;
 
 
@@ -538,9 +505,6 @@ finish_transfer( * p_cb)
     //p_cb->handler(&p_cb->evt, p_cb->p_context);
        spim_basic::spim_handler(&p_cb->evt, this);
  
-
-
-
 
 
 
@@ -560,31 +524,37 @@ pim_basic::spim_handler( p_event,  p_context)
       p_this = this;     //this 是指spim_instance，即spim_basic(&spi_peripheral[0])
 
 
-    OMMO_TRACE_ISR_ENTER_CALLBACK(TRACE_ISR_SPI_BASIC, p_this->evt_handler);
+    OMMO_TRACE_ISR_ENTER_CALLBACK(TRACE_ISR_SPI_BASIC, p_this->evt_handler);  //记录进入中断函数的时间
 
 
-    p_this->trx_complete = true;
+    p_this->trx_complete = true;   //标记已传输完成
 
+    //这里是data irq通知一次传一次数据，固要关闭spi
     if (!p_this->is_repeated)
-        nrf_spim_disable(p_this->spim_instance->p_reg);
+        //nrf_spim_disable(p_this->spim_instance->p_reg);
+          p_reg->ENABLE = 000 << 0;    //关闭spi
 
 
-    // Copy the received data to the provided buffer
-    if (p_this->acq == SPIMB_ACQ_NORMAL)
+    // 普通模式，如下手工搬运数据    //如果是直接模式（DIRECT），数据早就被 DMA 直接怼进用户提供的 p_rx_buffer
+    if (p_this->acq == SPIMB_ACQ_NORMAL)    
+
+        //把spi引脚收到的数据，保存到本地buffer中
+        memcpy(p_this->evt_rx_buffer,                                         // 目标地址
+               p_this->io_buffer + p_event->xfer_desc.tx_length,              // 源地址
+               p_event->xfer_desc.rx_length - p_event->xfer_desc.tx_length);  // 数据长度 (SPI 是“全双工”的，发出3个字节，会收回来3个垃圾字节，所以要减去)
     
-        // Copy rx data into output buffer (skipping rx during tx)
-        memcpy(p_this->evt_rx_buffer, p_this->io_buffer + p_event->xfer_desc.tx_length,
-               p_event->xfer_desc.rx_length - p_event->xfer_desc.tx_length);
-    
 
 
-    // Fire event handle if specified
-    comm_device_event_handler_t handler = p_this->evt_handler;
+    // 备份一个回调函数的地址
+    handler = p_this->evt_handler;   //在spim_basic::trx中设置的 （以后再看）
+
 
     if (handler)
-        handler(p_this, COMM_DEVICE_TRX_RESULT_SUCCESS, p_this->evt_context);
+        handler(p_this, COMM_DEVICE_TRX_RESULT_SUCCESS, p_this->evt_context);    //在spim_basic::trx中设置的 （以后再看）
 
-    OMMO_TRACE_ISR_EXIT_CALLBACK(TRACE_ISR_SPI_BASIC, handler);
+
+
+    OMMO_TRACE_ISR_EXIT_CALLBACK(TRACE_ISR_SPI_BASIC, handler);     //记录退出中断函数的的时间
  
 
 

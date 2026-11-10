@@ -1,4 +1,36 @@
 ﻿
+外部干预：时间同步与捕获链路
+当基站发来同步脉冲时，流程会打断/修正 TIMER3 的轨迹。
+
+
+[基站发送同步脉冲]
+       │
+       ▼
+UARTE 接收到数据 (硬件)
+       │
+       ▼ [PPI 连线] (timestamp_add_capture_event_with_disable)
+TIMER3 硬件自动捕获当前计数器值 (TASKS_CAPTURE)
+       │
+       ▼
+UARTE_IRQHandler 触发 (软件)
+       │
+       ▼
+comms_uarte 解析数据
+       │
+       ▼
+timestamp_synch_recieved(basestation_ts, local_event_ts, source) [timestamp_timer.cpp]
+       │
+       ├─► 计算 timestamp_synch_offset = 基站时间 - 本地时间
+       ├─► 修正 sample_event_trigger_value
+       ├─► nrfx_timer_compare() // 强制把下一次采样时间对齐到基站时间轴
+       └─► timestamp_reset_synch_lost_timer() // 重置监控，防止报“同步丢失”
+
+
+
+
+---------------------------------------
+
+
 
 [TIMER3] (1ms 触发)
     │

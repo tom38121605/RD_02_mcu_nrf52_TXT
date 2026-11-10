@@ -186,7 +186,7 @@ adc_sensors_init(  sample_set_ready_callback_function  )
 
 
 
-    //设置timer0的irq总中断优先级，使能timer0的irq总中断，定时器模式，bitwidth为32位，预分频为0
+    //设置timer0的irq总中断优先级0，使能timer0的irq总中断，定时器模式，bitwidth为32位，预分频为0
     timer_cfg = NRFX_TIMER_DEFAULT_CONFIG;
     timer_cfg.interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;
     nrfx_timer_init(&adc_sampling_timer, &timer_cfg, sampling_timer_event_handler);   // 回调函数 sampling_timer_event_handler
@@ -268,8 +268,8 @@ timer_cfg：
     .interrupt_priority = OMMO_ADC_SAMPLING_TIMER_PRIORITY;  //0
 
 
-数据流：timestamp_timer_event_handler --> m_cb[0].handler
-数据流：                         0    --> m_cb[0].context
+数据流：adc_sampling_timer --> m_cb[0].handler
+数据流：            null   --> m_cb[0].context
 
 参数： adc_sampling_timer, timer_cfg, sampling_timer_event_handler
 nrfx_timer_init( p_instance, p_config, timer_event_handler )
@@ -284,19 +284,18 @@ nrfx_timer_init( p_instance, p_config, timer_event_handler )
     p_cb->handler = timer_event_handler;      //sampling_timer_event_handler
     p_cb->context = p_config->p_context;      //null
 
-    //清除6个EVENTS_COMPARE事件标志
-    for (i = 0; i < p_instance->cc_channel_count; ++i)  //6
+    //清除4个EVENTS_COMPARE事件标志
+    for (i = 0; i < p_instance->cc_channel_count; ++i)  //4
     
-        //nrf_timer_event_clear(NRF_TIMER3, nrf_timer_compare_event_get(i));
-        //  nrf_timer_event_clear(NRF_TIMER3, NRFX_OFFSETOF(NRF_TIMER_Type, EVENTS_COMPARE[i]) );
-               *(NRF_TIMER3 +  EVENTS_COMPARE[i]) = 0;
+        //nrf_timer_event_clear(NRF_TIMER0, nrf_timer_compare_event_get(i));
+        //  nrf_timer_event_clear(NRF_TIMER0, NRFX_OFFSETOF(NRF_TIMER_Type, EVENTS_COMPARE[i]) );
+               *(NRF_TIMER0 +  EVENTS_COMPARE[i]) = 0;
 
     //设置timer0的irq总中断优先级0
     NRFX_IRQ_PRIORITY_SET(nrfx_get_irq_number(p_instance->p_reg),  p_config->interrupt_priority);  
 
     //使能timer0的irq总中断
     NRFX_IRQ_ENABLE(nrfx_get_irq_number(p_instance->p_reg));        
-
 
 
     //nrf_timer_mode_set(p_instance->p_reg, p_config->mode);       //设置为timer为定时器模式

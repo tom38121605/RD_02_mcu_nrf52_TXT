@@ -356,8 +356,8 @@ irq_handler(    *p_reg,   *p_cb,   channel_count)
         
             nrf_timer_event_clear(p_reg, event);    //清除事件标记
 
-            p_cb->handler(event, p_cb->context);    //进入中断服务程序
-                timestamp_timer_event_handler(event, p_cb->context) 
+            //p_cb->handler(event, p_cb->context);    //进入中断服务程序
+              timestamp_timer_event_handler(event, p_cb->context) 
 
 
 -----------
@@ -382,21 +382,35 @@ timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3
     //如果timer3 CC0的通道值没有越界 
     if( sample_event_compare_channel !=  0xFF )    //yes
 
+        NRFX_CRITICAL_SECTION_ENTER();   //关全局中断
+
+
+        //-----------------cc2到cc5的中断处理----------忽略跳过-------------------------
+
+        //因timestamp_create_sample_event_offset_event没有被调用，next_free_sample_time_offset_index等于0，忽略跳过这里
+
         //timer3 cc2中断处理，控制set/reset （只有timer3 cc2是保存在偏移数值里面的）  //cc0，cc1跳过这里         
         for(  i=0; i<next_free_sample_time_offset_index; i++)
 
             //把timer3 cc2的新门槛值（旧值 + 700us）写入到timer3的cc2中，不使能timer3 cc2中断  
-            nrfx_timer_compare(&timer_timestamp,  sample_time_offset_cc_channel[i],   sample_event_trigger_value + sample_time_offset_time[i],  false  );  //700us
+            nrfx_timer_compare(&timer_timestamp,  sample_time_offset_cc_channel[i],   sample_event_trigger_value + sample_time_offset_time[i],  false  );  //动态设置
+        
+        //-----------------cc2到cc5的中断处理-----end------------------------------
 
         
-        //计算timer3 cc0的新门槛值
+        //计算timer3 cc0的新门槛值,并作回绕处理
         do
         {
             sample_event_trigger_value += OMMO_TIMESTAMP_SAMPLE_PERIOD;   //15984， 1ms
 
-            AAA = calculate_wrapped_delta(nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel) + 100, sample_event_trigger_value, UINT32_MAX);  //0xffffffff
+            XXX = nrfx_timer_capture(&timer_timestamp, sample_event_compare_channel) + 100; 
+            YYY = sample_event_trigger_value;
+
+            AAA = calculate_wrapped_delta(XXX, YYY, UINT32_MAX);  //0xffffffff
         }
         while( AAA  > 0 );  //如果错过了这个 ISR，则向前推进（仅在 USB 连接期间发生）
+
+
 
 
         //把timer3 cc0的新门槛值（旧值 + 1ms）写入到timer3 cc0中，使能timer3 cc0中断
@@ -425,21 +439,23 @@ timestamp_timer_event_handler(  event_type,   *p_context)   //目前只有timer3
             nrfx_timer_compare(&timer_timestamp, timestamp_synch_event_compare_channel, synch_event_trigger_value, false);
 
             
-            //没有下面函数的调用，忽略跳过
+            //没有下面函数的调用，忽略跳过 （timestamp_synch_execute_functions_num一直为0）
             for(uint8_t i = 0; i < timestamp_synch_execute_functions_num; i++)
                 timestamp_synch_execute_functions[i](synch_event_trigger_value + timestamp_synch_offset); //Convert value to BS units
         
 
+        NRFX_CRITICAL_SECTION_EXIT();   //开全局中断
 
-    //调用timer3 cc2的回调函数  //待完善
+
+
+    //调用timer3 cc2 ? 的回调函数  //待完善   
     for(uint8_t i = 0; i < sample_event_callbacks_num; i++)   //1
 
        //待完善  （先看uart中断函数）
        //sample_event_callbacks[i](event_type, p_context);
-          sample_timer_event_handler(event_type, p_context);
+          sample_timer_event_handler(event_type, p_context);   //本函数跟13668工程不一样
 
  
-
 
 --------
 

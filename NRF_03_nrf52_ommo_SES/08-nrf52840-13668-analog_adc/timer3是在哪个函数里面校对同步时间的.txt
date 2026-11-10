@@ -1,4 +1,75 @@
 ﻿ 
+相关函数： UARTE ENDRX 中断 -- timestamp_synch_recieved()  --  sample_event_trigger_value 
+
+
+===================================
+
+
+外部基站（Basestation）发信号 ➔ 本地硬件瞬间抓取时间 ➔ 软件计算偏差 ➔ 强行拨正本地时钟（TIMER3）。
+
+[基站 Basestation] 
+    │ 
+    │ 每 4ms 发送一次同步脉冲 (携带基站的绝对时间戳 basestation_ts)
+    ▼
+[UARTE 硬件]
+    │ 
+    │ 接收完成 (ENDRX)
+    ├─► (纯硬件 PPI) ──► 瞬间触发 TIMER3 的 CAPTURE 任务
+    │                      (此时 TIMER3 的计数器值被锁存，记为 local_event_ts)
+    │
+    └─► (触发中断) ──► 进入 UARTE 接收回调
+                          │
+                          ▼
+                    解析出 basestation_ts
+                    读取刚才抓取的 local_event_ts
+                          │
+                          ▼
+             调用 timestamp_synch_recieved() 
+                          │
+                          ▼
+==============================================================
+ 核心同步算法 timestamp_synch_recieved() 内部：
+ 1. 计算时间差 (偏移量)
+    timestamp_synch_offset = (basestation_ts + 传输延迟) - local_event_ts;
+
+ 2. 强行修改 TIMER3 的“下一拍”触发时间
+    sample_event_trigger_value = basestation_ts + SAMPLE_PERIOD - offset;
+    nrfx_timer_compare(TIMER3, 采样CC通道, sample_event_trigger_value);
+
+ 3. 强行修改 TIMER3 的“下一次同步”触发时间
+    synch_event_trigger_value = basestation_ts + SYNCH_PERIOD - offset;
+    nrfx_timer_compare(TIMER3, 同步CC通道, synch_event_trigger_value);
+
+ 4. 重置看门狗 (重置同步丢失超时定时器，防止误报断连)
+    timestamp_reset_synch_lost_timer();
+==============================================================
+                          │
+                          ▼
+[TIMER3 已校准]
+    │
+    │ (自由运行，每 1ms 产生一次 Sample Event)
+    ├─► (纯硬件 PPI) ──► 触发 TIMER0 采样
+    └─► (中断) ──► timestamp_timer_event_handler()
+                      └─► 累加时间戳，并发出回包给基站 (如果有)
+
+
+
+极简说明：
+
+物理抓取：UARTE 收到脉冲的瞬间，靠 PPI 让 TIMER3 拍个照（抓取当前计数）。
+
+软件算账：用基站的绝对时间减去本地抓拍的时间，算出“我比你慢了多少（offset）”。
+
+物理拨表：直接把算好的未来触发时间（门槛值）写进 TIMER3 的 CC 寄存器。TIMER3 下一秒就按基站的时间跑了。
+
+
+
+
+
+
+-------------------------------------------------待验证---------------------------------------------------
+
+
 
 TIMER3 的时间校准（校对同步）核心发生在 timestamp_synch_recieved() 这个函数里（位于 timestamp_timer.cpp）。
 

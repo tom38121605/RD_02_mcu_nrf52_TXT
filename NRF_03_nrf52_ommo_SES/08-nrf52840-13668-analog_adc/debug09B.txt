@@ -2,6 +2,26 @@
 timer3： timer_timestamp
 
 
+----------------------------------
+
+
+
+通道号	分配方式	核心功能	对应代码变量/动作
+
+CC0	固定	采样节拍触发	sample_event_compare_channel。产生 1ms 的采样事件，通过 PPI 踹醒 TIMER0。
+CC1	固定	同步节拍触发	timestamp_synch_event_compare_channel。产生 4ms 的同步事件，用于对齐基站并触发 UARTE 发回包。
+
+CC2	动态	外部信号捕获	timestamp_get_capture_compare_channel()。例如 UARTE 收到基站同步包时，瞬间锁存当前时间。
+CC3	动态	偏移/外部捕获	timestamp_create_sample_event_offset_event()。用于产生采样偏移事件，或作为备用捕获通道。
+
+CC4	动态	备用	前几个通道被占满时，动态分配给外部事件抓拍。
+CC5	动态	备用	同上。
+
+(注：CC2 ~ CC5 是公用的资源池，谁先申请谁先用。)
+
+
+--------------------------------------------
+
 
 
 #define OMMO_TIMESTAMP_TIMER          NRFX_TIMER_INSTANCE(3) //Timers 3 & 4 have 6 CC registers
@@ -9,4 +29,18 @@ static nrfx_timer_t timer_timestamp = OMMO_TIMESTAMP_TIMER;
 
 
 static  nrf_timer_cc_channel_t      sample_event_compare_channel = 0xFF;
+
+
+
+#define NRFX_TIMER_DEFAULT_CONFIG                                                    \
+{                                                                                    \
+    .frequency          = (nrf_timer_frequency_t)NRFX_TIMER_DEFAULT_CONFIG_FREQUENCY,\     //0 , 16MHz
+    .mode               = (nrf_timer_mode_t)NRFX_TIMER_DEFAULT_CONFIG_MODE,          \     //0 , Timer mode
+    .bit_width          = (nrf_timer_bit_width_t)NRFX_TIMER_DEFAULT_CONFIG_BIT_WIDTH,\     //3 , 32 bit
+    .interrupt_priority = NRFX_TIMER_DEFAULT_CONFIG_IRQ_PRIORITY,                    \     //6
+    .p_context          = NULL                                                       \
+}
+
+
+
 
