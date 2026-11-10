@@ -1,4 +1,121 @@
 ﻿
+
+======================================================================
+ [第一部分：系统初始化阶段] (准备枪和子弹)
+======================================================================
+[main()]
+  │
+  └─► adc_sensors_init()
+        │
+        ├─► 1. port_master_acquire(SPI 实例)
+        │      └─► 初始化 SPIM 硬件、配置 SCK/MOSI/MISO 引脚、频率设 16M
+        │
+        └─► 2. adc_ppi_init()
+               ├─► 配置 DRDY 引脚为输入触发源 (高精度下降沿检测)
+               └─► 连线 adc_ready_spi_read_ppi:
+                     (DRDY 事件) ──(PPI)──► (SPIM TASKS_START)
+                     (DRDY 事件) ──(PPI fork)──► (翻转 START 引脚复位)
+
+======================================================================
+ [第二部分：软件装配阶段] (压弹入膛)
+======================================================================
+
+======================================================================
+ 触发源（三种情况）：
+ 1. 启动指令: 初始化时 -> adc_sensors_restart_state_machine()
+ 2. TIMER0中断: sampling_timer_event_handler() 里为下一个通道做准备
+ 3. SPI中断: comm_device_event_handler() 读完当前通道后
+======================================================================
+
+[触发采样指令 / TIMER0中断 / 上一轮SPI中断]
+  │
+  └─► adc_sensors_start_data_read_hold()
+        │
+        └─► comm_device_ptr->trx(..., COMM_DEVICE_FLAGS_HOLD)
+              │
+              └─► spim_basic::trx()
+                    ├─► 保存 evt_handler = comm_device_event_handler (记下收件人)
+                    ├─► 配置 DMA 接收地址: spi_rx_buffer
+                    ├─► 告诉 SPI 硬件: “等下让你发 0 字节，收 5 字节”
+                    └─► 设置 HOLD 标志 (只装弹，不扣扳机，等 PPI 硬件信号)
+
+======================================================================
+ [第三部分：纯硬件触发阶段] (不用CPU，硬件自己跑)
+======================================================================
+[外部 ADC 转换完成]
+  │
+  └─► 拉低 DRDY 引脚
+        │
+        └─► PPI 硬件瞬间响应 (纳秒级，零 CPU 参与)
+              ├─► 主任务: 触发 SPIM TASKS_START  (SPI 硬件立刻开始输出 SCK 时钟，搬运数据)
+              └─► 分支任务: 翻转 START 引脚 (把之前的启动电平复位，准备下一次)
+
+======================================================================
+ [第四部分：中断收尾阶段] (数据交付)
+======================================================================
+[SPI 硬件接收完 5 个字节]
+  │
+  └─► 触发 SPIM END 事件
+        │
+        └─► 引发 CPU 中断 (进入 spim_basic::spim_handler)
+              │
+              ├─► 1. nrf_spim_disable() (不是连续传输，立刻关掉 SPI 省电)
+              │
+              ├─► 2. memcpy() 
+              │      把内部临时中转站 (io_buffer) 的数据，搬到用户指定的 spi_rx_buffer
+              │
+              ├─► 3. 掏出小本本备份: handler = p_this->evt_handler
+              │
+              └─► 4. 执行 handler() 
+                     │
+                     ▼
+             [comm_device_event_handler] (ADC 处理层)
+                     │
+                     ├─► 解析 24-bit 数据存入 adc_data_buffer
+                     ├─► 推进状态机 (X -> Y -> Z)
+                     └─► 再次调用 adc_sensors_start_data_read_hold()
+                           │
+                           └─► 再次进入 [第二部分] 开始新一轮循环
+
+
+-------------
+
+【路径 1：系统刚启动时（挂载第一枪）】
+上位机下指令 / 初始化
+  │
+  └─► adc_sensors_start_state_machine()
+        │
+        └─► adc_sensors_restart_state_machine()
+              │
+              ├─► 配置好 X 通道的 CC0/CC1 阈值和 PPI
+              └─► 调用 adc_sensors_start_data_read_hold()  // 第 1 次挂载 SPI
+
+
+【路径 2：TIMER0 中断里（为下一个通道做准备）】
+TIMER0 的 CC1 触发中断
+  │
+  └─► sampling_timer_event_handler()
+        │
+        ├─► 切换状态为 COMPLETE
+        └─► 重配 CC0/CC1 为 Y 通道的阈值
+            (注意：这里并没有直接调用 start_data_read_hold)
+
+
+【路径 3：SPI 中断里（读完上一个通道后，挂载下一个）】
+外部 ADC 拉低 DRDY -> SPI 读取完毕 -> SPI END 中断
+  │
+  └─► comm_device_event_handler()
+        │
+        ├─► 取出 adc_data_buffer 数据
+        ├─► 用 CAS 原子操作把状态推进 (比如 X->Y)
+        │
+        └─► if (CAS 推进成功) 
+              └─► 调用 adc_sensors_start_data_read_hold() // 立刻挂载下一次 SPI
+
+
+
+//=================================================
+
 [系统上电 / 复位]
       │
       ▼
