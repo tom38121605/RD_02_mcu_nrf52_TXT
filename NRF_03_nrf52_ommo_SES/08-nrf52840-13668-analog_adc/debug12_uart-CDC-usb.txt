@@ -1,4 +1,72 @@
 ﻿
+======================= 第一阶段：初始化（建厂挂牌） =======================
+
+main() 
+  │
+  ├─► USBD_Init() / USB_OS_Init()      // 底层硬件与系统任务初始化
+  ├─► NRF_CLOCK->TASKS_HFCLKSTART = 1  // 启动高频时钟
+  ├─► USBD_AddDriver()                 // 挂载 nRF52 硬件驱动
+  ├─► USBD_EnableIAD()                 // 声明为 USB 复合设备
+  │
+  ├─► USBD_AddEPEx(&EPBulkIn)          // 申请 Bulk 批量端点（大货车，传 ADC 数据）
+  ├─► USBD_AddEPEx(&EPIntIn)           // 申请 Int 中断端点（小电驴，传状态）
+  │
+  ├─► usbd_main_add_cdc()              // 申请缓冲区，注册 CDC 串口功能（发营业执照）
+  ├─► usb_serial_init(received, event) // 注册：数据到达回调、插拔状态回调
+  │
+  └─► USBD_Start()                     // 拉起 D+ 引脚（开门营业）
+        │
+        ▼ (电脑枚举，识别出 COM 口)
+
+
+======================= 第二阶段：数据通讯（流水线运转） =======================
+
+【接收流程：电脑 -> 板子 (RX)】
+
+[电脑] 串口助手发送指令
+  │
+  ▼ (USB 物理线缆)
+[USB 硬件 EP OUT 端点] 
+  │
+  ▼ (触发 USB 中断，数据存入接收缓冲区)
+[协议栈底层] 
+  │
+  ▼ (自动调用注册好的接收回调)
+[usb_serial_packet_received()] (main.cpp)
+  │
+  ├─► 解析指令 (如 OMMO_COMMAND_USB_DATA_ENABLE)
+  └─► 启动 ADC 采样状态机
+
+
+【发送流程：板子 -> 电脑 (TX)】
+
+[底层采样完成] (触发 sample_set_ready)
+  │
+  ▼
+[usb_serial_write_data_packet_vargs()] 
+  │ (打包时间戳、ADC数据)
+  ▼
+[CDC 发送队列 / 缓冲区]
+  │
+  ▼ (等待电脑主机发来 IN 令牌)
+[USB 硬件 EP IN 端点] (通过 EPBulkIn 通道发送)
+  │
+  ▼
+[电脑] 上位机软件接收并解析 ADC 波形
+
+
+【插拔事件流程】
+
+[物理 USB 拔插] 
+  │
+  ▼ 
+[USB 硬件/底层驱动]
+  │ 
+  ▼
+[usb_serial_event_handler()] (main.cpp)
+  │
+  ├─► OPENED： 切换状态，停用无线，准备 USB 传数据
+  └─► CLOSED： 切换状态，启用 ESB 无线传输
 
 
 
