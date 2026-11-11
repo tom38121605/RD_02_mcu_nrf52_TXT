@@ -1,0 +1,392 @@
+﻿
+
+
+
+
+
+===============================================uart CDC 初始化==========================================================
+
+
+
+int main(void)
+
+
+
+    。。。。。。
+
+
+    //把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+    //usb时钟设置
+    //usb相关变量初始化
+    //设置为usb复合设备
+    usbd_main_init();
+
+
+
+   //  
+   //usb_serial_init(usb_serial_packet_received, usb_serial_event_handler);
+   //  usb_serial.init(usb_serial_packet_received, usb_serial_event_handler);
+       comms_usb_serial::init(usb_serial_packet_received, usb_serial_event_handler);
+
+
+    //usbd_main_start();
+      USBD_Start();
+
+
+    。。。。。。
+
+
+
+
+
+-------
+
+
+
+参数: usb_serial_packet_received, usb_serial_event_handle
+
+comms_usb_serial::init(  packet_ready_handler,  ev_callback)
+ 
+    usb_cdc_event_handler  = usb_serial_event_handle;
+
+
+    usb_cdc_dtr_state = USB_SERIAL_DTR_STATE_OFF;
+    usb_current_state = USB_SERIAL_STATE_DETACHED;
+    usb_target_state  = USB_SERIAL_STATE_DETACHED;
+
+    //空函数，忽略跳过
+    USB_TRACE_STATE_CHANGE_INIT();
+
+
+    //把新的hook插入到链表里面首位
+    USBD_RegisterSCHook(&usb_state_hook, static_usb_on_state_change, this);
+
+    //
+    usb_cdc_handle = usbd_main_add_cdc(usb_cdc_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE, USB_SERIAL_TX_BUFFER_SIZE);  //3072, 16384
+
+
+    USBD_CDC_SetOnControlLineState(usb_cdc_handle, static_usb_cdc_on_line_state_change, this);
+
+
+    // Initialize our transport layer variables
+    write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt;
+    write_io_ctx.pContext = this;
+    read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;
+    read_io_ctx.pContext = this;
+
+    //Initialize the packetizer
+    comms_packetizer::init(this, packet_ready_handler, this);
+
+
+    // Allocate timeout channel.  On USB-powered devices, power is typically interrupted during
+    // host hibernation, causing the connection to close.  On battery-powered devices, a
+    // momentarily power loss will not cause the connection to close.  A one second timeout ensures
+    // that a true USB SUSPEND operation eventually closes the connection, regardless of how the
+    // device is powered or how the host controls power.
+    rtc_timer_get_timeout_channel(&reconnect_timeout_channel, static_on_reconnect_timeout, this);
+
+
+
+------
+
+
+
+
+
+参数：  usb_cdc_raw_buffer,  3072， 16384
+
+USB_CDC_HANDLE usbd_main_add_cdc( rx_buffer,   rx_buffer_len,   max_tx_buffer_len )
+ 
+    static const USB_ADD_EP_INFO   EPBulkIn =  
+        .MaxPacketSize = max_tx_buffer_len,       // Maximum packet size
+        .Interval      = 0,                       // Interval not used for Bulk endpoints.
+        .Flags         = 0,                       // Flags not used.
+        .InDir         = USB_DIR_IN,              // IN direction (Device to Host)
+        .TransferType  = USB_TRANSFER_TYPE_BULK,  // Endpoint type - Bulk.
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+    const USB_ADD_EP_INFO   EPBulkOut =  
+        .MaxPacketSize = rx_buffer_len,            // Maximum packet size
+        .Interval      = 0,                     // Interval not used for Bulk endpoints.
+        .Flags         = 0,                     // Flags not used.
+        .InDir         = USB_DIR_OUT,           // OUT direction (Host to Device)
+        .TransferType  = USB_TRANSFER_TYPE_BULK,// Endpoint type - Bulk.
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+
+    USB_CDC_INIT_DATA InitData = {};
+
+    InitData.EPIn              = USBD_AddEPEx(&EPBulkIn, nullptr, 0);
+    InitData.EPOut             = USBD_AddEPEx(&EPBulkOut, rx_buffer, rx_buffer_len);   //输入端口, rx_buffer, 3072
+ 
+    static const USB_ADD_EP_INFO   EPIntIn =  
+        .MaxPacketSize = 16, 
+        .Interval      = 64,                   // 8 ms 
+        .Flags         = 0,
+        .InDir         = USB_DIR_IN,
+        .TransferType  = USB_TRANSFER_TYPE_INT,
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+    InitData.EPInt             = USBD_AddEPEx(&EPIntIn, nullptr, 0);
+ 
+    return USBD_CDC_Add(&InitData);
+ 
+
+
+
+
+
+
+
+
+------
+
+
+//待理解
+
+void USBD_Start( )  
+
+  const USB_HW_DRIVER * pDriver;
+
+  USBD_PROFILE_CALL_VOID(USBD_EVTID_START);
+ 
+ 
+  if (USB_Global.EventsIdx != 0u && USB_Global.EventsIdx < USB_Global.NumEPs) 
+    USB_PANIC("Can't allocate event (increase USB_EXTRA_EVENTS)");
+   
+  pDriver = USB_Global.pDriver;
+   
+  // Fire up the hardware   
+  pDriver->pfStart();
+
+  if (pDriver->pfControl != NULL)  
+     
+    // Get driver flags     
+    pDriver->pfControl(USB_DRIVER_CMD_GET_FLAGS,  SEGGER_PTR2PTR(USB_IOCTL_PARA, &USB_Global.Flags));     // lint D:100[f]
+   
+  USB_Global.State = USB_STAT_ATTACHED;
+  pDriver->pfAttach();
+  USBD_PROFILE_END_CALL(USBD_EVTID_START);
+ 
+
+
+
+
+-------
+
+//把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+//usb时钟设置
+//usb相关变量初始化
+//设置为usb复合设备
+
+usbd_main_init()
+
+    //把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+    ommo_usbd_serial_num_generate();
+
+   //usb时钟设置
+   //usb相关变量初始化
+    USBD_Init();
+
+    //设置为usb复合设备
+    //USBD_EnableIAD();
+      USB_MEMSET(_aIADDesc, 0xff, sizeof(_aIADDesc));
+      _NumIADs  = 0;
+      USB_Global.pIadAPI = &_IadAPI;
+      USB_Global.Class    = 0xEF;    // Interface Class
+      USB_Global.SubClass = 0x02;    // Interface Subclass
+      USB_Global.Protocol = 0x01;    // Interface Protocol
+
+
+    //USBD_SetDeviceInfo(&usb_device_info);
+      USB_Global.pDeviceInfo = usb_device_info;
+
+
+
+
+------
+
+//usb时钟设置
+//usb相关变量初始化
+
+USBD_Init( )  
+
+  const USB_HW_DRIVER    * pDriver;
+
+   
+  //USB_Global，USB_aEPStat置初值
+  USB_MEMSET(&USB_Global, 0, sizeof(USB_Global));
+  USB_Global.sCopyright = "SEGGER emUSBD V" VERSION2STRING(USB_VERSION);
+  USB_Global.NumEPs     = 1;
+  USB_Global.USBSpecRev = 0x0200;
+  USB_Global.MaxPower   = USB_MAX_POWER;
+  USB_Global.MaxPowerSS = USB_MAX_POWER / 4u;
+  USB_Global.pfOnBCDVersion = _GetBCDVersion;
+  USB_MEMSET(USB_aEPStat, 0, sizeof(USB_aEPStat));
+   
+
+  // 待办事项流水线 ，设置变量_aEvent[0] 到 _aEvent[8]都为 0xffffffff
+  USB_OS_Init();
+   
+
+  //设置usb协议栈底层驱动 
+  USBD_X_Config();
+
+      //清零事件标记
+      NRF_CLOCK->EVENTS_HFCLKSTARTED = 0;
+
+      //启动“高频时钟”（HFCLK），如没有外部晶振，启动芯片内部的 64MHz RC 振荡器（HFINT）
+      NRF_CLOCK->TASKS_HFCLKSTART = 1;
+
+      //等待时钟稳定
+      while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0) { }
+
+      //向 USB 协议栈注册底层硬件驱动（把 nRF52 专属的底层代码“挂载”到系统里）
+      //USBD_AddDriver(&USB_Driver_Nordic_nRF52xxx);   
+        USB_Global.pDriver =USB_Driver_Nordic_nRF52xxx;
+
+      //向 USB 协议栈注册中断开关
+      //USBD_SetISRMgmFuncs(_EnableISR, NULL, NULL);
+      //  USBD_SetISREnableFunc(_EnableISR)
+          USB_Global.pfEnableISR = _EnableISR;
+
+
+   
+// 直接触发中断函数中的事件  (这里是空宏，意味着关闭事件回调)
+  USBD_PROFILE_CALL_VOID(USBD_EVTID_INIT);
+
+  pDriver = USB_Global.pDriver;
+
+
+  if (USB_Global.pfAttach == NULL)  
+    USB_Global.pfAttach = _DummyAttach;
+
+   
+  if (pDriver->pfInit != NULL)  
+    pDriver->pfInit();
+
+
+ 
+  USB_aEPStat[0].MaxPacketSize = pDriver->pfGetMaxPacketSize(0);
+
+  USB_Global.IsInited = 1;
+
+  //空宏，忽略跳过
+  USBD_PROFILE_END_CALL(USBD_EVTID_INIT);
+
+
+-----
+
+//把新的hook插入到链表里面首位
+
+数据流：  pfStateCb  -->  pHook->cb
+
+参数 ： usb_state_hook, static_usb_on_state_change, this
+
+USBD_RegisterSCHook(  * pHook,   *pfStateCb,  * pContext) 
+ 
+  USB_HOOK *  p;
+
+  pHook->cb            = pfStateCb;   //static_usb_on_state_change
+  pHook->pContext      = pContext;    //this
+   
+
+  //判断是否已重复注册，如重复注册则报错，如果没有则插入到链表里面 (从第一个位置开始，看里面是否已有hook)  //因确定是第一次注册，忽略下面5句
+  p = USB_Global.pFirstSCHook;  
+  while (p != NULL)  
+    if (p == pHook)  
+      return 1;     // 重复注册则报错     
+    p = p->pNext;    
+  
+  
+  pHook->pNext = USB_Global.pFirstSCHook;
+  USB_Global.pFirstSCHook = pHook;            //把hook插入到首位
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+===============================================uart CDC 发送数据==========================================================
+
+
+
+
+
+
+
+
+
+
+
+===============================================uart CDC 中断，接收数据==========================================================
+
+
+
+
+usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
+{
+uint16_t response_length = 0;
+uint8_t response_buffer[1024];
+
+    //Check for enable packet
+    switch(data[0])
+    {
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+            if(data_mode != DATA_MODE_DISABLED || !adc_sensors_is_state_machine_configured())
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+            }
+            else if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                ret_code_t error_code = adc_sensors_enable();
+                if(error_code == NRF_SUCCESS)
+                {
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                }
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(error_code));
+
+                set_leds();
+            }
+            break;
+
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+            if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(comms_esb_set_synch_rx_channel(data[1])));
+            }
+            break;
+    }
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, response_buffer, sizeof(response_buffer));
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    usb_serial_send_command_packet(response_buffer, response_length);
+}
+
+
+
+
+
+
+

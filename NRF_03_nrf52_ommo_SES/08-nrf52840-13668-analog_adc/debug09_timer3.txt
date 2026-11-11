@@ -153,6 +153,29 @@ timestamp_synch_recieved(basestation_ts, local_event_ts, source) [timestamp_time
 
 
 
+
+----------------------------------------------------------------------
+
+
+说明1： timestamp_offset的说明
+
+      if(!( timestamp_synch_received_msk & 0x01 )) //如果是0，无同步信号，把timestamp_offset填为0x00。告诉主机：这包数据是本地瞎跑的，没有基站时间参考，别用 
+          timestamp_offset = 0x00;
+      else if(timestamp_synch_offset == 0x00)      //真正的偏差0, 用0x01给主机，主机收到 0x01 会自动解析为偏差 0
+          timestamp_offset = 0x01;
+      else
+          timestamp_offset = timestamp_synch_offset; //把真实的偏差值 timestamp_synch_offset 赋给 timestamp_offset(即 current_sample_timestamp_offest)
+
+
+
+    非标状态下，timestamp_offset 分别填00和01
+    是不是一般正常的timestamp_offset 的值都比较大（几十万甚至更高），不太可能是00和01
+
+
+
+
+
+
 =============================================================== timer3 初始化 ===========================================================
 
 
@@ -621,10 +644,10 @@ timestamp_get_last_sample_event_timestamp_basestation_units( timestamp,  timesta
 
       if(!( timestamp_synch_received_msk & 0x01 )) //如果是0，无同步信号，把timestamp_offset填为0x00。告诉主机：这包数据是本地瞎跑的，没有基站时间参考，别用 
           timestamp_offset = 0x00;
-      else if(timestamp_synch_offset == 0x00)      //真正的偏差0, 用 0x01给机，收到 0x01 会自动解析为偏差 0
+      else if(timestamp_synch_offset == 0x00)      //真正的偏差0, 用0x01给主机，主机收到 0x01 会自动解析为偏差 0
           timestamp_offset = 0x01;
       else
-          timestamp_offset = timestamp_synch_offset;   //把真实的偏差值 timestamp_synch_offset 赋给 timestamp_offset(即 current_sample_timestamp_offest)
+          timestamp_offset = timestamp_synch_offset; //把真实的偏差值 timestamp_synch_offset 赋给 timestamp_offset(即 current_sample_timestamp_offest)
       
 
       //原子操作：清零bit0

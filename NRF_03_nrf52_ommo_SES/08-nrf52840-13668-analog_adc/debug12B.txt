@@ -1,0 +1,71 @@
+﻿
+
+
+
+
+static const USB_DEVICE_INFO usb_device_info = {
+    .VendorId      = 0x3334,                   // VendorId - Ommo's USB VID
+    .ProductId     = APP_USBD_PID,             // ProductId
+    .sVendorName   = "Ommo Technologies Inc.", // VendorName
+    .sProductName  = APP_USBD_STRINGS_PRODUCT, // ProductName
+    .sSerialNumber = g_extern_serial_number // SerialNumber - Declared in usb_serial_num.c and
+                                            // filled in at runtime
+};
+
+-----
+
+
+const USB_HW_DRIVER USB_Driver_Nordic_nRF52xxx = 
+{
+  _Start,
+  _AllocEP,
+  _UpdateEP,
+  _Enable,
+  _Attach,
+  _GetMaxPacketSize,
+  _IsInHighSpeedMode,
+  _SetAddress,
+  _SetClrStallEP,
+  _StallEP0,
+  _DisableRxInterruptEP,
+  _EnableRxInterruptEP,
+  _StartTx,
+  NULL,
+  _DisableTx,
+  _ResetEP,
+  NULL,
+  _DeInit,
+  _Detach,
+  NULL,
+  _SendEPEx,
+  _Init
+};
+
+------
+
+typedef struct _USB_HOOK 
+{
+  struct _USB_HOOK        * pNext;
+  USB_STATE_CALLBACK_FUNC * cb;
+  void                    * pContext;
+} USB_HOOK;
+
+
+
+----------
+
+class comms_usb_serial : public comms_packetizer, private comms_transport_interface
+{
+    public:
+    。。。。。。
+};
+
+
+comms_usb_serial usb_serial;
+
+
+
+
+
+
+
