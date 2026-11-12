@@ -1,5 +1,330 @@
 ﻿
+ 
 
+------
+
+
+//待理解
+
+USBD_Start( )  
+
+  //空函数，忽略跳过
+  USBD_PROFILE_CALL_VOID(USBD_EVTID_START);
+ 
+   
+  pDriver = USB_Global.pDriver;    //USB_Driver_Nordic_nRF52xxx
+   
+  // Fire up the hardware   
+  pDriver->pfStart();
+
+  if (pDriver->pfControl != NULL)  
+     
+    // Get driver flags     
+    pDriver->pfControl(USB_DRIVER_CMD_GET_FLAGS,  SEGGER_PTR2PTR(USB_IOCTL_PARA, &USB_Global.Flags));     // lint D:100[f]
+   
+  USB_Global.State = USB_STAT_ATTACHED;
+  pDriver->pfAttach();
+
+  USBD_PROFILE_END_CALL(USBD_EVTID_START);
+ 
+
+
+
+
+----------------------
+
+
+#ifdef USB_BASE_ADDR
+static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;  
+
+
+----
+
+#define USB_BASE_ADDR   0x40027000u
+
+#ifdef USB_BASE_ADDR
+static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;
+
+
+_Start() 
+
+  pUSBRegs =  (USB_REGS *)0x40027000u;
+
+  //关全局中断
+  //USB_OS_IncDI();
+    NRFX_CRITICAL_SECTION_ENTER();
+
+
+  //来自 Nordic SDK 的更新版 USB 启用代码 (修复 USB 在电脑休眠唤醒时（挂起状态）容易死机卡死的 Bug)
+  //static inline void usbd_errata_187_211_begin(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱没开过（状态是0）
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 2. 在特定寄存器里打上补丁（修硬件Bug）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 关上保险箱（重新上锁）
+  
+  else  
+      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 如果保险箱已经是解锁状态，直接打补丁
+  
+
+    //修复 USB 唤醒恢复时的时序 Bug（防止唤醒瞬间数据丢失）。  
+    //static inline void usbd_errata_171_begin(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 再次检查保险箱
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 塞入暗号 0x9375
+      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;  // 在另一个地方打补丁
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;
+  
+
+  开启 USB 外设
+  pUSBRegs->ENABLE = 1;
+  
+  ISB();  //把cpu所有缓冲区里面的指令全部清空  
+  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
+
+  // 等待usb ready，应需要几us 
+  while ((pUSBRegs->EVENTCAUSE & EVENTCAUSE_READY) == 0) { }
+
+  pUSBRegs->EVENTCAUSE = EVENTCAUSE_READY;   //1<<11, 清零 usb ready 标记
+
+  ISB();  //把cpu所有缓冲区里面的指令全部清空  
+  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
+
+
+   //刚才往 0x4006EC14 写了 0xC0，现在恢复00，防止这个临时补丁影响后续其他外设
+  //static inline void usbd_errata_171_end(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开（状态是0）
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
+  
+
+  //刚才往 0x4006ED14 写了 0x03，现在恢复00，防止这个临时补丁影响后续其他外设
+  //static inline void usbd_errata_187_211_end(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
+  
+
+  USB_Global.pfEnableISR(_IRQHandler);
+
+  
+  //清零所有端口  
+  pUSBRegs->EPINEN          = 0;
+  pUSBRegs->EPOUTEN         = 0;
+  
+
+  // 清零所有事件标记  
+  pUSBRegs->EVENTCAUSE   = pUSBRegs->EVENTCAUSE;
+  pUSBRegs->EPDATASTATUS = pUSBRegs->EPDATASTATUS;
+  pUSBRegs->EVENTS_EPDATA   = 0;
+  pUSBRegs->EVENTS_USBEVENT = 0;
+  pUSBRegs->EVENTS_USBRESET = 0;
+  
+
+  //使能下面的usb中断  
+  pUSBRegs->INTEN = INT_USBRESET
+                  | INT_USBEVENT
+                  | INT_EP0SETUP
+                  | INT_EPDATA
+                  ;
+
+  //开全局中断
+  //USB_OS_DecRI();
+    NRFX_CRITICAL_SECTION_EXIT();
+ 
+
+
+
+
+======================================================================
+
+
+static USB_REGS  * _pUSBRegs;
+
+
+----
+
+
+typedef struct _USB_ASYNC_IO_CONTEXT 
+{
+  unsigned                  NumBytesToTransfer;     // Number of bytes to transfer.
+                                                    // Must be set by the application.
+  void                    * pData;                  // Pointer to the buffer for read operations, pointer to the data for write operations.
+                                                    // Must be set by the application.
+  USB_ASYNC_CALLBACK_FUNC * pfOnComplete;           // Pointer to the function called on completion of the transfer.
+                                                    // Must be set by the application.
+  void                    * pContext;               // Pointer to a user context. Can be arbitrarily used by the application.
+  int                       Status;                 // Result status of the asynchronous transfer. Set by the USB stack before calling pfOnComplete.
+  unsigned                  NumBytesTransferred;    // Number of bytes transferred. Set by the USB stack before calling pfOnComplete.
+} USB_ASYNC_IO_CONTEXT;
+
+
+class comms_usb_serial : public comms_packetizer, private comms_transport_interface
+
+    private:
+        USB_ASYNC_IO_CONTEXT        read_io_ctx;
+        USB_ASYNC_IO_CONTEXT        write_io_ctx;
+
+
+
+============
+
+
+
+
+typedef struct 
+{
+  USB_CDC_ON_SET_LINE_CODING        * pfOnSetLineCoding;
+  USB_CDC_ON_SET_CONTROL_LINE_STATE * pfOnSetControlLineState;
+  void                              * pfOnSetControlLineStateContext;
+  USB_CDC_ON_SET_BREAK              * pfOnBreak;
+  USB_CDC_LINE_CODING                 LineCoding;
+  U16                                 ControlInterfaceNum;
+  U16                                 DataInterfaceNum;
+  U8                                  EPIn;
+  U8                                  EPOut;
+  U8                                  EPInt;
+  U8                                  aLineCodingBuffer[7];
+  U8                                  aStatus[10];
+} USB_CDC_INST;
+static USB_CDC_INST _aInst[USB_CDC_DEVICES];
+
+
+-------
+
+
+typedef struct {
+  U8 EPIn;        //  send data to  host 
+  U8 EPOut;       //  receive data from  host 
+  U8 EPInt;       //  send status to  host
+} USB_CDC_INIT_DATA;
+
+
+
+-----------
+
+struct _EP_STAT  
+  U16                       MaxPacketSize;
+  U16                       MaxPacketSizeUser;
+  U16                       Interval;                   //  
+  U8                        EPType;                     //  
+  U8                        EPAddr;                     //                                                          
+  volatile I8               IsHalted;                   //  
+  U8                        Flags;                      //                                                            
+  U16                       TransactionCnt;             //  
+
+  union 
+  {
+    struct 
+    {
+      int                   TxNumBytesPending;          //                                       
+      U16                   NumFullPacketsSend;         //  
+      U8                    Send0PacketIfRequired;      //   
+      U8                    SendEventOccurred;          //    
+      U8                    SignalOnTXReady;            //  
+      U8                    WriteMode;                  //  
+      U8                    NumDataParts;
+      USB_DATA_PART         DataParts[USB_NUM_TX_DATA_PARTS];
+    } TxInfo;
+
+    struct 
+    {
+      USB_ON_RX_FUNC *      pfOnRx;                     //  
+      U8             *      pData;
+      volatile unsigned     NumBytesRem;                //  
+      I8                    RxInterruptEnabled;         // 
+      U8                    ReadMode;                   //  
+      U8                    AllowShortPacket;           //  
+      U8                    RxPacketByPacket;           //  
+      USB_BUFFER            Buffer;
+    } RxInfo;
+
+  } Dir;
+
+  USB_EVENT_CALLBACK        *pEventCallbacks;           //  
+ 
+
+typedef struct _EP_STAT EP_STAT;
+
+ EP_STAT                  USB_aEPStat[USB_NUM_EPS];
+ USBD_GLOBAL              USB_Global;
+
+
+========================
+
+
+typedef struct _USB_HW_DRIVER 
+{
+  void     (*pfStart)               (void);
+  U8       (*pfAllocEP)             (U8 InDir, U8 TransferType);
+  void     (*pfUpdateEP)            (EP_STAT * pEPStat);
+  void     (*pfEnable)              (void);
+  void     (*pfAttach)              (void);
+  unsigned (*pfGetMaxPacketSize)    (unsigned EPIndex);
+  int      (*pfGetSpeedInfo)        (void);
+  void     (*pfSetAddress)          (U8  Addr);
+  void     (*pfSetClrStallEP)       (unsigned EPIndex, int OnOnff);
+  void     (*pfStallEP0)            (void);
+  void     (*pfDisableRxInterruptEP)(unsigned EPIndex);
+  void     (*pfEnableRxInterruptEP) (unsigned EPIndex, U8 *pData, U32 NumBytesRequested);
+  void     (*pfStartTx)             (unsigned EPIndex);
+  void     (*pfSendEP)              (unsigned EPIndex, const U8 * p, unsigned NumBytes);
+  void     (*pfDisableTx)           (unsigned EPIndex);
+  void     (*pfResetEP)             (unsigned EPIndex);
+  int      (*pfControl)             (int Cmd, USB_IOCTL_PARA * p);
+  int      (*pfDeInit)              (void);
+  int      (*pfDetach)              (void);
+  U8       (*pfAllocEPEx)           (U8 InDir, U8 TransferType, unsigned MaxPacketSize);
+  int      (*pfSendEPEx)            (unsigned EPIndex, unsigned NumParts, const USB_DATA_PART *pParts, unsigned *pNumOfFullPackets);
+  void     (*pfInit)                (void);
+} USB_HW_DRIVER;
+
+
+const USB_HW_DRIVER USB_Driver_Nordic_nRF52xxx = 
+{
+  _Start,
+  _AllocEP,
+  _UpdateEP,
+  _Enable,
+  _Attach,
+  _GetMaxPacketSize,
+  _IsInHighSpeedMode,
+  _SetAddress,
+  _SetClrStallEP,
+  _StallEP0,
+  _DisableRxInterruptEP,
+  _EnableRxInterruptEP,
+  _StartTx,
+  NULL,
+  _DisableTx,
+  _ResetEP,
+  NULL,
+  _DeInit,
+  _Detach,
+  NULL,
+  _SendEPEx,
+  _Init
+};
+
+
+
+
+
+
+==========================
 
 
 
