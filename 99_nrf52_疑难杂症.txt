@@ -149,6 +149,30 @@
     注意：不能拷贝到main.c和用户自己写的文件中
 
 
+13. 函数体是灰色的，仍可以正常调用的讲解
+
+         1. _Start函数体在 USB_HW_Nordic_nRF.c 中的定义是灰色的，灰色的原因是USB_HW_Nordic_nRF.c中没有定义USB_HW_NRF_C_ （工程魔法棒里面也没有定义）
+
+         ---------文件：USB_HW_Nordic_nRF.c--------------
+
+         #ifdef USB_HW_NRF_C_
+         。。。。。。
+          
+         static void _Start(void) {
+           USB_REGS   * pUSBRegs = _pUSBRegs;
+         
+
+         2. _Start可以正常使用的原因是，在调用它时，刚定义了USB_HW_NRF_C_，并重新包含导入USB_HW_Nordic_nRF.c文件
+
+         ---------文件：USB_HW_Nordic_nRF52xxx.c--------------
+
+         #define USB_HW_NRF_C_
+         //lint -e9019 D:113
+         #include "USB_HW_Nordic_nRF.c"
+
+         const USB_HW_DRIVER USB_Driver_Nordic_nRF52xxx = {
+           _Start,
+
 
 
 
