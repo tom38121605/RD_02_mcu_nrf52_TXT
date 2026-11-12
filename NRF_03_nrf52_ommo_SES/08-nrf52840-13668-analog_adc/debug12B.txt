@@ -46,6 +46,7 @@ static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;
 //修复 USB的187，211，171类型bug
 //开启 USB 外设
  //把cpu所有缓冲区里面的指令全部清空  
+//设置usb中断回调函数，设置中断优先级，使能usb的irq总中断
 //使能下面的几个usb中断  
 
 _Start() 
@@ -119,9 +120,13 @@ _Start()
   else  
       *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
   
-
-  USB_Global.pfEnableISR(_IRQHandler);
-
+  //设置usb中断回调函数，设置中断优先级，使能usb的irq总中断
+  //USB_Global.pfEnableISR(_IRQHandler);
+  //   _EnableISR(_IRQHandler);
+       BSP_USB_InstallISR(_IRQHandler);
+          _pfUSBISRHandler = _IRQHandler;
+          NVIC_SetPriority(USBD_IRQn, (1 << __NVIC_PRIO_BITS) - 2);
+          NVIC_EnableIRQ(USBD_IRQn);
   
   //清零所有端口  
   pUSBRegs->EPINEN          = 0;
@@ -163,6 +168,63 @@ EnableISR(USB_ISR_HANDLER * pfISRHandler)
 ======================================================================
 
 
+
+typedef struct {                                  // NOLINT(clang-analyzer-optin.performance.Padding)
+  U8                        NumEPs;               // Count of currently used endpoints.
+  U8                        NumIFs;               // Count of currently used interfaces.
+  U8                        NumAltIFs;            // Count of currently used alternative interfaces.
+  U8                        EventsIdx;            // Index for allocating events.
+  U8                        Class;                // Device Class    (when IAD is not used the class is defined in the device descriptor)
+  U8                        SubClass;             // Device Subclass (when IAD is not used the subclass is defined in the device descriptor)
+  U8                        Protocol;             // Device Protocol (when IAD is not used the Protocol is defined in the device descriptor)
+  U8                        IsInited;             // Flag indicating whether emUSB-Device was initialized.
+  volatile U8               State;                // Global USB state, similar to [1]: chapter 9.1.1.
+                                                  // Bitwise combination of USB_STAT_ATTACHED, USB_STAT_READY, USB_STAT_ADDRESSED, USB_STAT_CONFIGURED, USB_STAT_SUSPENDED
+  U8                        Addr;                 // The USB device address, assigned by the host. Zero when the device is not enumerated.
+  U8                        ConfigAttr;           // For use in configuration descriptor.
+  U8                        DeviceState;          // Device state returned by 'Get Status' request from the host.
+                                                  // See USB_DEVSTAT_... macros.
+  U8                        NumStringDesc;        // Number of String descriptors
+  U8                        NumOnRxEP0Callbacks;  // Count of receive callbacks for endpoint zero.
+  U16                       RecommendedBESLValue;
+  USB_DRIVER_FLAGS          Flags;                // Driver dependent flags
+  const char *              aStringDesc[USB_MAX_STRING_DESC];
+  INTERFACE                 aIF[USB_MAX_NUM_IF];  // Array of available interfaces.
+
+  ALT_INTERFACE             aAltIF[USB_MAX_NUM_ALT_IF];  // Array of available alternative interfaces.
+
+  USB_SETUP_HOOK          * pFirstSetupHook;      // List of callback functions to handle setup requests.
+  U16                       TransactionCnt;       // Counter to synchronize OS_Wait() + OS_Signal functions.
+  U8                        MaxPower;             // Used in configuration descriptor.
+  U8                        MaxPowerSS;           // For SuperSpeed enumeration.
+  USB_ON_RX_FUNC          * apfOnRxEP0[USB_MAX_NUM_COMPONENTS]; // Array of function pointers to receive callbacks for endpoint zero.
+  const USB_HW_DRIVER     * pDriver;              // Pointer to the hardware driver structure.
+  USB_ENABLE_ISR_FUNC     * pfEnableISR;          // Pointer to function to enable the USB interrupt and set the interrupt handler.
+  const USB_IAD_API       * pIadAPI;              // Pointer to the USB Interface Association Descriptor API.
+  USB_DEINIT_HOOK         * pDeInitHandler;       // Pointer to a linked list of functions which should be called when USBD_DeInit() is called. These callbacks are normally set by class modules.
+  USB_DETACH_FUNC         * pfDetach;             // Pointer to a callback which is called on a detach event. Set from the application (USBD_SetDetachFunc()).
+  USB_GET_STRING_DESC_HOOK* pfGetString;          // Pointer to a callback which is called when the host requests a string descriptor from the device. Set from the application (USBD_SetGetStringFunc()).
+  USB_ON_BCD_VERSION_FUNC * pfOnBCDVersion;       // Pointer to a callback which is called when the host requests a device descriptor from the device. Set from the application (USBD_SetOnBCDVersionFunc()).
+  USB_ATTACH_FUNC         * pfAttach;             // Pointer to the attach function (optional).
+  const USB_DEVICE_INFO   * pDeviceInfo;          // Pointer to device information used during enumeration.
+  U8                        aPhyAddr2EPIndex[USB_MAX_ALLOWED_EPADDR];  // Mapping table, physical to logical endpoint address.
+  USB_HOOK                * pFirstSCHook;         // List of hook function called on status change.
+  USB_ON_LPM_CHANGE       * pfOnLPMChange;        // LPM callback
+  SEGGER_CACHE_CONFIG       CacheConfig;
+  const U8 *             (* pfBuildBOSDesc)(void);
+  void                   (* pfAddSSEndpointCompanion)(const EP_STAT *pEPStat, USB_INFO_BUFFER *pInfoBuffer);
+  unsigned               (* pfAddSSDeviceCap)(USB_INFO_BUFFER *pInfoBuffer);
+  int                    (* pfSetClrFeature)(U8 Recipient, U16 wValue, int SetClr);
+  unsigned               (* pfAddWebUSBDesc)(USB_INFO_BUFFER *pInfoBuffer);
+  USB_SOF_CALLBACK_HOOK   * pSOFCbHook;           // Linked list of USB_SOF_CALLBACK_HOOK structures.
+  U16                       USBSpecRev;           // USB specification release number (bcdUSB)
+  U8                        MinimumSpeed;         // Minimum speed the device can operate at. 1=full, 2=high, 3=SuperSpeed
+
+  const char              * sCopyright;
+} USBD_GLOBAL;
+
+
+-----------------------------------------------------------------------------------
 
 
 
