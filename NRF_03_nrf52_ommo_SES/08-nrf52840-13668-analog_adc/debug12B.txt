@@ -1,6 +1,10 @@
 ﻿
  
 
+
+
+
+
 ------
 
 
@@ -34,17 +38,15 @@ USBD_Start( )
 ----------------------
 
 
-#ifdef USB_BASE_ADDR
-static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;  
-
-
-----
-
 #define USB_BASE_ADDR   0x40027000u
 
 #ifdef USB_BASE_ADDR
 static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;
 
+//修复 USB的187，211，171类型bug
+//开启 USB 外设
+ //把cpu所有缓冲区里面的指令全部清空  
+//使能下面的几个usb中断  
 
 _Start() 
 
@@ -79,7 +81,7 @@ _Start()
       *((volatile U32 *)(0x4006EC14)) = 0x000000C0;
   
 
-  开启 USB 外设
+  //开启 USB 外设
   pUSBRegs->ENABLE = 1;
   
   ISB();  //把cpu所有缓冲区里面的指令全部清空  
@@ -134,7 +136,7 @@ _Start()
   pUSBRegs->EVENTS_USBRESET = 0;
   
 
-  //使能下面的usb中断  
+  //使能下面的几个usb中断  
   pUSBRegs->INTEN = INT_USBRESET
                   | INT_USBEVENT
                   | INT_EP0SETUP
@@ -147,12 +149,27 @@ _Start()
  
 
 
+----
+
+EnableISR(USB_ISR_HANDLER * pfISRHandler) 
+  BSP_USB_InstallISR(pfISRHandler);
+
+
+
+
+
 
 
 ======================================================================
 
 
-static USB_REGS  * _pUSBRegs;
+
+
+
+#ifdef USB_BASE_ADDR
+static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;  
+
+
 
 
 ----
