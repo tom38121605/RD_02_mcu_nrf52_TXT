@@ -1,0 +1,917 @@
+﻿
+======================= 第一阶段：初始化（建厂挂牌） =======================
+
+main() 
+  │
+  ├─► USBD_Init() / USB_OS_Init()      // 底层硬件与系统任务初始化
+  ├─► NRF_CLOCK->TASKS_HFCLKSTART = 1  // 启动高频时钟
+  ├─► USBD_AddDriver()                 // 挂载 nRF52 硬件驱动
+  ├─► USBD_EnableIAD()                 // 声明为 USB 复合设备
+  │
+  ├─► USBD_AddEPEx(&EPBulkIn)          // 申请 Bulk 批量端点（大货车，传 ADC 数据）
+  ├─► USBD_AddEPEx(&EPIntIn)           // 申请 Int 中断端点（小电驴，传状态）
+  │
+  ├─► usbd_main_add_cdc()              // 申请缓冲区，注册 CDC 串口功能（发营业执照）
+  ├─► usb_serial_init(received, event) // 注册：数据到达回调、插拔状态回调
+  │
+  └─► USBD_Start()                     // 拉起 D+ 引脚（开门营业）
+        │
+        ▼ (电脑枚举，识别出 COM 口)
+
+
+======================= 第二阶段：数据通讯（流水线运转） =======================
+
+【接收流程：电脑 -> 板子 (RX)】
+
+[电脑] 串口助手发送指令
+  │
+  ▼ (USB 物理线缆)
+[USB 硬件 EP OUT 端点] 
+  │
+  ▼ (触发 USB 中断，数据存入接收缓冲区)
+[协议栈底层] 
+  │
+  ▼ (自动调用注册好的接收回调)
+[usb_serial_packet_received()] (main.cpp)
+  │
+  ├─► 解析指令 (如 OMMO_COMMAND_USB_DATA_ENABLE)
+  └─► 启动 ADC 采样状态机
+
+
+【发送流程：板子 -> 电脑 (TX)】
+
+[底层采样完成] (触发 sample_set_ready)
+  │
+  ▼
+[usb_serial_write_data_packet_vargs()] 
+  │ (打包时间戳、ADC数据)
+  ▼
+[CDC 发送队列 / 缓冲区]
+  │
+  ▼ (等待电脑主机发来 IN 令牌)
+[USB 硬件 EP IN 端点] (通过 EPBulkIn 通道发送)
+  │
+  ▼
+[电脑] 上位机软件接收并解析 ADC 波形
+
+
+【插拔事件流程】
+
+[物理 USB 拔插] 
+  │
+  ▼ 
+[USB 硬件/底层驱动]
+  │ 
+  ▼
+[usb_serial_event_handler()] (main.cpp)
+  │
+  ├─► OPENED： 切换状态，停用无线，准备 USB 传数据
+  └─► CLOSED： 切换状态，启用 ESB 无线传输
+
+
+
+
+
+===============================================uart CDC 初始化==========================================================
+
+
+
+int main(void)
+
+
+   。。。。。。
+
+
+   //把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+   //usb时钟设置
+   //usb相关变量初始化
+   //设置为usb复合设备
+   usbd_main_init();
+
+
+
+   //把新的hook插入到链表里面首位
+   //向 USB 设备栈注册一路 CDC ACM 虚拟串口，分配接口、绑定端点
+
+   //设置USB串口状态回调函数 ，感知电脑那边一改状态（比如打开串口、关闭串口）
+       _aInst[0].pfOnSetControlLineState = static_usb_cdc_on_line_state_change
+   //设置cdc回调函数 
+        write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt  //cdc uart发送完成的回调函数
+        read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;    //cdc uart读取完成的回调函数
+   //设置数据包处理的回调函数 
+        packet_handler          =  usb_serial_packet_received 
+        rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+        tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+   //找到rtc可以使用的cc通道，设置超时回调函数 
+        callback_funcs[i] = static_on_reconnect_timeout;
+
+   //usb_serial_init(usb_serial_packet_received, usb_serial_event_handler);
+   //  usb_serial.init(usb_serial_packet_received, usb_serial_event_handler);
+       comms_usb_serial::init(usb_serial_packet_received, usb_serial_event_handler);
+
+
+   //开启 USB 外设
+   //把cpu所有缓冲区里面的指令全部清空  
+   //设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+     _pfUSBISRHandler = _IRQHandler;
+   //使能下面的几个usb中断 
+   //D+接上拉电阻
+   //usbd_main_start();
+      USBD_Start();
+
+
+   。。。。。。
+
+
+
+------
+
+//开启 USB 外设
+//把cpu所有缓冲区里面的指令全部清空  
+//设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+  _pfUSBISRHandler = _IRQHandler;
+//使能下面的几个usb中断 
+//D+接上拉电阻
+
+USBD_Start( )  
+
+  //空函数，忽略跳过
+  USBD_PROFILE_CALL_VOID(USBD_EVTID_START);
+ 
+   
+  pDriver = USB_Global.pDriver;    //USB_Driver_Nordic_nRF52xxx
+   
+
+  //修复 USB的187，211，171类型bug
+  //开启 USB 外设
+  //把cpu所有缓冲区里面的指令全部清空  
+  //设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+    _pfUSBISRHandler = _IRQHandler;
+  //使能下面的几个usb中断   
+  pDriver->pfStart();
+
+
+  //空函数，忽略跳过
+  if (pDriver->pfControl != NULL)  //no        
+     pDriver->pfControl(USB_DRIVER_CMD_GET_FLAGS,  SEGGER_PTR2PTR(USB_IOCTL_PARA, &USB_Global.Flags));     // lint D:100[f]
+   
+
+  USB_Global.State = USB_STAT_ATTACHED;
+
+
+  //D+接上拉电阻
+  //pDriver->pfAttach();
+
+     //USB_Global.pfAttach();
+       _DummyAttach();           //空函数，忽略跳过
+
+     _pUSBRegs->USBPULLUP = 1;   //D+接上拉电阻
+
+
+  //空函数，忽略跳过
+  USBD_PROFILE_END_CALL(USBD_EVTID_START);
+ 
+
+
+----------------------
+
+
+//修复 USB的187，211，171类型bug
+//开启 USB 外设
+//把cpu所有缓冲区里面的指令全部清空  
+//设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+   _pfUSBISRHandler = _IRQHandler;
+//使能下面的几个usb中断 
+
+#define USB_BASE_ADDR   0x40027000u
+
+#ifdef USB_BASE_ADDR
+static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;
+
+
+_Start() 
+
+  pUSBRegs =  (USB_REGS *)0x40027000u;
+
+  //关全局中断
+  //USB_OS_IncDI();
+    NRFX_CRITICAL_SECTION_ENTER();
+
+
+  //来自 Nordic SDK 的更新版 USB 启用代码 (修复 USB 在电脑休眠唤醒时（挂起状态）容易死机卡死的 Bug)
+  //static inline void usbd_errata_187_211_begin(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱没开过（状态是0）
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 2. 在特定寄存器里打上补丁（修硬件Bug）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 关上保险箱（重新上锁）
+  
+  else  
+      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 如果保险箱已经是解锁状态，直接打补丁
+  
+
+    //修复 USB 唤醒恢复时的时序 Bug（防止唤醒瞬间数据丢失）。  
+    //static inline void usbd_errata_171_begin(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 再次检查保险箱
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 塞入暗号 0x9375
+      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;  // 在另一个地方打补丁
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;
+  
+
+  //开启 USB 外设
+  pUSBRegs->ENABLE = 1;
+  
+  ISB();  //把cpu所有缓冲区里面的指令全部清空  
+  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
+
+  // 等待usb ready，应需要几us 
+  while ((pUSBRegs->EVENTCAUSE & EVENTCAUSE_READY) == 0) { }
+
+  pUSBRegs->EVENTCAUSE = EVENTCAUSE_READY;   //1<<11, 清零 usb ready 标记
+
+  ISB();  //把cpu所有缓冲区里面的指令全部清空  
+  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
+
+
+   //刚才往 0x4006EC14 写了 0xC0，现在恢复00，防止这个临时补丁影响后续其他外设
+  //static inline void usbd_errata_171_end(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开（状态是0）
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
+  
+
+  //刚才往 0x4006ED14 写了 0x03，现在恢复00，防止这个临时补丁影响后续其他外设
+  //static inline void usbd_errata_187_211_end(void)
+  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开
+  
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
+      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
+      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
+  
+  else  
+      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
+  
+  //设置usb中断回调函数 _IRQHandler，设置中断优先级，使能usb的irq总中断
+  //USB_Global.pfEnableISR(_IRQHandler);
+  //   _EnableISR(_IRQHandler);
+       BSP_USB_InstallISR(_IRQHandler);
+          _pfUSBISRHandler = _IRQHandler;
+          NVIC_SetPriority(USBD_IRQn, (1 << __NVIC_PRIO_BITS) - 2);
+          NVIC_EnableIRQ(USBD_IRQn);
+  
+  //清零所有端口  
+  pUSBRegs->EPINEN          = 0;
+  pUSBRegs->EPOUTEN         = 0;
+  
+
+  // 清零所有事件标记  
+  pUSBRegs->EVENTCAUSE   = pUSBRegs->EVENTCAUSE;   //写1清零
+  pUSBRegs->EPDATASTATUS = pUSBRegs->EPDATASTATUS;   //写1清零
+  pUSBRegs->EVENTS_EPDATA   = 0;
+  pUSBRegs->EVENTS_USBEVENT = 0;
+  pUSBRegs->EVENTS_USBRESET = 0;
+  
+
+  //使能下面的几个usb中断  
+  pUSBRegs->INTEN = INT_USBRESET
+                  | INT_USBEVENT
+                  | INT_EP0SETUP
+                  | INT_EPDATA
+                  ;
+
+  //开全局中断
+  //USB_OS_DecRI();
+    NRFX_CRITICAL_SECTION_EXIT();
+ 
+
+
+
+-------
+
+//把新的hook插入到链表里面首位
+//向 USB 设备栈注册一路 CDC ACM 虚拟串口，分配接口、绑定端点
+//设置USB串口状态回调函数 ，感知电脑那边一改状态（比如打开串口、关闭串口）
+    _aInst[0].pfOnSetControlLineState = static_usb_cdc_on_line_state_change
+//设置cdc回调函数 
+     write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt  //cdc uart发送完成的回调函数
+     read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;    //cdc uart读取完成的回调函数
+//设置数据包处理的回调函数 
+     packet_handler          =  usb_serial_packet_received 
+     rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+     tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+//找到rtc可以使用的cc通道，设置超时回调函数 
+     callback_funcs[i] = static_on_reconnect_timeout;
+
+
+参数: usb_serial_packet_received, usb_serial_event_handle
+
+comms_usb_serial::init(  packet_ready_handler,  ev_callback)
+ 
+    usb_cdc_event_handler  = usb_serial_event_handle;
+
+    usb_cdc_dtr_state = USB_SERIAL_DTR_STATE_OFF;
+    usb_current_state = USB_SERIAL_STATE_DETACHED;
+    usb_target_state  = USB_SERIAL_STATE_DETACHED;
+
+    //空函数，忽略跳过
+    USB_TRACE_STATE_CHANGE_INIT();
+
+
+    //把新的hook插入到链表里面首位
+    USBD_RegisterSCHook(&usb_state_hook, static_usb_on_state_change, this);
+
+
+    //添加输出到pc端口：批发大货车
+    //添加从pc输入端口：批发大货车
+    //添加输出到pc端口：零售小电驴
+    //向 USB 设备栈注册一路 CDC ACM 虚拟串口，分配接口、绑定端点
+    usb_cdc_handle = usbd_main_add_cdc(usb_cdc_raw_buffer, USB_SERIAL_RX_BUFFER_SIZE, USB_SERIAL_TX_BUFFER_SIZE);  //3072, 16384
+
+
+    //设置USB串口状态回调函数，感知电脑那边一改状态（比如打开串口、关闭串口）
+    //USBD_CDC_SetOnControlLineState(usb_cdc_handle, static_usb_cdc_on_line_state_change, this);
+        _aInst[usb_cdc_handle].pfOnSetControlLineState = static_usb_cdc_on_line_state_change;      //状态回调函数
+        _aInst[usb_cdc_handle].pfOnSetControlLineStateContext = this;
+ 
+
+    // 设置cdc回调函数
+    write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt;  //cdc uart发送完成的回调函数
+    write_io_ctx.pContext = this;
+    read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;    //cdc uart读取完成的回调函数
+    read_io_ctx.pContext = this;
+
+
+    //设置数据包处理的回调函数 
+    //comms_packetizer::init(this, packet_ready_handler, this);  //usb_serial_packet_received
+        packet_handler          =  usb_serial_packet_received 
+        rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+        tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+
+
+    //找到rtc可以使用的cc通道，设置超时回调函数
+    //rtc_timer_get_timeout_channel(&reconnect_timeout_channel, static_on_reconnect_timeout, this);
+         capture_channels_used_mask |= ( 1<<i);
+         *reconnect_timeout_channel = i;
+         callback_funcs[i] = static_on_reconnect_timeout;
+         callback_context[i] = p_this;
+
+
+
+---------
+
+
+
+//设置数据包处理的回调函数
+
+数据流：
+
+    transport_device        =  this
+    packet_handler          =  usb_serial_packet_received 
+    packet_handler_context  =  this
+
+    rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+    tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+
+
+参数：this, usb_serial_packet_received, this
+
+comms_packetizer::init(  transport,   packet_ready_callback,  p_context  )
+ 
+    transport_device = transport;             //this
+    packet_handler = packet_ready_callback;   //usb_serial_packet_received
+    packet_handler_context = p_context;       //this
+
+    // Init buffers
+    rx_cobs_buffer_in_use = 0;
+    rx_cobs_buffer_top    = 0;
+    rx_cobs_buffer_bottom = 0;
+    in_comms_transport_rx = false;
+    rx_data_ready         = false;
+    rx_failed             = false;
+
+    flush_flag             = false;
+    tx_retry_count         = 0;
+    in_comms_transport_tx  = false;
+    tx_buffer_transport_flags  = TRANSPORT_FLAG_NONE;
+    tx_buffer_base         = 0;
+    tx_buffer_active_top   = 0;
+    tx_buffer_active       = tx_buffer_primary;
+    tx_buffer_transport    = nullptr; 
+    tx_buffer_transport_end= nullptr;
+
+    // Misc
+    rx_lost_packets = 0;
+    tx_lost_packets = 0;
+    flush_timeout_channel = RTC_CHANNEL_UNINIT_VALUE;   //0xff
+
+
+    //transport_device->set_callbacks(static_transport_read_complete, static_transport_write_complete, this);
+       rx_complete_callback = static_transport_read_complete;
+       tx_complete_callback = static_transport_write_complete;
+       p_context =  this;
+
+
+-----
+
+
+//cdc uart读取完成的回调函数
+comms_usb_serial::static_usb_cdc_on_read_cplt( pIOContext )
+
+    class_ptr = (comms_usb_serial*)pIOContext->pContext;
+
+    //打一个带“详细账单”的追踪日志，记录这次 USB 读取到底收了多少字节，以及数据存在哪
+    USB_TRACE_WITH_DATA(TRACE_USB_SERIAL_READ_COMPLETE, pIOContext->NumBytesTransferred, pIOContext->pData);
+
+    class_ptr->rx_complete_callback(pIOContext->NumBytesTransferred, pIOContext->Status != 0, class_ptr->p_context);
+
+
+
+
+-----
+
+//cdc uart发送完成的回调函数
+
+参数：  或 write_io_ctx
+comms_usb_serial::static_usb_cdc_on_write_cplt( pIOContext )
+
+    class_ptr = (comms_usb_serial*)pIOContext->pContext;
+
+    USB_TRACE(TRACE_USB_SERIAL_WRITE_COMPLETE);   // 记录进入中断时间 
+
+    switch(pIOContext->Status)
+    
+    case 0:
+        err_code = NRF_SUCCESS;  
+    
+    case USB_STATUS_EP_HALTED:
+    case USB_STATUS_EP_BUSY:
+        err_code = NRF_ERROR_BUSY;
+ 
+    case USB_STATUS_ERROR:  // typically means suspended
+    default:
+        err_code = NRF_ERROR_NOT_FOUND; 
+    
+    
+    class_ptr->tx_complete_callback(pIOContext->NumBytesTransferred, err_code, this );
+
+
+
+
+------
+
+
+//添加输出到pc端口：批发大货车
+//添加从pc输入端口：批发大货车
+//添加输出到pc端口：零售小电驴
+//向 USB 设备栈注册一路 CDC ACM 虚拟串口，分配接口、绑定端点
+
+参数：  usb_cdc_raw_buffer,  3072， 16384
+
+usbd_main_add_cdc( rx_buffer,   rx_buffer_len,   max_tx_buffer_len )
+ 
+    static const USB_ADD_EP_INFO   EPBulkIn =  
+        .MaxPacketSize = max_tx_buffer_len,       // 16384
+        .Interval      = 0,                       // Interval not used for Bulk endpoints.
+        .Flags         = 0,                       // Flags not used.
+        .InDir         = USB_DIR_IN,              // 1
+        .TransferType  = USB_TRANSFER_TYPE_BULK,  // Endpoint type - Bulk.
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+    const USB_ADD_EP_INFO   EPBulkOut =  
+        .MaxPacketSize = rx_buffer_len,            // 3072
+        .Interval      = 0,                     // Interval not used for Bulk endpoints.
+        .Flags         = 0,                     // Flags not used.
+        .InDir         = USB_DIR_OUT,           // OUT direction (Host to Device)
+        .TransferType  = USB_TRANSFER_TYPE_BULK,// Endpoint type - Bulk.
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+
+    USB_CDC_INIT_DATA InitData = {};
+
+
+    //添加输出到pc端口：批发大货车
+    InitData.EPIn              = USBD_AddEPEx(&EPBulkIn, nullptr, 0);                  
+
+
+    //添加从pc输入端口：批发大货车
+    //把接收变量和接收长度保存到结构体 USB_aEPStat
+    //把端口编号存到端口地址
+    //InitData.EPOut             = USBD_AddEPEx(&EPBulkOut, rx_buffer, rx_buffer_len);   
+      InitData.EPOut             = _AddEP(&EPBulkOut, usb_cdc_raw_buffer,  3072);   
+
+ 
+    static const USB_ADD_EP_INFO   EPIntIn =  
+        .MaxPacketSize = 16, 
+        .Interval      = 64,                   // 8 ms 
+        .Flags         = 0,
+        .InDir         = USB_DIR_IN,              // 1
+        .TransferType  = USB_TRANSFER_TYPE_INT,
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+    
+    //添加输出到pc端口：零售小电驴
+    InitData.EPInt             = USBD_AddEPEx(&EPIntIn, nullptr, 0);    
+ 
+
+    //向 USB 设备栈注册一路 CDC ACM 虚拟串口，分配接口、绑定端点
+    return USBD_CDC_Add(&InitData);
+ 
+
+---
+
+
+
+//_Init() 和检查数量：看看还能不能加串口，超过上限直接死机
+//USB__AllocIF()：向系统申请两个“接口（Interface）”
+  。接口 1（控制接口）：用 EPInt 端点。专门负责接收电脑发来的配置命令
+  。接口 2（数据接口）：用 EPIn 和 EPOut。专门负责跑大批量数据（也就是你要发的 ADC 数据）
+ 
+//分配一个实例档案 pInst，把三个端点号存进去
+//USBD_SetReadMode(...)：OUT端点：设置成连续读取模式（随时准备好接收电脑的数据）
+//USBD_SetWriteMode(...)：N端点：设置成扩展写入模式（支持异步发送大数据）
+//初始化一下默认串口参数（波特率等）
+//hInst = _NumInstances++：返回当前串口实例的编号，登记造册完毕
+
+USB_CDC_HANDLE USBD_CDC_Add(const USB_CDC_INIT_DATA * pInitData)  
+
+  unsigned          InterfaceNum;
+  unsigned          FirstInterfaceNo;
+  INTERFACE       * pInterface;
+  USB_CDC_HANDLE    hInst;
+  USB_CDC_INST    * pInst;
+
+
+  // 默认串口状态：SERIAL_STATE（DCD/DSR/CTS/RI 等信号）`
+  // aDefaultStatus`：**CDC 通知端点默认状态报文**，主机通过中断 IN 端点读取这个串口信号状态（载波检测、CTS 等）
+  static const U8   aDefaultStatus[] =  
+    0xA1, 0x20, 0x00, 0x00,
+    0x00, 0x00, 0x02, 0x00,
+    0x00, 0x00
+   ;
+
+  // 检查CDC 串口数量：看看还能不能加串口，超过上限直接死机。
+  
+  _Init();
+  if (_NumInstances >= USB_CDC_DEVICES)  
+    USB_PANIC("Too many class interfaces");
+
+
+  // ========== 第一个接口：CDC CONTROL 控制接口 ==========
+  // 接口 1（控制接口）：用 EPInt 端点。专门负责接收电脑发来的配置命令
+
+  InterfaceNum     = USB__AllocIF();
+  FirstInterfaceNo = InterfaceNum;
+  pInterface                = &USB_Global.aIF[InterfaceNum];
+  pInterface->pfAddFuncDesc = _AddFuncDesc;   // 回调：生成CDC Functional描述符
+  pInterface->IFClass       = 2;             // 0x02 = CDC Control
+  pInterface->IFSubClass    = 2;             // 0x02 = ACM
+  pInterface->IFProtocol    = 1;             // 0x01 = AT命令协议
+  pInterface->EPs           = (pInitData->EPInt != 0u) ? (1uL << pInitData->EPInt) : 0uL;
+  pInterface->iName         = USB__AllocStringDesc("CDC");
+  pInterface->pfOnClassRequest    = _OnClassRequest; // CDC类请求处理回调
+
+
+  // ========== 第二个接口：CDC DATA 数据接口 ==========
+  InterfaceNum              = USB__AllocIF();
+  pInterface                = &USB_Global.aIF[InterfaceNum];
+  pInterface->pfAddFuncDesc = NULL;
+  pInterface->IFClass       = 0x0A;          // 0x0A = CDC Data
+  pInterface->IFSubClass    = 0;
+  pInterface->IFProtocol    = 0;
+  pInterface->EPs           = (1uL << pInitData->EPIn) | (1uL << pInitData->EPOut);
+  pInterface->iName         = USB__AllocStringDesc("CDC DATA interface");
+
+
+// IAD 接口关联描述符（复合设备必备）
+  if (USB_Global.pIadAPI != NULL) 
+    USB_Global.pIadAPI->pfAdd((U8)FirstInterfaceNo, 2, 2, 2, 0);
+  else  
+    USB_Global.Class    = 2;
+    USB_Global.SubClass = 2;
+    USB_Global.Protocol = 0;
+   
+  // 填充CDC实例上下文
+  pInst = &_aInst[_NumInstances];
+  pInst->EPIn  = pInitData->EPIn;
+  pInst->EPOut = pInitData->EPOut;
+  pInst->EPInt = pInitData->EPInt;
+
+  // OUT端点：设置成连续读取模式（随时准备好接收电脑的数据）
+  USBD_SetReadMode(pInst->EPOut, USB_READ_MODE_CONTINUOUS);  
+
+  // IN端点：设置成扩展写入模式（支持异步发送大数据）
+  USBD_SetWriteMode(pInst->EPIn, USB_WRITE_MODE_EXTEND);     
+ 
+  //初始化一下默认串口参数（波特率等）
+  pInst->LineCoding = _DefaultLineCoding; // 默认波特率9600、8N1
+  pInst->ControlInterfaceNum = FirstInterfaceNo;
+  pInst->DataInterfaceNum    = InterfaceNum;
+
+  USB_LOG((USB_MTYPE_CDC, "CDC: Adding CDC interface with ControlInterface = %d, DataInterface = %d", FirstInterfaceNo, InterfaceNum));
+  USB_MEMCPY(pInst->aStatus, aDefaultStatus, sizeof(aDefaultStatus));
+
+  hInst = _NumInstances;
+  _NumInstances++;
+  return hInst;
+ 
+
+
+
+------
+
+
+//添加从pc输入端口：批发大货车
+//把接收变量和接收长度保存到结构体 USB_aEPStat
+//把端口编号存到端口地址
+                                                 
+全局变量 USB_Global：
+
+   .pIadAPI     = &_IadAPI;
+   .Class       = 0xEF;    // Interface Class
+   .SubClass    = 0x02;    // Interface Subclass
+   .Protocol    = 0x01;    // Interface Protocol
+   .pDeviceInfo = usb_device_info;
+
+   .sCopyright = "SEGGER emUSBD V" VERSION2STRING(USB_VERSION);
+   .NumEPs     = 1;
+   .USBSpecRev = 0x0200;
+   .MaxPower   = USB_MAX_POWER;
+   .MaxPowerSS = USB_MAX_POWER / 4u;
+   .pfOnBCDVersion = _GetBCDVersion;
+
+   .pDriver     = USB_Driver_Nordic_nRF52xxx;
+   .pfEnableISR = _EnableISR;
+   .pfAttach    = _DummyAttach;
+   .IsInited    = 1;
+   .pFirstSCHook = usb_state_hook;  
+
+
+EPBulkOut =  
+        .MaxPacketSize = rx_buffer_len,         // 3072
+        .Interval      = 0,                     // Interval not used for Bulk endpoints.
+        .Flags         = 0,                     // Flags not used.
+        .InDir         = USB_DIR_OUT,           // 0
+        .TransferType  = USB_TRANSFER_TYPE_BULK,// Endpoint type - Bulk.
+        .ISO_Type      = USB_ISO_SYNC_TYPE_NONE
+
+
+数据流： 
+   MaxPacketSize = nnn   //本函数内局部变量
+   EPDevice = 1          //本函数内局部变量
+
+
+   USB_aEPStat[1]:
+      .EPAddr           = 1
+      .EPType           = USB_TRANSFER_TYPE_BULK
+      .Dir.RxInfo.Buffer.pData = pBuffer;     //usb_cdc_raw_buffer 
+      .Dir.RxInfo.Buffer.Size  = BufferSize;  //3072
+      .MaxPacketSize      = MaxPacketSize;     //nnn
+      .MaxPacketSizeUser  = MaxPacketSize;     //nnn
+      .Interval           = pInfo->Interval;   //0
+
+   USB_Global.NumEPs++                   //2 , 待验证
+   USB_Global.aPhyAddr2EPIndex[2] = 2    //待验证
+
+
+参数：  EPBulkOut,  usb_cdc_raw_buffer,  3072
+
+_AddEP( pInfo,   pBuffer,  BufferSize)  
+
+  const USB_HW_DRIVER * pDriver;
+
+  //本工厂不提供定时运输服务，会给出拒载提示
+  if (pInfo->TransferType == USB_TRANSFER_TYPE_ISO)         
+    USB_PANIC("ISO EP added but USB_SUPPORT_TRANSFER_ISO is 0");
+   
+  pDriver = USB_Global.pDriver;   //USB_Driver_Nordic_nRF52xxx
+
+  if (USB_Global.NumEPs < USB_NUM_EPS)    //1<<8, yes
+
+    pEPStat  = &USB_aEPStat[1];   
+
+    //根据当前USB的传输速度（全速/高速）、通道类型，以及你申请的包大小，重新计算并“阉割/修正”出一个硬件实际支持的最大包长  (待理解，忽略跳过）
+    //MaxPacketSize = USB__CalcMaxPacketSize(pInfo->MaxPacketSize, pInfo->TransferType, USB__GetSpeedCapability());
+      MaxPacketSize = USB__CalcMaxPacketSize(3072, USB_TRANSFER_TYPE_BULK, USB__GetSpeedCapability());     //nnn
+
+    
+    //取得空闲端口1 （从1找到8）
+    if (pDriver->pfAllocEPEx != NULL)   //no
+       EPDevice = pDriver->pfAllocEPEx(pInfo->InDir, pInfo->TransferType, MaxPacketSize);
+
+    else   
+       if ( (pInfo->TransferType == USB_TRANSFER_TYPE_INT) && (MaxPacketSize > 64) )
+           USB_PANIC("This driver does not support INT EPs > 64 bytes");        
+       EPDevice = pDriver->pfAllocEP(pInfo->InDir, pInfo->TransferType);  //1
+     
+
+    if (EPDevice != 0  && EPDevice != 0xFF )  
+
+      USB_MEMSET(pEPStat, 0, sizeof(EP_STAT));
+      pEPStat->EPAddr           = (EPDevice) | (pInfo->InDir << 7);    //1 | (0<<7)
+      pEPStat->EPType           = pInfo->TransferType;                 //USB_TRANSFER_TYPE_BULK
+  
+      if ( pInfo->InDir == 0 )         
+          
+          // 用于OUT的缓冲区大小至少应为 MaxPacketSize，或整数倍          
+          if (BufferSize < MaxPacketSize) 
+             USB_PANIC("Invalid endpoint buffer size");          
+        
+        pEPStat->Dir.RxInfo.Buffer.pData = pBuffer;     //usb_cdc_raw_buffer 
+        pEPStat->Dir.RxInfo.Buffer.Size  = BufferSize;  //3072
+
+      
+      pEPStat->MaxPacketSize      = MaxPacketSize;     //nnn
+      pEPStat->MaxPacketSizeUser  = MaxPacketSize;     //nnn
+      pEPStat->Interval           = pInfo->Interval;   //0
+
+      r = USB_Global.NumEPs++;
+
+      //把端口编号存到端口地址  （待进一步理解）
+      if ( EPDevice < (USB_MAX_ALLOWED_EPADDR + 1) / 2 )   //总共端点数为8，输出输入，除以2后端点数为4
+         USB_Global.aPhyAddr2EPIndex[(EPDevice << 1) + pInfo->InDir] = r;  //[2] = 2
+ 
+  return r;
+
+
+
+
+-------
+
+//把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+//usb时钟设置
+//usb相关变量初始化
+//设置为usb复合设备
+
+数据流：
+      USB_MEMSET(_aIADDesc, 0xff, sizeof(_aIADDesc));
+      _NumIADs  = 0;
+
+      USB_Global.pIadAPI     = &_IadAPI;
+      USB_Global.Class       = 0xEF;    // Interface Class
+      USB_Global.SubClass    = 0x02;    // Interface Subclass
+      USB_Global.Protocol    = 0x01;    // Interface Protocol
+      USB_Global.pDeviceInfo = usb_device_info;
+
+usbd_main_init()
+
+    //把nrf52芯片内出厂唯一ID读出来，生成一串USB序列号字符串，存到全局变量 g_extern_serial_number 里 
+    ommo_usbd_serial_num_generate();
+
+   //usb时钟设置
+   //usb相关变量初始化
+    USBD_Init();
+
+    //设置为usb复合设备
+    //USBD_EnableIAD();
+      USB_MEMSET(_aIADDesc, 0xff, sizeof(_aIADDesc));
+      _NumIADs  = 0;
+      USB_Global.pIadAPI = &_IadAPI;
+      USB_Global.Class    = 0xEF;    // Interface Class
+      USB_Global.SubClass = 0x02;    // Interface Subclass
+      USB_Global.Protocol = 0x01;    // Interface Protocol
+
+
+    //USBD_SetDeviceInfo(&usb_device_info);
+      USB_Global.pDeviceInfo = usb_device_info;
+
+
+
+
+------
+
+//usb时钟设置
+//usb相关变量初始化
+
+
+数据流：
+  USB_MEMSET(&USB_Global, 0, sizeof(USB_Global));
+  USB_MEMSET(USB_aEPStat, 0, sizeof(USB_aEPStat));
+
+  USB_Global.sCopyright = "SEGGER emUSBD V" VERSION2STRING(USB_VERSION);
+  USB_Global.NumEPs     = 1;
+  USB_Global.USBSpecRev = 0x0200;
+  USB_Global.MaxPower   = USB_MAX_POWER;
+  USB_Global.MaxPowerSS = USB_MAX_POWER / 4u;
+  USB_Global.pfOnBCDVersion = _GetBCDVersion;
+
+  USB_Global.pDriver     = USB_Driver_Nordic_nRF52xxx;
+  USB_Global.pfEnableISR = _EnableISR;
+  USB_Global.pfAttach    = _DummyAttach;
+  USB_Global.IsInited    = 1;
+
+
+USBD_Init( )  
+
+  const USB_HW_DRIVER    * pDriver;
+
+   
+  //USB_Global，USB_aEPStat置初值
+  USB_MEMSET(&USB_Global, 0, sizeof(USB_Global));
+  USB_Global.sCopyright = "SEGGER emUSBD V" VERSION2STRING(USB_VERSION);
+  USB_Global.NumEPs     = 1;
+  USB_Global.USBSpecRev = 0x0200;
+  USB_Global.MaxPower   = USB_MAX_POWER;
+  USB_Global.MaxPowerSS = USB_MAX_POWER / 4u;
+  USB_Global.pfOnBCDVersion = _GetBCDVersion;
+  USB_MEMSET(USB_aEPStat, 0, sizeof(USB_aEPStat));
+   
+
+  // 待办事项流水线 ，设置变量_aEvent[0] 到 _aEvent[8]都为 0xffffffff
+  USB_OS_Init();
+   
+
+  //设置usb协议栈底层驱动 
+  USBD_X_Config();
+
+      //清零事件标记
+      NRF_CLOCK->EVENTS_HFCLKSTARTED = 0;
+
+      //启动“高频时钟”（HFCLK），如没有外部晶振，启动芯片内部的 64MHz RC 振荡器（HFINT）
+      NRF_CLOCK->TASKS_HFCLKSTART = 1;
+
+      //等待时钟稳定
+      while (NRF_CLOCK->EVENTS_HFCLKSTARTED == 0) { }
+
+      //向 USB 协议栈注册底层硬件驱动（把 nRF52 专属的底层代码“挂载”到系统里）
+      //USBD_AddDriver(&USB_Driver_Nordic_nRF52xxx);   
+        USB_Global.pDriver =USB_Driver_Nordic_nRF52xxx;
+
+      //向 USB 协议栈注册中断开关
+      //USBD_SetISRMgmFuncs(_EnableISR, NULL, NULL);
+      //  USBD_SetISREnableFunc(_EnableISR)
+          USB_Global.pfEnableISR = _EnableISR;
+
+
+   
+// 直接触发中断函数中的事件  (这里是空宏，意味着关闭事件回调)
+  USBD_PROFILE_CALL_VOID(USBD_EVTID_INIT);
+
+  pDriver = USB_Global.pDriver;
+
+
+  if (USB_Global.pfAttach == NULL)  
+    USB_Global.pfAttach = _DummyAttach;
+
+   
+  if (pDriver->pfInit != NULL)  
+    pDriver->pfInit();
+
+ 
+  USB_aEPStat[0].MaxPacketSize = pDriver->pfGetMaxPacketSize(0);
+
+  USB_Global.IsInited = 1;
+
+  //空宏，忽略跳过
+  USBD_PROFILE_END_CALL(USBD_EVTID_INIT);
+
+
+-----
+
+//把新的hook插入到链表里面首位
+
+数据流：  
+  pHook->cb        = pfStateCb;
+  pHook->pContext  = this; 
+
+  USB_Global.pFirstSCHook =usb_state_hook;  
+
+
+参数 ： usb_state_hook, static_usb_on_state_change, this
+
+USBD_RegisterSCHook(  * pHook,   *pfStateCb,  * pContext) 
+ 
+  USB_HOOK *  p;
+
+  pHook->cb            = pfStateCb;   //static_usb_on_state_change
+  pHook->pContext      = pContext;    //this
+   
+
+  //判断是否已重复注册，如重复注册则报错，如果没有则插入到链表里面 (从第一个位置开始，看里面是否已有hook)  //因确定是第一次注册，忽略下面5句
+  p = USB_Global.pFirstSCHook;  
+  while (p != NULL)  
+    if (p == pHook)  
+      return 1;     // 重复注册则报错     
+    p = p->pNext;    
+  
+  
+  pHook->pNext = USB_Global.pFirstSCHook;
+  USB_Global.pFirstSCHook = pHook;            //把hook插入到首位
+ 
+
+
+
+
+
+
+
+
+
+

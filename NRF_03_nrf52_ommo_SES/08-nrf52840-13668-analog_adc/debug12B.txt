@@ -1,163 +1,259 @@
 ﻿
+
+-----------------------------------------------------------------------------
+
+
+
+
+
  
 
+_IRQHandler( )  
+
+
+   U32            Status;
+   unsigned    i;
+   unsigned    EPIndex;
+   USB_REGS * pUSBRegs = _pUSBRegs;
+   USB_SETUP_PACKET SetupPacket;
+
+
+   //空函数，忽略跳过
+   USBD_ENTER_ISR();
+
+
+   //看USB物理层（PHY）通电了没，如没通电，就把误报中断全清掉，然后退出中断    
+   if ((USBREGSTATUS & OUTPUTRDY) == 0 )  
+      
+      // PHY is powered down. Ignore all interrupts      
+      pUSBRegs->EVENTS_USBEVENT = 0;
+      pUSBRegs->EVENTS_USBRESET = 0;
+      pUSBRegs->EVENTCAUSE = pUSBRegs->EVENTCAUSE;   //写1清零事件标记
+      USB__OnStatusChange(USB_STAT_ATTACHED);        //设备回到 ATTACHED（已连接，但没就绪）状态
+      USBD_LEAVE_ISR();
+      return;
+
+    
+   //看到usb复位的中断，如下处理
+   if (pUSBRegs->EVENTS_USBRESET != 0 ) 
+      pUSBRegs->EVENTS_USBRESET = {0;
+      pUSBRegs->EPDATASTATUS      = pUSBRegs->EPDATASTATUS;   //写1清零事件标记
+      pUSBRegs->EVENTS_EPDATA    = 0;
+      pUSBRegs->EPINEN               = 0;
+      pUSBRegs->EPOUTEN             = 0;
+      USB__OnBusReset();
+      _SetupActive = 0;
 
 
 
 
-------
+
+USB__OnBusReset( )  
 
 
-//待理解
-
-USBD_Start( )  
-
-  //空函数，忽略跳过
-  USBD_PROFILE_CALL_VOID(USBD_EVTID_START);
- 
+  //如果收到复位信号时，系统记录里竟然显示‘当前根本没插线（未连接）’， 赶紧往日志里记下log信息
+  if ((USB_Global.State & USB_STAT_ATTACHED) == 0 )  
+    USB_LOG((USB_MTYPE_CORE, "Bus RESET in unattached state!"));
    
-  pDriver = USB_Global.pDriver;    //USB_Driver_Nordic_nRF52xxx
-   
-  // Fire up the hardware   
-  pDriver->pfStart();
 
-  if (pDriver->pfControl != NULL)  
-     
-    // Get driver flags     
-    pDriver->pfControl(USB_DRIVER_CMD_GET_FLAGS,  SEGGER_PTR2PTR(USB_IOCTL_PARA, &USB_Global.Flags));     // lint D:100[f]
-   
-  USB_Global.State = USB_STAT_ATTACHED;
-  pDriver->pfAttach();
+  USB_Global.Addr = 0;
 
-  USBD_PROFILE_END_CALL(USBD_EVTID_START);
+  //把第i号端点的‘死锁/挂起（Halted）’状态强制清零，让它重新活过来，准备好接收或发送数据
+  for (i = 1; i < USB_Global.NumEPs; i++) 
+    USB_aEPStat[i].IsHalted = 0;
+
+  //只保留设备当前配置的第 0 位（自供电标志），把其他所有特殊状态（比如远程唤醒、USB 3.0 低功耗状态）全部清零
+  USB_Global.DeviceState &= 1;
+
+  //把设备状态强制更新为：原来的插上线（ATTACHED）状态 + 准备就绪（READY），并广而告之整个系统
+  USB__OnStatusChange((USB_Global.State & USB_STAT_ATTACHED) | USB_STAT_READY);
  
 
 
 
 
-----------------------
 
 
-#define USB_BASE_ADDR   0x40027000u
 
-#ifdef USB_BASE_ADDR
-static USB_REGS  * _pUSBRegs = (USB_REGS *)USB_BASE_ADDR;
+    
 
-//修复 USB的187，211，171类型bug
-//开启 USB 外设
- //把cpu所有缓冲区里面的指令全部清空  
-//设置usb中断回调函数，设置中断优先级，使能usb的irq总中断
-//使能下面的几个usb中断  
+   if (pUSBRegs->EVENTS_USBEVENT != 0 )  
+      pUSBRegs->EVENTS_USBEVENT = 0;
+      Status = pUSBRegs->EVENTCAUSE;
+      pUSBRegs->EVENTCAUSE = Status;                     // Clear all bits
+      if ((Status & EVENTCAUSE_SUSPEND) != 0u)  
+         USB__OnSuspend();
+       
+      if ((Status & EVENTCAUSE_RESUME) != 0u)  
+         USB__OnResume();
+       
+    
 
-_Start() 
+   if (pUSBRegs->EVENTS_EP0SETUP != 0u)  
+      pUSBRegs->EVENTS_EP0SETUP = 0;
+      SetupPacket.bmRequestType = pUSBRegs->BMREQUESTTYPE;
+      SetupPacket.bRequest         = pUSBRegs->BMREQUEST;
+      SetupPacket.wValueLow       = pUSBRegs->WVALUEL;
+      SetupPacket.wValueHigh      = pUSBRegs->WVALUEH;
+      SetupPacket.wIndexLow       = pUSBRegs->WINDEXL;
+      SetupPacket.wIndexHigh      = pUSBRegs->WINDEXH;
+      SetupPacket.wLengthLow      = pUSBRegs->WLENGTHL;
+      SetupPacket.wLengthHigh    = pUSBRegs->WLENGTHH;
+      pUSBRegs->EVENTS_EP0DATADONE = 0;
+      pUSBRegs->INTENSET                = INT_EP0DATADONE;
 
-  pUSBRegs =  (USB_REGS *)0x40027000u;
+      if ((SetupPacket.bmRequestType & 0x80u) == 0 )  
+         _SetupActive = -1;
+      else  
+         _SetupActive = 1;
+       
+      _EPIN_Busy[0] = 0;
+      USB__HandleSetup(&SetupPacket);
 
-  //关全局中断
-  //USB_OS_IncDI();
-    NRFX_CRITICAL_SECTION_ENTER();
+      if (_SetupActive < 0)  
+         //
+         // Issue EP0 read
+         //
+         pUSBRegs->TASKS_EP0RCVOUT = 1;
+       
+    
 
-
-  //来自 Nordic SDK 的更新版 USB 启用代码 (修复 USB 在电脑休眠唤醒时（挂起状态）容易死机卡死的 Bug)
-  //static inline void usbd_errata_187_211_begin(void)
-  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱没开过（状态是0）
-  
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
-      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 2. 在特定寄存器里打上补丁（修硬件Bug）
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 关上保险箱（重新上锁）
-  
-  else  
-      *((volatile U32 *)(0x4006ED14)) = 0x00000003;  // 如果保险箱已经是解锁状态，直接打补丁
-  
-
-    //修复 USB 唤醒恢复时的时序 Bug（防止唤醒瞬间数据丢失）。  
-    //static inline void usbd_errata_171_begin(void)
-  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 再次检查保险箱
-  
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 塞入暗号 0x9375
-      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;  // 在另一个地方打补丁
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 重新上锁
-  
-  else  
-      *((volatile U32 *)(0x4006EC14)) = 0x000000C0;
-  
-
-  //开启 USB 外设
-  pUSBRegs->ENABLE = 1;
-  
-  ISB();  //把cpu所有缓冲区里面的指令全部清空  
-  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
-
-  // 等待usb ready，应需要几us 
-  while ((pUSBRegs->EVENTCAUSE & EVENTCAUSE_READY) == 0) { }
-
-  pUSBRegs->EVENTCAUSE = EVENTCAUSE_READY;   //1<<11, 清零 usb ready 标记
-
-  ISB();  //把cpu所有缓冲区里面的指令全部清空  
-  DSB();  //等待。等前面所有的内存读写操作（写寄存器、写内存）彻底、真实地在硬件上生效，才准继续往下走。
+ 
+   // 旧版本遗留的历史无用垃圾，忽略跳过
+   EPIndex = _ExtraPacket_EPIndex;  //_ExtraPacket_EPIndex是旧版本遗留的历史无用垃圾，忽略跳过
+   if (EPIndex != 0 )   
+      _ExtraPacket_EPIndex = 0;     //忽略跳过
+      USB__OnRx(EPIndex, _PacketBuff, _ExtraPacket_NumBytes);
 
 
-   //刚才往 0x4006EC14 写了 0xC0，现在恢复00，防止这个临时补丁影响后续其他外设
-  //static inline void usbd_errata_171_end(void)
-  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开（状态是0）
-  
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
-      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
-  
-  else  
-      *((volatile U32 *)(0x4006EC14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
-  
+    
 
-  //刚才往 0x4006ED14 写了 0x03，现在恢复00，防止这个临时补丁影响后续其他外设
-  //static inline void usbd_errata_187_211_end(void)
-  if (*((volatile U32 *)(0x4006EC00)) == 0x00000000) // 如果后门保险箱当前没开
-  
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 1. 塞入接头暗号 0x9375，强行解锁！
-      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 2. 把寄存器清零（解除刚才的打补丁状态）
-      *((volatile U32 *)(0x4006EC00)) = 0x00009375;  // 3. 重新上锁
-  
-  else  
-      *((volatile U32 *)(0x4006ED14)) = 0x00000000;  // 如果保险箱本来就开着，直接清空寄存器
-  
-  //设置usb中断回调函数，设置中断优先级，使能usb的irq总中断
-  //USB_Global.pfEnableISR(_IRQHandler);
-  //   _EnableISR(_IRQHandler);
-       BSP_USB_InstallISR(_IRQHandler);
-          _pfUSBISRHandler = _IRQHandler;
-          NVIC_SetPriority(USBD_IRQn, (1 << __NVIC_PRIO_BITS) - 2);
-          NVIC_EnableIRQ(USBD_IRQn);
-  
-  //清零所有端口  
-  pUSBRegs->EPINEN          = 0;
-  pUSBRegs->EPOUTEN         = 0;
-  
+   pUSBRegs->EVENTS_STARTED = 0;
+   pUSBRegs->INTENCLR          = INT_STARTED;
+ 
+   // EP0-related interrupt occurred
+ 
+   if (pUSBRegs->EVENTS_EP0DATADONE != 0u)  
+      pUSBRegs->EVENTS_EP0DATADONE = 0;
 
-  // 清零所有事件标记  
-  pUSBRegs->EVENTCAUSE   = pUSBRegs->EVENTCAUSE;
-  pUSBRegs->EPDATASTATUS = pUSBRegs->EPDATASTATUS;
-  pUSBRegs->EVENTS_EPDATA   = 0;
-  pUSBRegs->EVENTS_USBEVENT = 0;
-  pUSBRegs->EVENTS_USBRESET = 0;
-  
+      if (_SetupActive > 0)  
+         _EPIN_Busy[0] = 0;
+         USB__OnTx(0);
+       
+      if (_SetupActive < 0)  
+         _ReadPacketEP0();
 
-  //使能下面的几个usb中断  
-  pUSBRegs->INTEN = INT_USBRESET
-                  | INT_USBEVENT
-                  | INT_EP0SETUP
-                  | INT_EPDATA
-                  ;
+         if (_SetupActive < 0)  
+             
+            // Issue next EP0 read
+             
+            pUSBRegs->TASKS_EP0RCVOUT = 1;
+         
+       
+      // Any other EPx-related interrupt occurred
+ 
+   pUSBRegs->EVENTS_EPDATA = 0;
+   Status = pUSBRegs->EPDATASTATUS;
+   if (Status != 0u) {
+      pUSBRegs->EPDATASTATUS = Status;      // Clear all bits
 
-  //开全局中断
-  //USB_OS_DecRI();
-    NRFX_CRITICAL_SECTION_EXIT();
+      //或已完成发送数据到pc
+      for (i = 1; i < NUM_PHY_EP; i++)  
+         Status >>= 1;
+
+         if ((Status & 1u) != 0u)  
+            _EPIN_Busy[i] = 0;
+
+            if (_EPIN_Enabled[i] != 0)  
+               EPIndex = USB__EPAddr2Index(i | 0x80u) ;
+               USB__OnTx(EPIndex);
+             
+          
+      //或已完成读取pc发来的数据 
+      Status >>= (18u - NUM_PHY_EP);                        // Shift to EPOUT bits
+      for (i = 1; i < NUM_PHY_EP; i++)  
+
+         if ((Status & 1u) != 0u)  
+
+            if (_EPOUT_Enabled[i] != 0)  
+               EPIndex = USB__EPAddr2Index(i) ;
+               _ReadPacket(i, EPIndex);
+              else  
+               _EPOUT_DataPresent[i] = 1;
+             
+         
+         Status >>= 1;
+      
+   
+
+   //空函数，忽略跳过
+   USBD_LEAVE_ISR();
+
+
+ -----------
+
+
+
  
 
 
-----
 
-EnableISR(USB_ISR_HANDLER * pfISRHandler) 
-  BSP_USB_InstallISR(pfISRHandler);
+###############################下行 ########################################
+
+
+################################ 方法2 ###################################
+
+
+[电脑 Host]
+   │ 发送指令包 (经过 COBS 编码)
+   ▼
+[USB 硬件 (nRF52)] ──► 收到数据，触发硬件中断
+   │
+   ▼
+【中断上下文 (ISR)】
+_IRQHandler() [USB_HW_Nordic_nRF.c]
+   │
+_ReadPacket(PhyEP, EPIndex) [读 EPOut 数据]
+   │
+   ├─► 读 OUT 端点数据 (EasyDMA 已自动搬运到 rx_buffer / _PacketBuff)
+   └─► USB__OnRx() [USB_Main.c]
+
+
+
+         │
+         └─► (回调) static_usb_cdc_on_read_cplt() [comms_usb_serial.cpp]
+               │
+               └─► (回调) transport_read_complete() [comms_packetizer.cpp]
+                     │
+                     ├─► memcpy 到拼包缓冲区 rx_cobs_buffer
+                     ├─► 设标志位 rx_data_ready = true
+                     └─► setup_next_rx() (立刻挂起下一次接收，准备迎接新数据)
+
+   
+════════════════ 上下文切换 (退出中断，回到 main_event_queue) ════════════════
+   
+【主循环上下文 (Thread)】
+main_event_queue.execute_forever() [main.cpp]
+   │
+   ├─► 查任务：event_queue_start_rx_pending() [comms_packetizer.cpp] (发现 rx_data_ready == true)
+   │     │
+   │     ▼
+   └─► event_queue_start_rx_process() [comms_packetizer.cpp]
+         │
+         ├─► 寻找包尾标志 (0x00)
+         ├─► cobs_decode_crc() (解析 COBS，校验 CRC)
+         │
+         └─► (*packet_handler)() [触发应用层注册的回调]
+               │
+               ▼
+         usb_serial_packet_received(data, length, ...) [main.cpp]
+               │
+               ├─► switch(data[0]) 解析命令字
+               ├─► 如果是 DATA_ENABLE: 开启 ADC 采样
+               └─► 如果是其他指令: 调 process_packet_received() 处理
+
+
+
 
 
 
@@ -414,35 +510,6 @@ static const USB_DEVICE_INFO usb_device_info = {
     .sProductName  = APP_USBD_STRINGS_PRODUCT, // ProductName
     .sSerialNumber = g_extern_serial_number // SerialNumber - Declared in usb_serial_num.c and
                                             // filled in at runtime
-};
-
------
-
-
-const USB_HW_DRIVER USB_Driver_Nordic_nRF52xxx = 
-{
-  _Start,
-  _AllocEP,
-  _UpdateEP,
-  _Enable,
-  _Attach,
-  _GetMaxPacketSize,
-  _IsInHighSpeedMode,
-  _SetAddress,
-  _SetClrStallEP,
-  _StallEP0,
-  _DisableRxInterruptEP,
-  _EnableRxInterruptEP,
-  _StartTx,
-  NULL,
-  _DisableTx,
-  _ResetEP,
-  NULL,
-  _DeInit,
-  _Detach,
-  NULL,
-  _SendEPEx,
-  _Init
 };
 
 ------

@@ -1,0 +1,575 @@
+﻿
+
+
+//设置USB串口状态回调函数 ，感知电脑那边一改状态（比如打开串口、关闭串口）
+    _aInst[0].pfOnSetControlLineState = static_usb_cdc_on_line_state_change
+
+//设置cdc回调函数 
+     write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt  //cdc uart发送完成的回调函数
+     read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;    //cdc uart读取完成的回调函数
+
+//设置数据包处理的回调函数 
+     packet_handler          =  usb_serial_packet_received 
+     rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+     tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+
+//找到rtc可以使用的cc通道，设置超时回调函数 
+     callback_funcs[i] = static_on_reconnect_timeout;
+
+//设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+     _pfUSBISRHandler = _IRQHandler;
+
+
+   USB_aEPStat[1]:
+      .EPAddr           = 1
+      .EPType           = USB_TRANSFER_TYPE_BULK
+      .Dir.RxInfo.Buffer.pData = pBuffer;     //usb_cdc_raw_buffer 
+      .Dir.RxInfo.Buffer.Size  = BufferSize;  //3072
+      .MaxPacketSize      = MaxPacketSize;     //nnn
+      .MaxPacketSizeUser  = MaxPacketSize;     //nnn
+      .Interval           = pInfo->Interval;   //0
+
+
+
+
+##############################################################################################################
+
+
+
+======================= 【前置准备：成立物流公司】 =======================
+
+1. USBD_Init() / USBD_X_Config()    -> 购买货车、建仓库（配置底层寄存器）
+2. USBD_AddDriver() / _Start()      -> 雇佣专职司机、打通高速路（打硅片补丁，拉起时钟）
+3. USBD_CDC_Add(&InitData)          -> 成立 CDC 串口专线（分配端点、建缓冲区）
+4. BSP_USB_InstallISR / EnableISR   -> 设立前台接待处（注册中断，接通电话线）
+5. USBD_SetOnRxEP0 / LineState      -> 培训前台如何应对客户的特殊要求（注册控制回调）
+
+
+
+=================== 【下行链路：电脑(Client) -> 板子(MCU)】 ===================
+
+[电脑发送数据/指令]
+       │
+       ▼
+[USB 硬件产生中断] 
+       │
+       ▼
+[ _IRQHandler] (中断服务函数)
+       │
+       ▼
+[底层驱动读取 EPOut 缓冲区] (DMA 自动把数据搬进 rx_buffer)
+       │
+       ▼
+[触发写入完成/读取完成回调] 
+  └─► static_usb_cdc_on_write_cplt / USB_TRACE_WITH_DATA 记录状态
+       │
+       ▼
+[USB 协议栈解析]
+       │
+       ▼
+[应用层回调]  ──► usb_serial_packet_received() [main.cpp]
+                      │ 解析命令 (如 OMMO_COMMAND_USB_DATA_ENABLE)
+                      ▼
+                 启动/停止 ADC 采样，或者配置设备参数
+
+
+=================== 【上行链路：板子(MCU) -> 电脑(Client)】 ===================
+
+[ADC 采样完成，触发 sample_set_ready()] 
+       │
+       ▼
+[应用层调用]  ──► usb_serial_write_data_packet_vargs() [main.cpp]
+       │
+       ▼
+[准备发包]  ──► write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt;
+       │        write_io_ctx.pContext = this;
+       ▼
+[交给底层驱动] ──► USBD_CDC_WriteData(...)
+       │
+       ▼
+[USB 硬件 (EasyDMA)] ──► 自动把 tx_buffer 的数据打包发送给电脑
+       │
+       ▼ (等待总线空闲，按包发送)
+[发送完成产生中断]
+       │
+       ▼
+[触发完成回调]  ──► static_usb_cdc_on_write_cplt() [底层驱动]
+       │
+       ▼
+[应用层清理]  ──► tx_complete_callback()
+       │            ├─► USB_TRACE(TRACE_USB_SERIAL_WRITE_COMPLETE); (打点记录)
+       │            └─► tx_count++; (释放缓冲区，准备发下一包)
+
+
+
+极简概括：
+
+下行（控制）：中断 -> 读 EPOut -> 调 usb_serial_packet_received 解析指令。
+
+上行（数据）：ADC 打包 -> 调 WriteData 塞进 EPIn -> DMA 发走 -> 触发 write_cplt 回调清账
+
+
+
+
+###############################下行 ########################################
+
+
+################################ 方法1 ###################################
+
+
+[物理硬件触发] USB 接收中断 (nRF52 硬件发出 IRQ)
+  └─► _IRQHandler() [USB_HW_Nordic_nRF.c]
+        └─► _ReadPacket(PhyEP, EPIndex) [读 EPOut 数据]
+              └─► 读硬件寄存器，触发 EasyDMA 搬运
+              └─► USB__OnRx(...) [USB_Main.c]
+
+
+
+                    └─► USB__OnRxZeroCopy / USB__OnRx (判断是直接拷内存还是走缓冲)
+                          └─► rx_complete_callback() [触发注册的回调]
+                                └─► static_usb_cdc_on_read_cplt(...) [comms_usb_serial.cpp]
+                                      └─► rx_complete_callback(...) [comms_packetizer.cpp 的 static_transport_read_complete]
+                                            └─► transport_read_complete(...) [拼包缓冲]
+                                                  └─► (标记 rx_data_ready = true，准备进主循环队列)
+
+                                                  
+[主循环队列处理] (脱离中断上下文)
+  └─► event_queue_start_rx_pending() [判断 rx_data_ready 是否为 true]
+        └─► event_queue_start_rx_process() [comms_packetizer.cpp]
+              └─► 检查 \0 结尾，提取一整包
+              └─► cobs_decode_crc() [COBS 解码 + CRC 校验]
+                    └─► (*packet_handler)(...) [业务回调]
+                          └─► usb_serial_packet_received(data, length, ...) [main.cpp]
+                                └─► 解析指令 (如 OMMO_COMMAND_USB_DATA_ENABLE)
+
+
+
+
+################################ 方法2 ###################################
+
+
+[电脑 Host]
+   │ 发送指令包 (经过 COBS 编码)
+   ▼
+[USB 硬件 (nRF52)] ──► 收到数据，触发硬件中断
+   │
+   ▼
+【中断上下文 (ISR)】
+_IRQHandler() [USB_HW_Nordic_nRF.c]
+   │
+_ReadPacket(PhyEP, EPIndex) [读 EPOut 数据]
+   │
+   ├─► 读 OUT 端点数据 (EasyDMA 已自动搬运到 rx_buffer / _PacketBuff)
+   └─► USB__OnRx() [USB_Main.c]
+         │
+         └─► (回调) static_usb_cdc_on_read_cplt() [comms_usb_serial.cpp]
+               │
+               └─► (回调) transport_read_complete() [comms_packetizer.cpp]
+                     │
+                     ├─► memcpy 到拼包缓冲区 rx_cobs_buffer
+                     ├─► 设标志位 rx_data_ready = true
+                     └─► setup_next_rx() (立刻挂起下一次接收，准备迎接新数据)
+
+   
+════════════════ 上下文切换 (退出中断，回到 main_event_queue) ════════════════
+   
+【主循环上下文 (Thread)】
+main_event_queue.execute_forever() [main.cpp]
+   │
+   ├─► 查任务：event_queue_start_rx_pending() [comms_packetizer.cpp] (发现 rx_data_ready == true)
+   │     │
+   │     ▼
+   └─► event_queue_start_rx_process() [comms_packetizer.cpp]
+         │
+         ├─► 寻找包尾标志 (0x00)
+         ├─► cobs_decode_crc() (解析 COBS，校验 CRC)
+         │
+         └─► (*packet_handler)() [触发应用层注册的回调]
+               │
+               ▼
+         usb_serial_packet_received(data, length, ...) [main.cpp]
+               │
+               ├─► switch(data[0]) 解析命令字
+               ├─► 如果是 DATA_ENABLE: 开启 ADC 采样
+               └─► 如果是其他指令: 调 process_packet_received() 处理
+
+
+
+
+###############################上行 ########################################
+
+
+################################ 方法1 ###################################
+
+
+上行 ADC 数据 ：
+     。
+     。 sample_set_ready 
+     。
+     。 usb_serial_write_data_packet_vargs 
+     。
+     。 写入主 Tx Buffer 
+     。
+     。 事件队列触发 event_queue_start_tx_process 
+     。
+     。 切换双缓冲 
+     。
+     。 调到 comms_usb_serial::comms_transport_tx 
+     。
+     。 SEGGER 的 USBD_CDC_WriteAsync 
+     。
+     。 底层 EasyDMA 发送 
+     。
+     。 触发 static_usb_cdc_on_write_cplt 
+     。
+     。 回到 comms_packetizer::transport_write_complete 收尾。
+
+
+
+
+################################ 方法2 ###################################
+
+
+
+【中断上下文 (ISR)】ADC 采样完成
+  └─► sample_set_ready() [main.cpp]
+        └─► usb_serial_write_data_packet_vargs() [usb_serial.hpp 内联]
+              └─► write_data_packet_vargslist() [comms_packetizer.cpp]
+                    ├─► COBS 编码后写入 tx_buffer_active (主/副缓冲区)
+                    └─► (标记数据已就绪，拉高 flush 标志)
+
+════════════════ 上下文切换 (退出中断，回到 main_event_queue) ════════════════
+
+【主循环上下文 (Thread)】
+main_event_queue.execute_forever() [main.cpp]
+  │
+  ├─► 查任务：event_queue_start_tx_pending() [comms_packetizer.cpp] (检查 Tx Buffer 是否有货)
+  │     │
+  │     ▼
+  └─► event_queue_start_tx_process() [comms_packetizer.cpp]
+        │
+        ├─► 切换双缓冲 (tx_buffer_active 换成 tx_buffer_secondary)
+        ├─► 记录本次发送的指针区间 (tx_buffer_transport)
+        │
+        └─► initiate_tx()
+              │
+              └─► setup_next_tx()
+                    │
+                    └─► transport_device->comms_transport_tx() [comms_usb_serial.cpp]
+                          │
+                          ├─► 填充 write_io_ctx (数据指针、长度、完成回调 static_usb_cdc_on_write_cplt)
+                          │
+                          └─► USBD_CDC_WriteAsync() [USB_CDC.c]
+                                │
+                                └─► USBD_WriteAsync() [USB_Main.c]
+                                      │ (往队列塞入 DataParts)
+                                      └─► USBD_WriteOverlapped()
+                                            │
+                                            └─► pfStartTx() 
+                                                  └─► USB__Send()
+                                                        └─► _SendEPEx() [USB_HW_Nordic_nRF.c]
+                                                              └─► 启动底层 EasyDMA 发送
+
+════════════════ 硬件发送完毕，触发中断 ════════════════
+
+【中断上下文 (ISR)】USB 发送完成 (DMA 搬运完毕)
+  └─► _IRQHandler() [USB_HW_Nordic_nRF.c] (检测到 ENDEPIN)
+        └─► USB__OnTx() [USB_Main.c]
+              └─► (回调) static_usb_cdc_on_write_cplt() [comms_usb_serial.cpp]
+                    │
+                    └─► tx_complete_callback() (即 static_transport_write_complete)
+                          └─► transport_write_complete() [comms_packetizer.cpp]
+                                │
+                                ├─► 检查是否全部发完 (tx_buffer_transport 是否到达 end)
+                                │     ├─► 若没发完，调 setup_next_tx() 继续发
+                                │     └─► 若发完了，调 on_tx_complete() 收尾 (释放标志位)
+
+
+
+
+
+################################ 方法3 ###################################
+
+
+
+[ADC 硬件转换完毕 / 触发中断]
+   │
+   ▼
+【中断上下文 (ISR)】
+sample_set_ready() [main.cpp]
+   │ 1. 给数据加上时间戳、包 ID
+   │ 2. 调用 usb_serial_write_data_packet_vargs()
+   ▼
+comms_packetizer::write_data_packet_vargslist() [comms_packetizer.cpp]
+   │
+   ├─► 计算长度，确认当前 active_buffer 空间够不够
+   ├─► COBS 编码数据，写入 active_buffer
+   └─► 设标志位 (flush_flag = true)
+   
+════════════════ 上下文切换 (退出中断) ════════════════
+   
+【主循环上下文 (Thread)】
+main_event_queue 轮询
+   │
+   ▼
+event_queue_start_tx_process() [comms_packetizer.cpp]
+   │
+   ├─► 1. 锁临界区，切换 Buffer (把刚才写满的 Buffer 交给底层去发，准备用另一块接收新数据)
+   ├─► 2. 重置状态，调 initiate_tx()
+   │
+   ▼
+comms_usb_serial::comms_transport_tx() [comms_usb_serial.cpp]
+   │
+   └─► USBD_CDC_WriteAsync() -> 底层 SEGGER 协议栈
+         │
+         └─► 底层 EasyDMA 满血启动，把数据通过 USB 线打给电脑
+         
+════════════════ 异步回调触发 ════════════════
+
+[电脑接收完毕，nRF52 触发硬件中断]
+   │
+   ▼
+【中断上下文 (ISR)】
+_IRQHandler() -> USB__OnTx() -> static_usb_cdc_on_write_cplt() [comms_usb_serial.cpp]
+   │
+   └─► 回调 transport_write_complete() [comms_packetizer.cpp]
+         │
+         ├─► 检查：数据全发完了吗？
+         ├─► 是：on_tx_complete() (把状态清零，允许下一次发数据)
+         └─► 否：setup_next_tx() (继续发剩下的数据块)
+
+
+
+
+
+##############################################################################################################
+
+
+ 
+
+
+
+
+
+===============================================uart CDC 发送数据==========================================================
+
+
+
+
+
+
+
+
+
+
+
+===============================================uart CDC 中断，接收数据==========================================================
+
+
+
+//usb中断入口函数： 来自 ses_startup_nrf52840.s
+
+  _vectors:
+     .word   USBD_IRQHandler
+
+
+USBD_IRQHandler( )   
+ 
+   //_pfUSBISRHandler();
+     _IRQHandler();
+
+
+
+------------
+
+static void _IRQHandler(void) {
+  U32        Status;
+  unsigned   i;
+  unsigned   EPIndex;
+  USB_REGS * pUSBRegs = _pUSBRegs;
+  USB_SETUP_PACKET SetupPacket;
+
+  USBD_ENTER_ISR();
+  if ((USBREGSTATUS & OUTPUTRDY) == 0u) {
+    //
+    // PHY is powered down. Ignore all interrupts.
+    //
+    pUSBRegs->EVENTS_USBEVENT = 0;
+    pUSBRegs->EVENTS_USBRESET = 0;
+    pUSBRegs->EVENTCAUSE = pUSBRegs->EVENTCAUSE;
+    USB__OnStatusChange(USB_STAT_ATTACHED);
+    USBD_LEAVE_ISR();
+    return;
+  }
+  if (pUSBRegs->EVENTS_USBRESET != 0u) {
+    pUSBRegs->EVENTS_USBRESET = 0;
+    pUSBRegs->EPDATASTATUS    = pUSBRegs->EPDATASTATUS;
+    pUSBRegs->EVENTS_EPDATA   = 0;
+    pUSBRegs->EPINEN          = 0;
+    pUSBRegs->EPOUTEN         = 0;
+    USB__OnBusReset();
+    _SetupActive = 0;
+  }
+  if (pUSBRegs->EVENTS_USBEVENT != 0u) {
+    pUSBRegs->EVENTS_USBEVENT = 0;
+    Status = pUSBRegs->EVENTCAUSE;
+    pUSBRegs->EVENTCAUSE = Status;              // Clear all bits
+    if ((Status & EVENTCAUSE_SUSPEND) != 0u) {
+      USB__OnSuspend();
+    }
+    if ((Status & EVENTCAUSE_RESUME) != 0u) {
+      USB__OnResume();
+    }
+  }
+  if (pUSBRegs->EVENTS_EP0SETUP != 0u) {
+    pUSBRegs->EVENTS_EP0SETUP = 0;
+    SetupPacket.bmRequestType = pUSBRegs->BMREQUESTTYPE;
+    SetupPacket.bRequest      = pUSBRegs->BMREQUEST;
+    SetupPacket.wValueLow     = pUSBRegs->WVALUEL;
+    SetupPacket.wValueHigh    = pUSBRegs->WVALUEH;
+    SetupPacket.wIndexLow     = pUSBRegs->WINDEXL;
+    SetupPacket.wIndexHigh    = pUSBRegs->WINDEXH;
+    SetupPacket.wLengthLow    = pUSBRegs->WLENGTHL;
+    SetupPacket.wLengthHigh   = pUSBRegs->WLENGTHH;
+    pUSBRegs->EVENTS_EP0DATADONE = 0;
+    pUSBRegs->INTENSET           = INT_EP0DATADONE;
+    if ((SetupPacket.bmRequestType & 0x80u) == 0u) {
+      _SetupActive = -1;
+    } else {
+      _SetupActive = 1;
+    }
+    _EPIN_Busy[0] = 0;
+    USB__HandleSetup(&SetupPacket);
+    if (_SetupActive < 0) {
+      //
+      // Issue EP0 read
+      //
+      pUSBRegs->TASKS_EP0RCVOUT = 1;
+    }
+  }
+  //
+  // Handle extra packet
+  //
+  EPIndex = _ExtraPacket_EPIndex;
+  if (EPIndex != 0u) {
+    _ExtraPacket_EPIndex = 0;
+    USB__OnRx(EPIndex, (U8 *)_PacketBuff, _ExtraPacket_NumBytes);
+  }
+  pUSBRegs->EVENTS_STARTED = 0;
+  pUSBRegs->INTENCLR       = INT_STARTED;
+  //
+  // EP0-related interrupt occurred
+  //
+  if (pUSBRegs->EVENTS_EP0DATADONE != 0u) {
+    pUSBRegs->EVENTS_EP0DATADONE = 0;
+    if (_SetupActive > 0) {
+      _EPIN_Busy[0] = 0;
+      USB__OnTx(0);
+    }
+    if (_SetupActive < 0) {
+      _ReadPacketEP0();
+      if (_SetupActive < 0) {
+        //
+        // Issue next EP0 read
+        //
+        pUSBRegs->TASKS_EP0RCVOUT = 1;
+      }
+    }
+  }
+  //
+  // Any other EPx-related interrupt occurred
+  //
+  pUSBRegs->EVENTS_EPDATA = 0;
+  Status = pUSBRegs->EPDATASTATUS;
+  if (Status != 0u) {
+    pUSBRegs->EPDATASTATUS = Status;              // Clear all bits
+    for (i = 1; i < NUM_PHY_EP; i++) {
+      Status >>= 1;
+      if ((Status & 1u) != 0u) {
+        _EPIN_Busy[i] = 0;
+        if (_EPIN_Enabled[i] != 0) {
+          EPIndex = USB__EPAddr2Index(i | 0x80u) ;
+          USB__OnTx(EPIndex);
+        }
+      }
+    }
+    Status >>= (18u - NUM_PHY_EP);                // Shift to EPOUT bits
+    for (i = 1; i < NUM_PHY_EP; i++) {
+      if ((Status & 1u) != 0u) {
+        if (_EPOUT_Enabled[i] != 0) {
+          EPIndex = USB__EPAddr2Index(i) ;
+          _ReadPacket(i, EPIndex);
+        } else {
+          _EPOUT_DataPresent[i] = 1;
+        }
+      }
+      Status >>= 1;
+    }
+  }
+  USBD_LEAVE_ISR();
+}
+
+
+ 
+-------------
+
+
+
+usb_serial_packet_received(uint8_t data[], uint16_t length, const void*)
+{
+uint16_t response_length = 0;
+uint8_t response_buffer[1024];
+
+    //Check for enable packet
+    switch(data[0])
+    {
+        case OMMO_COMMAND_USB_DATA_ENABLE:
+            if(data_mode != DATA_MODE_DISABLED || !adc_sensors_is_state_machine_configured())
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+            }
+            else if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                ret_code_t error_code = adc_sensors_enable();
+                if(error_code == NRF_SUCCESS)
+                {
+                    packet_id = data[1];
+                    data_mode = DATA_MODE_USB;
+                }
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(error_code));
+
+                set_leds();
+            }
+            break;
+
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+            if(length != 2)
+            {
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            }
+            else
+            {
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(comms_esb_set_synch_rx_channel(data[1])));
+            }
+            break;
+    }
+
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, response_buffer, sizeof(response_buffer));
+
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+    usb_serial_send_command_packet(response_buffer, response_length);
+}
+
+
+
+
+
+
+
