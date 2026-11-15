@@ -884,13 +884,13 @@ USBD_Init( )
   USB_Global.pFirstSCHook =usb_state_hook;  
 
 
-参数 ： usb_state_hook, static_usb_on_state_change, this
+参数 ： usb_state_hook,   static_usb_on_state_change, this
 
 USBD_RegisterSCHook(  * pHook,   *pfStateCb,  * pContext) 
  
   USB_HOOK *  p;
 
-  pHook->cb            = pfStateCb;   //static_usb_on_state_change
+  pHook->cb            = pfStateCb;       // static_usb_on_state_change
   pHook->pContext      = pContext;    //this
    
 
