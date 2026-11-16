@@ -758,24 +758,65 @@ adc_sensors_restart_state_machine()
     restore_default_sampling_ppi_config();
 
 
-    //Setup adc for next sample
+    //DS 立刻让芯片内部的 SAADC 停止转换，原地待命
     nrf_saadc_task_trigger(NRF_SAADC_TASK_STOP);
+
+    //DS 把当前的状态翻转（取反）。如果之前是测‘电压’，现在就改成测‘电流’；如果之前是测‘电流’，现在就改成测‘电压
     rbridge_vbias_measure_state = !rbridge_vbias_measure_state;
+
+    //DS 既然这次轮到测‘电压（Vbias）’了，那我就把内部 ADC 的探头切换成测电压的模式，并且把接下来采到的数据，存进专门放电压数据的抽屉里
     if(rbridge_vbias_measure_state)
      
         nrf_saadc_channel_init(0, &adc_config_vbias);
         nrf_saadc_buffer_init(adc_vbias_buffer, 3);
     
-    else
-     
+    // 既然这次轮到测‘电流（Vsense）’了，那我就把内部 ADC 的探头切换成测电流的模式，并且把接下来采到的数据，存进专门放电流数据的抽屉里
+    else     
         nrf_saadc_channel_init(0, &adc_config_vsense);
         nrf_saadc_buffer_init(adc_vsense_buffer, 3);
-   
+
+   //DS 正式按下内部 ADC（SAADC）的启动键，让它进入随时待命的运转状态
     nrf_saadc_task_trigger(NRF_SAADC_TASK_START);
 
     // Prepare SPI transfer.
-    adc_sensors_start_data_read_hold();
- 
+    //adc_sensors_start_data_read_hold();
+    //  comm_device_ptr->trx( nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD );
+       spim_instance->trx( nullptr, 0, spi_rx_buffer, 3, comm_device_event_handler, nullptr, 2 );
+
+
+-------------
+
+参考： nullptr, 0, spi_rx_buffer, 3, comm_device_event_handler, nullptr, 2 
+spim_basic::trx(   p_tx_buffer,    tx_length,   p_rx_buffer,   rx_length,    comm_device_event_handler_t handler,    p_context,    flags  )
+
+    evt_handler = handler;
+    evt_context = p_context;
+    trx_complete = false;
+    is_repeated = !!(flags & COMM_DEVICE_FLAGS_REPEATED);
+
+    switch (acq)
+   
+        case SPIMB_ACQ_NORMAL:
+        
+            if (rx_length + tx_length > SPIM_MAX_XFER_SIZE)            
+                return NRF_ERROR_INVALID_LENGTH;            
+
+            //Save output buffer to copy response to after SPI TRX
+            evt_rx_buffer = p_rx_buffer;
+
+            // Setup transfer
+            nrfx_spim_xfer_desc_t xfer_desc = NRFX_SPIM_XFER_TRX(p_tx_buffer, tx_length, io_buffer, tx_length + rx_length);
+            nrf_spim_enable(spim_instance->p_reg);
+            return nrfx_spim_xfer(spim_instance, &xfer_desc, cast_flags_to_nrf(flags));        
+
+        case SPIMB_ACQ_DIRECT:
+        
+            const nrfx_spim_xfer_desc_t xfer = NRFX_SPIM_XFER_TRX(p_tx_buffer, tx_length, p_rx_buffer, rx_length);
+            nrf_spim_enable(spim_instance->p_reg);
+            return nrfx_spim_xfer(spim_instance, &xfer, cast_flags_to_nrf(flags));        
+
+        default:
+            return NRF_ERROR_INVALID_STATE;
 
 
 
