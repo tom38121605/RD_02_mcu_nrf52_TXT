@@ -354,7 +354,7 @@ restore_default_sampling_ppi_config()
 
 //---------------------timer0 cc0的两个ppi建立之二  ---------------------------------------------
 
-     //建立ppi：mux_select_ppi  (闹铃)   --  拉低MUX1    //b10(z) -> b01(y)
+     //建立ppi：mux_select_ppi  (闹铃)   --  拉低MUX1    //b10(z) -> b01(y)？
                                          --  拉高MUX0 
 
     nrf_ppi_task_endpoint_setup(mux_select_ppi, nrfx_gpiote_clr_task_addr_get(OMMO_ADC_MUX_A1_PIN));
