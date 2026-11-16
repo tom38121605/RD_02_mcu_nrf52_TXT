@@ -142,15 +142,6 @@ typedef enum
 
 
 
-------------------
-
-static void adc_sensors_start_data_read_hold()
-{
-    if(!check_stop_statemachine_bit())
-        APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD));
-}
-
-
 
 -------------
 
@@ -428,6 +419,7 @@ static void adc_sensors_start_data_read_hold()
 }
 
 
+ 
 
 
 

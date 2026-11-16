@@ -280,7 +280,7 @@ port_master_init()
 
 adc_sensors_init( sample_set_ready_callback_function)
 
-   adc_sample_set_ready_callback = sample_set_ready_callback_function;  //sample_set_ready 发送数据函数
+   adc_sample_set_ready_callback = sample_set_ready;  //sample_set_ready 发送数据函数
 
     。。。。。。
 
@@ -658,6 +658,85 @@ nrfx_spim_init(  const p_instance,   p_config,    handler,   *p_context)
 ===============================================spi传输数据==========================================================
 
 
+
+
+
+
+
+
+
+===============================================spi中断前期准备==========================================================
+
+
+//收到pa发来的OMMO_COMMAND_USB_DATA_ENABLE指令，开启adc数据采样
+
+
+usb_serial_packet_received(  data[],   length,   void*)
+
+    switch(data[0])
+    
+
+        //开启adc数据采样
+        case OMMO_COMMAND_USB_DATA_ENABLE:    
+ 
+                adc_sensors_enable();               //here 
+
+
+        //修改无线同步频道
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:   
+           。。。。。。
+
+ 
+ 
+------------
+
+adc_sensors_enable( )
+ 
+
+    //通过触发task拉高引脚电平，通过普通gpio拉高引脚电平(both)
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Z_EN);
+
+
+    //通过触发task拉高引脚电平，通过普通gpio拉高引脚电平(both)
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_X_EN);
+    adc_sensors_intermittent_gpiote_pin_set(OMMO_IO_Y_EN);
+    nrf_delay_us(100);   //保留，重要
+ 
+    overvoltage_triggered = false;
+ 
+    //通过触发task拉高引脚电平
+    nrfx_gpiote_set_task_trigger(OMMO_VBRIDGE_EN);    
+    nrf_delay_us(100);
+
+    //检查是否过压
+    if(overvoltage_triggered)
+        return NRF_ERROR_INTERNAL;    
+ 
+
+    //Start state machine
+    adc_sensors_start_state_machine();
+
+ 
+
+---------------------
+
+
+
+adc_sensors_start_state_machine()
+
+    // 关闭定时器和清零计数值
+    nrfx_ppi_group_disable(adc_sampling_ppi_group);
+    nrfx_timer_disable(&adc_sampling_timer);         //关闭定时器timer0
+    nrfx_timer_clear(&adc_sampling_timer);           //定时器timer0的计数值清零
+
+
+    // 把芯片内部自带的 ADC（SAADC）硬件模块，直接通电唤醒
+    nrf_saadc_enable();
+
+
+    adc_sensors_restart_state_machine();
+
+    nrfx_ppi_group_enable(adc_sampling_ppi_group);
 
 
 

@@ -1,9 +1,27 @@
 ﻿
+疑问1：为什么EP0 会有多个回调
+答：想象一下，usb板子插上电脑后，电脑会认出一个“多功能设备”
+    接口 A：CDC 虚拟串口（你的主业务）
+    接口 B：假设未来加了个音频麦克风
 
 
 
 
-======================================================================
+#define USB_EVENT_DATA_READ         (1uL << 0)
+#define USB_EVENT_DATA_SEND         (1uL << 1)
+#define USB_EVENT_DATA_ACKED        (1uL << 2)
+
+#define USB_EVENT_READ_COMPLETE     (1uL << 3)
+#define USB_EVENT_READ_ABORT        (1uL << 4)
+
+#define USB_EVENT_WRITE_ABORT       (1uL << 5)
+#define USB_EVENT_WRITE_COMPLETE    (1uL << 6)
+
+
+
+
+
+------------------------
 
 
 

@@ -167,7 +167,7 @@ int main(void)
 参数: sample_set_ready
 adc_sensors_init(  sample_set_ready_callback_function  )
 
-   adc_sample_set_ready_callback = sample_set_ready_callback_function;  //sample_set_ready 发送数据函数
+   adc_sample_set_ready_callback =sample_set_ready;  // 发送数据函数
 
 
     // 设置 VBRIDGE_EN 引脚为输出，初始电平为低电平
