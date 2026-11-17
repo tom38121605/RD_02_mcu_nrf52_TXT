@@ -1,0 +1,135 @@
+﻿
+timer0：   adc_sampling_timer
+
+
+TIMER3 (自由运行，从不停)
+   │
+   │ sample event (每 ~1ms)
+   │ (PPI)
+   ▼
+TIMER0 TASKS_START
+   │
+   │ CC0 → MUX 切换
+   │ CC1 → ADC START 脉冲 (中断)
+   │ CC2 → Set/Reset 开始
+   │ CC3 → Set/Reset 结束
+   │        ├── SHORT STOP  ──► TIMER0 停
+   │        └── SHORT CLEAR ──► TIMER0 计数器清零
+   │
+   ▼
+（等下一个 TIMER3 sample event 再次启动 TIMER0）
+
+
+TIMER3 是节拍源，永远在跑。
+
+TIMER0 是执行器，每轮被 TIMER3 打一拍跑一次，跑完自己停。
+
+TIMER0 停的时候，TIMER3 照常计数、照常产生 sample event。
+
+
+
+
+====================
+
+
+一、 初始化链路图（谁调用了谁）
+展示了从 main() 开始，TIMER0 是如何被初始化的，以及它与各个外设、PPI 之间是如何建立连线的
+
+
+main() [main.cpp]
+  │
+  └─► adc_sensors_init() [ADS127L11_mux_sampler.cpp]
+        │
+        ├─► adc_ppi_init()  // [PPI 硬件连线核心]                                                                  //timer0 初始化前的准备
+        │     ├─► nrfx_ppi_channel_assign(adc_start_ppi) 
+        │     │     // CC1 比较事件 ──► OMMO_ADC_START_PIN (GPIOTE SET) 产生 ADC 启动脉冲
+        │     │     // 同时 fork 至 NRF_SAADC_TASK_SAMPLE 触发内部 SAADC
+        │     ├─► nrfx_ppi_channel_assign(adc_ready_spi_read_ppi)
+        │     │     // OMMO_ADC_DATA_READY_PIN (DRDY) ──► SPIM START 任务 (读取外部ADC)
+        │     ├─► nrfx_ppi_channel_assign(mux_select_ppi)
+        │     │     // CC0 比较事件 ──► MUX 引脚 (GPIOTE) 切换通道
+        │     ├─► nrfx_ppi_channel_assign(channel_bridge_select_ppi)
+        │     │     // CC0 比较事件 ──► 桥接使能引脚 (X/Y/Z_EN) 切换桥接通道
+        │     ├─► nrfx_ppi_channel_assign(set_reset_start_ppi)
+        │     │     // CC2 比较事件 ──► Set/Reset 引脚拉高
+        │     └─► nrfx_ppi_channel_assign(set_reset_end_ppi)
+        │           // CC3 比较事件 ──► Set/Reset 引脚拉低
+        │
+        ├─► nrfx_timer_init(&adc_sampling_timer, ..., sampling_timer_event_handler)              //timer0 初始化
+        │     // 初始化 TIMER0 硬件，绑定 CC1 中断处理函数，优先级 0
+        │
+        ├─► nrfx_timer_compare(CC2, START_TIME, false)
+        │     // 配置 CC2：Set/Reset 开始时间 (无中断)
+        │
+        ├─► nrfx_timer_extended_compare(CC3, START+DURATION, SHORT_MASK, false)
+        │     // 配置 CC3：Set/Reset 结束时间
+        │     // 并写入 SHORTS 寄存器：COMPARE3_STOP + COMPARE3_CLEAR (停表并清零)
+        │
+        └─► timestamp_add_task_on_sample_event(TIMER0_TASK_START)
+              // 建立外部连线：TIMER3 采样事件 ──► TIMER0 TASKS_START (开启一轮采样)
+
+
+------
+
+二、 运行与中断链路图（硬件与软件的交汇）
+展示 TIMER0 被触发启动后，硬件 PPI 如何自动执行动作（零 CPU 消耗），以及中断触发后软件状态机如何推进。
+
+
+时间轴 ──────────────────────────────►
+
+[TIMER3 触发] 
+    │
+    ▼
+TIMER0 TASKS_START (计数器从 0 开始跑)
+    │
+    │
+    ├─► [CC0 触发]  (ADC_MUX_SWITCH_TIME_US)
+    │     ├─ (PPI 硬件) 切换 MUX 到 X 通道
+    │     └─ (PPI 硬件) 开启 X 桥接，关闭上一通道桥接
+    │
+    │
+    ├─► [CC1 触发]  (ADC_START_SAMPLE_TIME_US)
+    │     ├─ (PPI 硬件) 翻转 OMMO_ADC_START_PIN，给外部 ADC 发转换脉冲
+    │     ├─ (PPI 硬件) 触发内部 SAADC 采样
+    │     └─ (中断软件) 进入 sampling_timer_event_handler()
+    │           └─ 推进状态机 (PENDING -> COMPLETE)，配置下一次 CC0/CC1 和 PPI
+    │
+    │
+    │    (外部 ADC 吭哧吭哧转换中... 转换完成拉低 DRDY)
+    │     ├─ (PPI 硬件) DRDY 触发 SPIM START，读回 24-bit 数据
+    │     └─ (中断软件) SPI END 触发 comm_device_event_handler()   -->  sample_set_ready 
+    │           └─ 保存 X 通道数据，原子操作推进状态机，预装下一次 SPI
+    │
+    │    (TIMER0 继续计数，等待 Y 通道和 Z 通道的重复流程...)
+    │    (Y 通道: CC0' -> CC1' -> SPI读)
+    │    (Z 通道: CC0'' -> CC1'' -> SPI读)
+    │
+    │
+    ├─► [CC2 触发]  (ADC_SET_RESET_START_TIME_US)
+    │     └─ (PPI 硬件) 拉高 Set/Reset 引脚
+    │
+    │
+    └─► [CC3 触发]  (ADC_SET_RESET_START_TIME_US + 1us)
+          ├─ (PPI 硬件) 拉低 Set/Reset 引脚
+          ├─ (SHORT 硬件) COMPARE3_STOP  ──► 停 TIMER0
+          └─ (SHORT 硬件) COMPARE3_CLEAR ──► 清 TIMER0 计数器
+    │
+    ▼
+(本轮结束，等待下一次 TIMER3 触发)
+
+
+------
+
+三、 总结
+
+从上面的图可以清晰看出 TIMER0 的设计哲学：
+
+初始化阶段：不配中断（除了 CC1），拼命配 PPI 和 SHORTS。把所有“准点该干活”的琐事全交给了硬件。
+
+运行阶段：CC0 只管硬件切通道，CC2/CC3 只管硬件发脉冲并自尽（STOP/CLEAR）。
+
+中断阶段：唯一的 CC1 中断只干“预判”和“修改下一次参数”的活，绝不干涉当前的硬件执行。
+
+这样既保证了 24-bit ADC 要求的微秒级严格时序，又没有给 CPU 带来任何中断负担。
+
+
