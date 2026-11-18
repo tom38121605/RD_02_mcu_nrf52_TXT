@@ -1,54 +1,24 @@
 ﻿
 
-【外部硬件触发】
-外部 ADC 转换完成，拉低 DRDY 引脚
-    │
-    │ (纯硬件 PPI 连接)
-    ▼
-SPI 硬件 EasyDMA 启动，读完一包数据
-    │
-    │ (触发硬件中断)
-    ▼
-_IRQHandler() [USB_HW_Nordic_nRF.c] 或者 nrfx_spim_irq_handler [nrfx_spim.c]
-    │
-    ▼
-finish_transfer() / irq_handler() [底层驱动收尾，清 END 标志等]
-    │
-    ▼
-spim_handler() [spim_basic.cpp]
-    │
-    ├─► 拷贝临时缓冲数据到 evt_rx_buffer
-    │
-    └─► 调用注册的回调函数 evt_handler
-          │
-          ▼
-comm_device_event_handler() [ADS127L11_mux_sampler.cpp]
-    │
-    ├─► 判断当前是 X、Y 还是 Z 通道？
-    ├─► 把数据存入 adc_data_buffer
-    ├─► 如果是 X 或 Y：原子操作推状态，启动下一次 SPI 读取
-    │
-    └─► 如果是 Z 通道（最后一个通道收完了！）
-          │
-          ▼
-    (*adc_sample_set_ready_callback)(...)  👈 这里！
-          │
-          ▼
-sample_set_ready() [main.cpp]
-    │
-    ├─► 检查系统模式 (USB 还是 无线)
-    ├─► 给数据打上时间戳
-    └─► 调用 usb_serial_write_data_packet_vargs() 或 ESB 发送
-
-
-
-
-
-
-============================================================
-
 
 名词解释:  ORC    --   Over-read Character  //过读字符，或者叫默认填充字符0XFF
+
+
+
+------------
+
+#define COBS_MAX_LEN(x)  ((x) + 1 + (x) / 254)
+
+#define COBS_POST0_MAX_LEN(x) (COBS_MAX_LEN(x) + 1)
+
+
+
+#define ADS127L11_SPI_READ_LENGTH           3
+#define ADS127L11_NUM_CHANNELS              4
+#define ADS127L11_DATA_LENGTH               (4 * ADS127L11_NUM_CHANNELS)   //4 * 4
+
+uint16_t adc_sample_data_size = ADS127L11_DATA_LENGTH;
+
 
 
 -------------

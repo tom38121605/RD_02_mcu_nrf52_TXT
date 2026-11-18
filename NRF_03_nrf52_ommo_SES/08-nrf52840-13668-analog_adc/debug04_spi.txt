@@ -493,18 +493,28 @@ adc_sensors_enable( )
         return NRF_ERROR_INTERNAL;    
  
 
-    //Start state machine
+    // 关闭timer0和清零计数值
+    // 把芯片内部自带的 ADC（SAADC）硬件模块，直接通电唤醒
+    // 设置timer0 CC0和CC1的阈值，使能timer0 CC1中断，开启timer0 
+    // 把采样ppi的相关设置恢复到初始值  （详见： debug07_ppi.txt）
+    // SAADC的相关配置
+    // 准备spi传输去读取x通道数据
     adc_sensors_start_state_machine();
 
  
 
 ---------------------
 
+// 关闭timer0和清零计数值
+// 把芯片内部自带的 ADC（SAADC）硬件模块，直接通电唤醒
 
-
+// 设置timer0 CC0和CC1的阈值，使能timer0 CC1中断，开启timer0 
+// 把采样ppi的相关设置恢复到初始值  （详见： debug07_ppi.txt）
+// SAADC的相关配置
+// 准备spi传输去读取x通道数据
 adc_sensors_start_state_machine()
 
-    // 关闭定时器和清零计数值
+    // 关闭timer0和清零计数值
     nrfx_ppi_group_disable(adc_sampling_ppi_group);  //关闭group
     nrfx_timer_disable(&adc_sampling_timer);         //关闭定时器timer0
     nrfx_timer_clear(&adc_sampling_timer);           //定时器timer0的计数值清零
@@ -894,221 +904,21 @@ pim_basic::spim_handler( p_event,  p_context)
 
 -----------
 
+comm_device_event_handler( comm_dev,  result,  p_context )
 
-comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
-{
-   UNUSED_PARAMETER(comm_dev);
-   UNUSED_PARAMETER(p_context);
-#ifdef OMMO_DEBUG_ADC_PRI1_ISR_PIN
-   nrf_gpio_pin_set(OMMO_DEBUG_IO);
-#endif
-
-   if (result == COMM_DEVICE_TRX_RESULT_SUCCESS)
-   {
-      bool state_machine_error = false;
-      switch(adc_sampling_state)
-      {
-         adc_sampling_state_t check_state;
-
-         case ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE:
-         {
-            // Setup for Y data read
-            adc_data_buffer[0] = read_spi_buf_i24(spi_rx_buffer, 0);
-            check_state = ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE;
-            if (__atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Y_CHANNEL_PENDING, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
-               adc_sensors_start_data_read_hold();
-            else
-               state_machine_error = true;
-            break;
-         }
-
-         case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
-         {
-            // Setup for Z data read
-            adc_data_buffer[1] = read_spi_buf_i24(spi_rx_buffer, 0);
-            check_state = ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE;
-            if (__atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Z_CHANNEL, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
-               adc_sensors_start_data_read_hold();
-            else
-               state_machine_error = true;
-            break;
-         }
-
-         case ADC_SAMPLING_STATE_Z_CHANNEL:
-         {
-            adc_data_buffer[2] = read_spi_buf_i24(spi_rx_buffer, 0);
-
-            // Trigger STOP to update the ADC buffer later
-            nrf_saadc_task_trigger(NRF_SAADC_TASK_STOP);
-
-            //Scale new data
-            if(rbridge_vbias_measure_state)
-            {
-               vbias_x = ((float)adc_vbias_buffer[0] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
-               vbias_y = ((float)adc_vbias_buffer[1] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
-               vbias_z = ((float)adc_vbias_buffer[2] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
-            }
-            else
-            {
-               vsense_x = (((float)adc_vsense_buffer[0]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
-               vsense_y = (((float)adc_vsense_buffer[1]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
-               vsense_z = (((float)adc_vsense_buffer[2]) / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
-            }
-
-            //Recalculate rbridge
-            //rbridge = (vbias * ADC_SAADC_RBRIDGE_RSENSE / vsense) - ADC_SAADC_RBRIDGE_RSENSE;
-            float vsense3x = vsense_x + vsense_y + vsense_z;
-            float vbias3x = vbias_x + vbias_y + vbias_z;
-            if(vsense3x > 0)
-               rbridge = ((vbias3x) * ADC_SAADC_RBRIDGE_RSENSE / (vsense3x)) - ADC_SAADC_RBRIDGE_RSENSE;
-            else
-               rbridge = 0;
-            
-            //Save data
-            adc_data_buffer[3] = (int32_t)(rbridge * 10.0f); //Resistance * 10 for extra resolution
-
-            #ifdef ADS127L11_INCLUDE_DEBUG_DATA
-            memcpy(&adc_data_buffer[4], &vbias_x, sizeof(vbias_x));
-            memcpy(&adc_data_buffer[5], &vbias_y, sizeof(vbias_y));
-            memcpy(&adc_data_buffer[6], &vbias_z, sizeof(vbias_z));
-            memcpy(&adc_data_buffer[7], &vsense_x, sizeof(vsense_x));
-            memcpy(&adc_data_buffer[8], &vsense_y, sizeof(vsense_y));
-            memcpy(&adc_data_buffer[9], &vsense_z, sizeof(vsense_z));
-            #endif
-
-            if (sampler_dry_run == 0)
-            {
-               (*adc_sample_set_ready_callback)((uint8_t *)adc_data_buffer, adc_sample_data_size, curent_sample_timestamp, current_sample_timestamp_offest);
-               adc_sensors_restart_state_machine();
-            }
-            else
-            {
-               sampler_dry_run--;
-
-               //Only add data to average every time BOTH vsense and vbias have been measured
-               if((sampler_dry_run%2)==0x00)
-               {
-                  rbridge_init_value += adc_data_buffer[3];
-                  if (sampler_dry_run == 0)
-                  {
-                     rbridge_init_value /= sampler_dry_run_total;
-
-                     // Stop the state machine
-                     stop_state_machine_bit = true;
-                     check_stop_statemachine_bit();
-                  }
-                  else
-                  {
-                     adc_sensors_restart_state_machine();
-                  }
-               }
-               else
-               {
-                  adc_sensors_restart_state_machine();
-               }
-            }
-            break;
-         }
-
-         case ADC_SAMPLING_STATE_ERROR:
-         default:
-            state_machine_error = true;
-            break;
-      }
-
-      if (state_machine_error)
-      {
-         adc_state_errors++;
-
-         stop_state_machine_bit = true;
-         check_stop_statemachine_bit();
-
-         adc_sensors_start_state_machine();
-      }
-   }
-
-#ifdef OMMO_DEBUG_ADC_PRI1_ISR_PIN
-   nrf_gpio_pin_clear(OMMO_DEBUG_ADC_PRI1_ISR_PIN);
-#endif
-}
+ 。。。。。。正在整理
 
 
 
 
 
+ 
+
+
+ 
 
 
 ================================================== 参考1 ===========================================================
-
-
-int main(void)
-
-
-     。。。。。。
-
-  
-
-----------------
-
-static void adc_sensors_start_data_read_hold()
-{
-    if(!check_stop_statemachine_bit())
-        APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD));
-}
-
-
-    //2nd frame
-    APP_ERROR_CHECK(comm_device_ptr->trx(nullptr, 0, spi_rx_buffer, frame_size));
-
-
-------------------
-
-
-void comm_device_event_handler(comm_device * comm_dev, comm_device_trx_result_t result, void * p_context)
-{
-
-
-            case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
-            {
-                   。。。。。。
-
-                    adc_sensors_start_data_read_hold();
-
-
- 
-
-
-
-================================================== 参考2 ===========================================================
-
-
-
-
-main
-
-   port_master_init()
-
-
-
-void port_master_init()
-{
-
-    for (ommocomm_uarte & ommocomm: ommocomm_instances)
-    {
-        APP_ERROR_CHECK(ommocomm.init());
-    }
-
-
-    for (const uint8_t & pin: port_master_ss_pins)
-    {
-        nrf_gpio_pin_set(pin);
-        port_master_configure_high_speed_output(pin);
-    }
- 
-    port_master_initialized = true;
-}
-
-================================================== 参考2 ===========================================================
 
 
 
