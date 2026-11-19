@@ -5,6 +5,18 @@
 
 
 
+--------------
+
+typedef enum
+{
+    NRF_SPIM_TASK_START   = offsetof(NRF_SPIM_Type, TASKS_START),   ///< Start SPI transaction.    //开启 spi传输，这里是读3各adc数据
+    NRF_SPIM_TASK_STOP    = offsetof(NRF_SPIM_Type, TASKS_STOP),    ///< Stop SPI transaction.
+    NRF_SPIM_TASK_SUSPEND = offsetof(NRF_SPIM_Type, TASKS_SUSPEND), ///< Suspend SPI transaction.
+    NRF_SPIM_TASK_RESUME  = offsetof(NRF_SPIM_Type, TASKS_RESUME)   ///< Resume SPI transaction.
+} nrf_spim_task_t;
+
+
+
 ------------
 
 #define COBS_MAX_LEN(x)  ((x) + 1 + (x) / 254)

@@ -94,7 +94,17 @@ adc_ppi_init()
     。。。。。。
 
    //分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
-   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), (comm_device_ptr)->get_start_task());  
+
+   //AAA = (comm_device_ptr)->get_start_task();
+   //  AAA = nrfx_spim_start_task_get(spim_instance); 
+       AAA = nrf_spim_task_address_get(SPIM0, NRF_SPIM_TASK_START);    // &SPIM0 + TASKS_START 
+ 
+   nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), AAA );  
+
+
+
+
+
 
 
 
@@ -904,48 +914,272 @@ pim_basic::spim_handler( p_event,  p_context)
 
 -----------
 
+//读取x channel数据 保存到 adc_data_buffer[0]
+//切换到y通道
+//准备spi传输去读取y通道数据
+//如果是读完z通道，saadc数据处理，把xyz数据和saadc数据合并后进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+//restart 状态机，准备下一次读取x通道
+
+参数：this,  0,  nullptr
+
 comm_device_event_handler( comm_dev,  result,  p_context )
 
- 。。。。。。正在整理
+      switch(adc_sampling_state)
+      
+         case ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE:
+         
+            //读取x channel数据 保存到 adc_data_buffer[0]
+            adc_data_buffer[0] = read_spi_buf_i24(spi_rx_buffer, 0);  //data0 +> data1 +> data2
+
+            // 切换到y通道
+            check_state = ADC_SAMPLING_STATE_X_CHANNEL_COMPLETE;
+
+            //AAA = __atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Y_CHANNEL_PENDING, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+               //相当于下面（原子操作）
+               if (check_state == adc_sampling_state) 
+                   adc_sampling_state = ADC_SAMPLING_STATE_Y_CHANNEL;
+                   AAA = true; 
+               else 
+                   check_state = adc_sampling_state;
+                   AAA = false;
 
 
+            // 准备spi传输去读取y通道数据
+            //设置回调函数 evt_handler为comm_device_event_handler
+            //长度检测
+            //在 SPI 传输（TRX）完成后，将响应复制到输出缓冲区中  //把接水的水桶里的水，倒到备用的水桶
+            //设置数据结构体 xfer_desc
+            //使能spi
+            //设置正在进行标志 transfer_in_progress为true
+            //拉低ss脚
+            //设置spi dma的发送缓冲区和接收缓冲区
+            //不使能list跳跃地址，保留普通地址递增
+            //使能INT_END中断
+            if ( AAA )
+               //adc_sensors_start_data_read_hold();
+                 //comm_device_ptr->trx( nullptr, 0, spi_rx_buffer, ADS127L11_SPI_READ_LENGTH, comm_device_event_handler, nullptr, COMM_DEVICE_FLAGS_HOLD ) ;
+                   spim_basic::trx( nullptr, 0, spi_rx_buffer, 3, comm_device_event_handler, nullptr, 2 );
+         
+
+         case ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE:
+         
+            //读取y channel数据 保存到 adc_data_buffer[0]
+            adc_data_buffer[1] = read_spi_buf_i24(spi_rx_buffer, 0);
+
+            // 切换到z通道
+            check_state = ADC_SAMPLING_STATE_Y_CHANNEL_COMPLETE;
+            if (__atomic_compare_exchange_n(&adc_sampling_state, &check_state, ADC_SAMPLING_STATE_Z_CHANNEL, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+
+               // 准备spi传输去读取z通道数据
+               adc_sensors_start_data_read_hold();
+ 
+         
+         case ADC_SAMPLING_STATE_Z_CHANNEL:
+         
+            //读取y channel数据 保存到 adc_data_buffer[0]
+            adc_data_buffer[2] = read_spi_buf_i24(spi_rx_buffer, 0);
+
+            //---------------------------saadc数据处理-----------------------------------------------
+
+            // 停止saadc
+            nrf_saadc_task_trigger(NRF_SAADC_TASK_STOP);
+
+            //读取saadc的数据处理
+            if(rbridge_vbias_measure_state)            
+               vbias_x = ( adc_vbias_buffer[0] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+               vbias_y = ( adc_vbias_buffer[1] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+               vbias_z = ( adc_vbias_buffer[2] * ADC_SAADC_RBRIDGE_VBIAS_ADC_VREF / 8192.0f + ADC_SAADC_RBRIDGE_VBIAS_NOMINAL_V) / ADC_SAADC_RBRIDGE_VBIAS_GAIN_EXT;
+            
+            else            
+               vsense_x = ( adc_vsense_buffer[0] / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+               vsense_y = ( adc_vsense_buffer[1] / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+               vsense_z = ( adc_vsense_buffer[2] / 16384.0f * ADC_SAADC_RBRIDGE_RSENSE_ADC_VREF + ADC_SAADC_RBRIDGE_RSENSE_NOMINAL_V) / ADC_SAADC_RBRIDGE_RSENSE_GAIN_EXT;
+            
+            //Recalculate rbridge
+            //rbridge = (vbias * ADC_SAADC_RBRIDGE_RSENSE / vsense) - ADC_SAADC_RBRIDGE_RSENSE;
+            float vsense3x = vsense_x + vsense_y + vsense_z;
+            float vbias3x = vbias_x + vbias_y + vbias_z;
+            if(vsense3x > 0)
+               rbridge = ((vbias3x) * ADC_SAADC_RBRIDGE_RSENSE / (vsense3x)) - ADC_SAADC_RBRIDGE_RSENSE;
+            else
+               rbridge = 0;
+            
+            //Save data
+            adc_data_buffer[3] = (rbridge * 10.0f); //Resistance * 10 for extra resolution
+
+            //---------------------------saadc数据处理-----end------------------------------------------
 
 
+            //进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+            //(*adc_sample_set_ready_callback)( adc_data_buffer, adc_sample_data_size, curent_sample_timestamp, current_sample_timestamp_offest);
+              sample_set_ready( adc_data_buffer, 4 * 4, curent_sample_timestamp, current_sample_timestamp_offest);
 
+            // 设置timer0 CC0和CC1的阈值，使能timer0 CC1中断，开启timer0 
+            // 把采样ppi的相关设置恢复到初始值  （详见： debug07_ppi.txt）
+            // SAADC的相关配置
+            // 准备spi传输去读取x通道数据
+            adc_sensors_restart_state_machine();           
+         
+
+         case ADC_SAMPLING_STATE_ERROR:
+         default:
+            state_machine_error = true;
+            break;
+      
+      if (state_machine_error)
+      
+         adc_state_errors++;
+         stop_state_machine_bit = true;
+         check_stop_statemachine_bit();
+         adc_sensors_start_state_machine();
+      
+    
+
+--------------
+
+//进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+参数： adc_data_buffer, 4 * 4, curent_sample_timestamp, current_sample_timestamp_offest   //忽略 current_sample_timestamp_offest 参数
+
+sample_set_ready(  data, data_size,  timestamp,  timestamp_offset)
+
+
+    if(data_mode == DATA_MODE_USB)
+    
+        packet_size = 1 + 4 + data_size;   //  5 + 16
+
+        //COBS 编码，添加包分隔符0x00，再通过 USB 发送
+        //usb_serial_write_data_packet_vargs( packet_size,  1, &packet_id,  4, &timestamp,  data_size, data,   0);
+          usb_serial_write_data_packet_vargs( 21,  1, &packet_id,  4, curent_sample_timestamp,  16, adc_data_buffe,  0 );
+
+
+    tx_count++;
+
+
+-----------
+
+//进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置，通过usb uart发送出去
+
+参数： 21,  1, &packet_id,  4, curent_sample_timestamp,  16, adc_data_buffe,  0 
+
+usb_serial_write_data_packet_vargs(  data_length, ...)
+
+    va_list args;
+
+    va_start(args, data_length);
+
+    usb_serial.write_data_packet_vargslist(data_length, args);
+
+    va_end(args);
+
+    return rvalue;
+
+
+------------
+
+
+//进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+
+参数：21, args  ( 1, &packet_id,  4, curent_sample_timestamp,  16, adc_data_buffe,  0 )
+
+comms_packetizer::write_data_packet_vargslist(  data_length,   valist )
+
+    if (transport_device->is_connected())   //usb已连上电脑
+    
+        // 看仓库还剩多少空地。如果这包货放得下，就提前把这块地盘占住（移动写入指针）
+        output_length = COBS_POST0_MAX_LEN(data_length);  //21 --> 23
+
+        CRITICAL_REGION_ENTER();
+
+        if ( tx_buffer_active_top + output_length < USB_SERIAL_TX_BUFFER_SIZE )   //16384
+        
+            tx_write_location = tx_buffer_active_top;
+            tx_buffer_active_top += output_length;
+
+            //超时定时器重新计数
+            if (RTC_TIMER)            
+                VERIFY_SUCCESS(rtc_timer_reset_timeout(flush_timeout_channel));
+            
+            err_code = NRF_SUCCESS;
+
+        
+        else  // Buffer full           
+            tx_lost_packets++;
+            err_code = NRF_ERROR_BUSY;
+
+        
+        CRITICAL_REGION_EXIT();
+
+        // 把传感器数据插入到usb缓冲区的指定位置
+        // 因USB 事件队列是最低优先级处理，所以这段代码不会被usb队列打断
+        if (err_code == NRF_SUCCESS)  
+      
+            //进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+            cobs_encode_post_zero_pad_vargs( tx_buffer_active + tx_write_location, output_length, valist );
+            
+    else    
+        tx_lost_packets++;
+    
+
+
+----------
+
+//进行 COBS 编码并追加 0x00 结尾，然后插入到tx_buffer_active的指定位置
+
+参数：tx_buffer_active + tx_write_location, 21, args  ( 1, &packet_id,  4, curent_sample_timestamp,  16, adc_data_buffe,  0 )
+
+cobs_encode_post_zero_pad_vargs(  dst,  dst_length,  valist )
+ 
+    end = dst + dst_length;
+
+    uint8_t code, *code_ptr;  
+
+    //StartBlock();
+        code_ptr = dst++;
+        code = 1;
+
+    while(true)
+     
+        // 取得当前列表中参数元素的长度
+        arg_len = va_arg(valist, int32_t);
+
+        if(arg_len == 0) //碰到args，跳出while
+            break;
+ 
+        //取得当前列表中参数元素的数据指针
+        arg_data = va_arg(valist, uint8_t *);
+ 
+        for( b = 0; b < arg_len; b++)
+        
+            if (code != 0xFF)
+            
+                c = *arg_data++;
+
+                if (c != 0)
+                
+                    *dst++ = c;
+                    code++;
+                    continue;     //绕过下面的 FinishBlock 和 StartBlock
+                
+             
+            //FinishBlock();      
+               *code_ptr = code
+
+            //StartBlock();
+               code_ptr = dst++;
+               code = 1;
+     
+
+    //FinishBlock();
+        *code_ptr = code
+
+
+    //Make sure we didn't overrun the buffer
+    ASSERT(dst <= end);
+
+    //最后加个0做结尾符
+    while(dst < end) *dst++ = 0;
  
 
 
  
-
-
-================================================== 参考1 ===========================================================
-
-
-
-
-[[nodiscard]] uint32_t spim_basic::get_start_task() const
-{
-    return nrfx_spim_start_task_get(spim_instance);
-}
-
-
-uint32_t nrfx_spim_start_task_get(nrfx_spim_t const * p_instance)
-{
-    NRF_SPIM_Type * p_spim = (NRF_SPIM_Type *)p_instance->p_reg;
-    return nrf_spim_task_address_get(p_spim, NRF_SPIM_TASK_START);  //ADS127L11 DRDY 变低（事件）→ PPI 线路 → 硬件自动调用 SPIM TASK_START → SPI 自动发读数据指令，不用 CPU 干预。
-}
-
-
-typedef enum
-{
-    NRF_SPIM_TASK_START   = offsetof(NRF_SPIM_Type, TASKS_START),   ///< Start SPI transaction.    //开启 spi传输，这里是读3各adc数据
-    NRF_SPIM_TASK_STOP    = offsetof(NRF_SPIM_Type, TASKS_STOP),    ///< Stop SPI transaction.
-    NRF_SPIM_TASK_SUSPEND = offsetof(NRF_SPIM_Type, TASKS_SUSPEND), ///< Suspend SPI transaction.
-    NRF_SPIM_TASK_RESUME  = offsetof(NRF_SPIM_Type, TASKS_RESUME)   ///< Resume SPI transaction.
-} nrf_spim_task_t;
-
-
-
-
-
-
+ 

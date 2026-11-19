@@ -1,0 +1,723 @@
+﻿
+
+【应用层 (中断上下文)】
+sample_set_ready() [main.cpp]
+  │
+  └─► usb_serial_write_data_packet_vargs()
+        │
+        ▼
+【拼包与缓冲层 (中断上下文)】
+comms_packetizer::write_data_packet_vargslist() [comms_packetizer.cpp]
+  │ 1. 检查空间，在 tx_buffer_active 中预留位置
+  │ 2. 进行 COBS 编码并追加 0x00 结尾，写入 tx_buffer_active
+  │ 3. 如timerout，则设置 flush_flag = true
+  │
+════════════════ (上下文切换：退出中断，进入主循环) ════════════════
+  │
+【主循环事件调度】
+main_event_queue 轮询
+  │
+  ▼
+event_queue_start_tx_process() [comms_packetizer.cpp]
+  │ 1. 切换双缓冲：tx_buffer_transport = tx_buffer_active
+  │                 tx_buffer_active 指向另一个空 Buffer (secondary)
+  │ 2. 清除 flush_flag
+  │
+  ▼
+initiate_tx() -> setup_next_tx() [comms_packetizer.cpp]
+  │
+  └─► comms_transport_tx() [comms_usb_serial.cpp]
+        │ 1. 填充 write_io_ctx (数据指针/长度/完成回调)
+        │ 2. 调用 USB CDC 底层发送 API
+        │
+        ▼
+【USB 协议栈层】
+USBD_CDC_WriteAsync() [USB_CDC.c] -> USBD_WriteAsync() [USB_Main.c]
+  │ 1. 将数据指针存入端点的 TxInfo 队列 (DataParts)
+  │ 2. 触发底层发送
+  │
+  ▼
+【硬件驱动层】
+_SendEPEx() [USB_HW_Nordic_nRF.c]
+  │ 1. 设置 EasyDMA 发送寄存器 (PTR, MAXCNT)
+  │ 2. 触发 USB 硬件发送 (TASKS_STARTEPIN)
+  │
+════════════════ (硬件 DMA 发送数据到 PC) ════════════════
+  │
+  ▼
+【发送完成 (硬件中断上下文)】
+_IRQHandler() [USB_HW_Nordic_nRF.c]
+  │
+  ▼
+USB__OnTx() [USB_Main.c]
+  │ (层层回调)
+  └─► static_usb_cdc_on_write_cplt() [comms_usb_serial.cpp]
+        │
+        ▼
+transport_write_complete() [comms_packetizer.cpp]
+  │ 1. 检查是否所有数据包都发完了
+  │ 2. 若没发完，继续发剩余部分
+  │ 3. 若发完了，清理状态 (tx_buffer_transport = NULL)
+  │
+  ▼
+(等待下一轮采样数据写入并触发新的发送)
+
+
+
+
+
+//设置USB串口状态回调函数 ，感知电脑那边一改状态（比如打开串口、关闭串口）
+    _aInst[0].pfOnSetControlLineState = static_usb_cdc_on_line_state_change
+
+//设置cdc回调函数 
+     write_io_ctx.pfOnComplete = static_usb_cdc_on_write_cplt  //cdc uart发送完成的回调函数
+     read_io_ctx.pfOnComplete = static_usb_cdc_on_read_cplt;    //cdc uart读取完成的回调函数
+
+//设置数据包处理的回调函数 
+     packet_handler          =  usb_serial_packet_received 
+     rx_complete_callback = static_transport_read_complete;     //comms_packetizer::transport_read_complete
+     tx_complete_callback = static_transport_write_complete;    //comms_packetizer::transport_write_complete
+
+//找到rtc可以使用的cc通道，设置超时回调函数 
+     callback_funcs[i] = static_on_reconnect_timeout;
+
+//设置usb中断回调函数 ，设置中断优先级，使能usb的irq总中断
+     _pfUSBISRHandler = _IRQHandler;
+
+
+   USB_aEPStat[1]:
+      .EPAddr           = 1
+      .EPType           = USB_TRANSFER_TYPE_BULK
+      .Dir.RxInfo.Buffer.pData = pBuffer;             //usb_cdc_raw_buffer 
+      .Dir.RxInfo.Buffer.Size  = BufferSize;           //3072
+      .MaxPacketSize      = MaxPacketSize;       //nnn
+      .MaxPacketSizeUser  = MaxPacketSize;     //nnn
+      .Interval           = pInfo->Interval;             //0
+
+
+
+
+
+##############################################################################################################
+
+
+ 
+
+
+
+
+
+===============================================uart CDC 发送数据==========================================================
+
+
+
+
+
+
+
+
+
+
+
+===============================================uart CDC 中断之一（中断入口），接收数据==========================================================
+
+
+
+//usb中断入口函数： 来自 ses_startup_nrf52840.s
+
+  _vectors:
+     .word   USBD_IRQHandler
+
+
+USBD_IRQHandler( )   
+ 
+   //_pfUSBISRHandler();
+     _IRQHandler();
+
+
+----------- 
+
+_IRQHandler( )  
+
+   unsigned    EPIndex;
+   USB_REGS * pUSBRegs = _pUSBRegs;
+   USB_SETUP_PACKET SetupPacket;
+
+   //空函数，忽略跳过
+   USBD_ENTER_ISR();
+
+
+   //看USB物理层（PHY）通电了没，如没通电，就把误报中断全清掉，然后退出中断    
+   if ((USBREGSTATUS & OUTPUTRDY) == 0 )  
+      
+      // PHY is powered down. Ignore all interrupts      
+      pUSBRegs->EVENTS_USBEVENT = 0;
+      pUSBRegs->EVENTS_USBRESET = 0;
+      pUSBRegs->EVENTCAUSE = pUSBRegs->EVENTCAUSE;   //写1清零事件标记
+      USB__OnStatusChange(USB_STAT_ATTACHED);        //设备回到 ATTACHED（已连接，但没就绪）状态
+      USBD_LEAVE_ISR();
+      return;
+    
+   //中断01-USBRESET：看到usb复位的中断，如下处理
+   if (pUSBRegs->EVENTS_USBRESET != 0 ) 
+      pUSBRegs->EVENTS_USBRESET = 0;
+      pUSBRegs->EPDATASTATUS      = pUSBRegs->EPDATASTATUS;   //写1清零事件标记
+      pUSBRegs->EVENTS_EPDATA    = 0;
+      pUSBRegs->EPINEN               = 0;
+      pUSBRegs->EPOUTEN             = 0;
+
+      // usb总线复位：地址清零，从锁死状态恢复，保留供电标志，重置状态为 ATTACHED + READY
+      USB__OnBusReset();
+      _SetupActive = 0;
+    
+   //中断02-USBEVENT：看是关于‘休眠（挂起）’还是‘唤醒（恢复）’的，如果是休眠就赶紧省电，如果是唤醒就赶紧起来干活
+   if (pUSBRegs->EVENTS_USBEVENT != 0 )  
+      pUSBRegs->EVENTS_USBEVENT = 0;
+      Status = pUSBRegs->EVENTCAUSE;
+      pUSBRegs->EVENTCAUSE = Status;                     // Clear all bits
+
+      //休眠处理
+      if ((Status & EVENTCAUSE_SUSPEND) != 0)  
+         //USB__OnSuspend();
+           USB__OnStatusChange(USB_Global.State | USB_STAT_SUSPENDED)；
+       
+      //唤醒处理
+      if ((Status & EVENTCAUSE_RESUME) != 0)  
+         USB__OnResume();
+           
+   //DS 中断03-EP0SETUP：电脑通过控制端点（EP0）发指令来了（标准请求SETUP 包）。我们赶紧把电脑的要求（8个字节）抄下来，看看它是想‘要数据’还是‘发数据’，然后按规矩回话
+   if (pUSBRegs->EVENTS_EP0SETUP != 0u)  
+      pUSBRegs->EVENTS_EP0SETUP = 0;
+      SetupPacket.bmRequestType = pUSBRegs->BMREQUESTTYPE;
+      SetupPacket.bRequest         = pUSBRegs->BMREQUEST;
+      SetupPacket.wValueLow       = pUSBRegs->WVALUEL;
+      SetupPacket.wValueHigh      = pUSBRegs->WVALUEH;
+      SetupPacket.wIndexLow       = pUSBRegs->WINDEXL;
+      SetupPacket.wIndexHigh      = pUSBRegs->WINDEXH;
+      SetupPacket.wLengthLow      = pUSBRegs->WLENGTHL;
+      SetupPacket.wLengthHigh    = pUSBRegs->WLENGTHH;
+      pUSBRegs->EVENTS_EP0DATADONE = 0;
+      pUSBRegs->INTENSET                = INT_EP0DATADONE;
+
+      if ((SetupPacket.bmRequestType & 0x80u) == 0 )     // bit7=0，说明是 OUT 方向（PC 发给板子）
+         _SetupActive = -1;
+
+      else                                                                      // bit7=1，  IN 方向（板子发给 PC）
+         _SetupActive = 1;
+       
+      _EPIN_Busy[0] = 0;                      //把 0 号端点（控制端点）的‘发货中’标志强行擦掉。
+
+      //把刚抄下来的 PC 指令，扔给协议栈的‘中央处理中心’去执行
+      USB__HandleSetup(&SetupPacket);
+
+      //刚才判定 PC 是要给板子发数据，那就赶紧把 0 号端点的‘接收大门’打开，准备接货
+      if (_SetupActive < 0)  
+         // Issue EP0 read
+         pUSBRegs->TASKS_EP0RCVOUT = 1;
+       
+ 
+   // 旧版本遗留的历史无用垃圾，忽略跳过  （处理上次没来得及卸货的滞留包裹）
+   EPIndex = _ExtraPacket_EPIndex;  //_ExtraPacket_EPIndex是旧版本遗留的历史无用垃圾，忽略跳过
+   if (EPIndex != 0 )   
+      _ExtraPacket_EPIndex = 0;     //忽略跳过
+      USB__OnRx(EPIndex, _PacketBuff, _ExtraPacket_NumBytes);
+   pUSBRegs->EVENTS_STARTED = 0;
+   pUSBRegs->INTENCLR          = INT_STARTED;
+ 
+
+   //DS 中断03-EP0DATADONE：刚才那笔交易（发数据或收数据）做完了，现在看看当初是往哪个方向做的，赶紧把后续的活儿接上
+   if (pUSBRegs->EVENTS_EP0DATADONE != 0u)  
+      pUSBRegs->EVENTS_EP0DATADONE = 0;
+
+      if (_SetupActive > 0)    // 板子发数据给 PC（IN 方向）
+         _EPIN_Busy[0] = 0;    // 把“正在发送”的标记清空
+         USB__OnTx(0);          // /告诉上层：“刚才那包发完了，如果你还有数据，继续塞给我”
+       
+      if (_SetupActive < 0)    // PC 发数据给板子（OUT 方向）
+         _ReadPacketEP0();    // 启动 EasyDMA，把 PC 发来的数据从硬件 FIFO 读进内存
+
+         if (_SetupActive < 0)               
+            // Issue next EP0 read    // 如果状态还没结束，说明 PC 还要接着发，那就再开一次收货门         
+            pUSBRegs->TASKS_EP0RCVOUT = 1;
+         
+       
+    //DS 客户（PC）发了一堆快递需求，我得查查清单，看看哪些‘发货门（IN）’刚刚发货成功了，哪些‘收货门（OUT）’刚收到货了，然后分别处理 
+   pUSBRegs->EVENTS_EPDATA = 0;
+   Status = pUSBRegs->EPDATASTATUS;
+   if (Status != 0) 
+      pUSBRegs->EPDATASTATUS = Status;      // 写1清零（销账）
+
+      //或已完成发送数据到pc
+      for (i = 1; i < NUM_PHY_EP; i++)  
+         Status >>= 1;
+
+         if ((Status & 1) != 0)  
+            _EPIN_Busy[i] = 0;     // 标记对应端点不忙了
+
+            if (_EPIN_Enabled[i] != 0)  
+               EPIndex = USB__EPAddr2Index(i | 0x80) ;
+               USB__OnTx(EPIndex);   // 告诉上层：刚才那包发完了，有后续数据继续发             
+          
+      //或已完成读取pc发来的数据 
+      Status >>= (18u - NUM_PHY_EP);                        // Shift to EPOUT bits
+      for (i = 1; i < NUM_PHY_EP; i++)  
+
+         if ((Status & 1u) != 0)  
+
+            if (_EPOUT_Enabled[i] != 0)  
+               EPIndex = USB__EPAddr2Index(i) ;
+               _ReadPacket(i, EPIndex);                // 启动 DMA，正常把数据读走
+              else  
+               _EPOUT_DataPresent[i] = 1;          // 应用层没准备好，标记数据滞留！
+                      
+         Status >>= 1;      
+   
+   //空函数，忽略跳过
+   USBD_LEAVE_ISR();
+
+
+-------------------
+
+// 先启动dma，把pc发来的数据读取到 rx_buffer/rx_buffer
+// 把刚才搬进内存的数据，连同长度，打包上报
+
+参数： i, EPIndex
+_ReadPacket( PhyEP,  EPIndex ) 
+  unsigned    NumBytesReceived;
+  USB_REGS  * pUSBRegs = _pUSBRegs;
+  void      * pData;
+
+  NumBytesReceived = pUSBRegs->SIZE_EPOUT[PhyEP] & 0x7Fu;
+  pUSBRegs->EVENTS_ENDEPOUT[PhyEP]  = 0;
+
+
+  //pData = USB__GetpDest(EPIndex, NumBytesReceived);  //第一次开始启动时，是null ，setup_next_rx后是非null （待验证）
+    pData = pEPStat->Dir.RxInfo.pData;
+
+  if (pData != NULL)  
+    pUSBRegs->EPOUT[PhyEP].PTR      = SEGGER_PTR2ADDR(pData);         // lint D:103[a]     // 1. 告诉 EasyDMA：目的地是应用层的 rx_buffer (即usb_cdc_raw_buffer?)
+  else 
+    pUSBRegs->EPOUT[PhyEP].PTR      = SEGGER_PTR2ADDR(_PacketBuff);   // lint D:103[a]     // 1. 告诉 EasyDMA：目的地是临时的 _PacketBuff）
+  
+  pUSBRegs->EPOUT[PhyEP].MAXCNT     = NumBytesReceived;             // 2. 告诉 EasyDMA：搬多少个字节
+  pUSBRegs->TASKS_STARTEPOUT[PhyEP] = 1;                            // 3. 扣动扳机：启动 EasyDMA 搬运
+
+  _WaitEvent(&pUSBRegs->EVENTS_ENDEPOUT[PhyEP]);       // 4. 死等（其实 EasyDMA 很快就搬完了，这里是阻塞一小会儿确保搬运完成）
+
+
+  //如果是直接搬运 dma --> rx_buffer(即usb_cdc_raw_buffer?)，不需要copy，把指针直接指向即可  //待验证
+  if (pData != NULL) 
+    //USB__OnRxZeroCopy(EPIndex, NumBytesReceived);    
+      USB__OnRxZeroCopyEx(EPIndex, NumBytes, 1);       
+
+
+  //如果是间接搬运 dma --> _PacketBuff  --> rx_buffer ，则需要把_PacketBuff 拷贝到 rx_buffer   //待验证
+  else 
+    USB__OnRx(EPIndex, _PacketBuff, NumBytesReceived);   // 把刚才搬进内存的数据，连同长度，打包上报
+
+  
+
+
+
+------------------
+
+(待理解)
+
+参数： EPIndex,  _PacketBuff,   NumBytesReceive
+
+USB__OnRx(   EPIndex,   pData,   NumBytes)   
+
+   unsigned NumBytesAtOnce;
+   unsigned Events;
+   EP_STAT * pEPStat;
+
+   pEPStat = &USB_aEPStat[EPIndex];
+   
+
+   // 处理usb端点0发来的数据(配置参数),   
+   if (EPIndex == 0 )  
+
+      //pc通过端点0发来数据，主要是设置串口波特率  （或实际没有用到，忽略跳过 ）
+      for (i = 0; i < USB_Global.NumOnRxEP0Callbacks; ++i)  
+
+         if (USB_Global.apfOnRxEP0[i] != NULL) 
+
+            //USB_Global.apfOnRxEP0[i](pData, NumBytes);    
+              _OnRxEP0[i](pData, NumBytes);     //pc通过端点0发来数据，主要是设置串口波特率  （或实际没有用到，忽略跳过 ）
+            
+      return;
+
+    
+   //是null，忽略跳过
+   if (pEPStat->Dir.RxInfo.pfOnRx != NULL)         //no
+      pEPStat->Dir.RxInfo.pfOnRx(pData, NumBytes);
+
+    
+   Events   = USB_EVENT_DATA_READ;   //1<<0
+
+
+   // 把_PacketBuff的数据拷贝到Dir.RxInfo.pData中  （实际上，在_ReadPacket中，当Dir.RxInfo.pData不为空时，直接零copy处理了，一般到不了这里）
+   if (pEPStat->Dir.RxInfo.pData != NULL)  
+
+      NumBytesAtOnce = SEGGER_MIN(NumBytes, pEPStat->Dir.RxInfo.NumBytesRem);
+
+      if (NumBytesAtOnce != 0 )  
+
+         USB_MEMCPY(pEPStat->Dir.RxInfo.pData, pData, NumBytesAtOnce);
+
+         NumBytes                   -= NumBytesAtOnce;
+         pData                        += NumBytesAtOnce;
+
+         pEPStat->Dir.RxInfo.pData          += NumBytesAtOnce;
+         pEPStat->Dir.RxInfo.NumBytesRem -= NumBytesAtOnce;
+      
+      if (_OnRxCheckDone(EPIndex, pEPStat) != 0)  
+         Events |= USB_EVENT_READ_COMPLETE;
+   
+
+   if (NumBytes != 0  )  
+      unsigned NumBytesFreeInBuffer;
+          
+      //DS 把这个端点的专属软件环形缓冲区（Buffer）调出来，把剩下的数据全都塞进去
+      NumBytesFreeInBuffer = USBD_BUFFER_Write(&pEPStat->Dir.RxInfo.Buffer, pData, NumBytes);    // (即usb_cdc_raw_buffer?)
+   
+      //DS 看着仓库快满了，赶紧关门
+      if ((pEPStat->Dir.RxInfo.ReadMode & USB_READ_MODE_CONTINUOUS) == 0 || NumBytesFreeInBuffer < pEPStat->MaxPacketSize) 
+         if (pEPStat->Dir.RxInfo.RxInterruptEnabled != 0) 
+            USB_Global.pDriver->pfDisableRxInterruptEP(EPIndex);
+            pEPStat->Dir.RxInfo.RxInterruptEnabled = 0;
+         
+         
+   // Call USB event callback function 
+   _EventCallbacks(pEPStat, Events);
+ 
+
+
+--------
+
+参数： pEPStat, Events
+
+_EventCallbacks(  *pEPStat,   Events)  
+
+  USB_EVENT_CALLBACK *pCallback;
+
+  pCallback = pEPStat->pEventCallbacks;
+
+  while (pCallback != NULL)  
+
+    pCallback->pfEventCb(Events, pCallback->pContext);
+    pCallback = pCallback->pNext;
+ 
+
+
+
+
+
+
+---------------------
+
+//pc通过端点0发来数据，主要是设置串口波特率  （或实际没有用到，忽略跳过 ）
+
+参数： pData, NumBytes
+
+_OnRxEP0(  pData,  NumBytes)   
+
+   USB_CDC_INST * pInst;
+
+   //DS 刚才是不是有电脑下发了‘设置波特率’的预告？如果发了，我就根据预告里记下的串口编号
+   if (_CurrentLineCodingPendingInst >= 0)   
+
+      pInst = &_aInst[_CurrentLineCodingPendingInst];  //串口编号
+
+      //DS 电脑发的波特率数据包，必须是7个字节。否则格式不对拒绝接收
+      if (NumBytes != 7 ) 
+         USB_WARN((USB_MTYPE_CDC, "CDC: Warning: Received an unrecognized packet on EP0."));
+         USBD_StallEP(0);
+
+      //把电脑发来的串口配置（波特率、停止位等）一项项抄到黑板上，打个日志，通知应用层‘配置变了’，最后给电脑回个 ACK 表示处理成功
+      else 
+         pInst->LineCoding.DTERate      = USBD_GetU32LE(pData);  // 前4 字节波特率
+         pInst->LineCoding.CharFormat = *(pData + 4);            // 第 5 字节：停止位
+         pInst->LineCoding.ParityType = *(pData + 5);            // 第 6 字节：校验位
+         pInst->LineCoding.DataBits    = *(pData + 6);           // 第 7 字节：数据位
+
+         //设置cdc uart的波特率等参数
+         if (pInst->pfOnSetLineCoding != NULL)   
+            pInst->pfOnSetLineCoding(&pInst->LineCoding);     //或为空函数，忽略跳过
+          
+         //给pc回复一个空的ack包
+         USBD_WriteEP0FromISR(NULL, 0, 0);      
+
+      _CurrentLineCodingPendingInst = -1;
+ 
+
+
+
+
+
+
+
+
+------------------------------
+
+//参数： USB_Global.State | USB_STAT_SUSPENDED
+
+USB__OnStatusChange(   NewState ) 
+
+   USB_HOOK                  * pHook;
+   USB_IOCTL_PARA            Param;
+
+   OldState = USB_Global.State;
+   pDriver   = USB_Global.pDriver;
+
+   if (OldState != NewState) 
+      
+      // Check if we got into configured state
+      
+      // 唤醒处理的一种情况（配置变成1）： 设备刚刚从‘未配置（没准备就绪）’状态，成功切换到了‘已配置（准备好通信）’状态
+      if ((OldState & USB_STAT_CONFIGURED) == 0 && (NewState & USB_STAT_CONFIGURED) != 0)    
+         
+         // 打开该usb端口的硬件总闸      
+         USB__UpdateEPHW();
+
+         //把除了 0 号控制端点以外的所有端点，全部解除黑名单（清除挂起），并且把它们的通信同步计数器（Data Toggle）强行重置为初始状态，准备干干净净地开始传数据
+         for (i = 1; i < USB_Global.NumEPs; i++) 
+            USBD_SetClrStallEP(i, 0);
+            USB__ResetDataToggleEP(i);
+         
+         //执照批下来了（Configuration = 1），你那边看看机器要不要调一下参数              
+         if (pDriver->pfControl != NULL) 
+            Param.Configuration = 1;
+            pDriver->pfControl(USB_DRIVER_CMD_SET_CONFIGURATION, &Param);   //空函数，忽略跳过
+         
+     
+      //从‘已配置（正常干活）’状态，掉回了‘未配置（断开/复位）’状态，那就赶紧通知底层硬件驱动——把之前配好的参数清空，别挂了
+      if ((OldState & USB_STAT_CONFIGURED) != 0 && (NewState & USB_STAT_CONFIGURED) == 0)  
+         
+         // Notify the driver that the configuration was cleared - if necessary.
+         
+         if (pDriver->pfControl != NULL) 
+            Param.Configuration = 0;
+            (void)pDriver->pfControl(USB_DRIVER_CMD_SET_CONFIGURATION, &Param);   //空函数，忽略跳过
+
+      USB_Global.State = NewState;
+
+      //只要bit0或bit1有一个是1， 把所有挂起的操作全部抹掉（含正在发的、正在收的）
+      if (((OldState | NewState) & (USB_STAT_CONFIGURED | USB_STAT_ADDRESSED)) != 0)        //lint !e9032 N:100  //只要bit0或bit1有一个是1
+         for (i = 1; i < USB_Global.NumEPs; i++)                                                                                                    
+            USB__RemovePendingOperation(i, -1);       把所有挂起的操作全部抹掉（含正在发的、正在收的）      
+      
+      // 拿着最新的大喇叭广播稿（NewState），顺着名单（链表）挨个打电话，通知所有注册了监听的部门（cb），告诉他们现在设备状态变了
+      pHook = USB_Global.pFirstSCHook;
+      while(pHook != NULL)
+
+         //根据 USB 物理状态和串口软件（DTR）状态，计算出当前应用层串口应该处于什么工作状态，并启动或关闭 1 秒的断线重连倒计时
+         if (pHook->cb != NULL) 
+            //(pHook->cb)(pHook->pContext, NewState);
+            //   static_usb_on_state_change(thist, NewState);
+                 this->determine_usb_state(new_state);
+         
+         pHook = pHook->pNext;
+      
+
+
+
+--------------------------
+
+//根据 USB 物理状态和串口软件（DTR）状态，计算出当前应用层串口应该处于什么工作状态，并启动或关闭 1 秒的断线重连倒计时
+
+参数: new_state
+
+comms_usb_serial::determine_usb_state(  usb_state_mask)
+
+      //   ATTACHED   READY + CONFIGURED   SUSPENDED    usb_cdc_dtr_state    new usb_target_state   Meaning
+      //   0             d/c                         d/c             d/c                         DETACHED                     no host connected
+      //   1             d/c                         d/c             !ON                         ATTACHED                     host connected, but port closed
+      //   1             1                            0                ON                           OPENED                        host connected, port open
+      //   1             1                            1                ON                           RECONNECTING               host connected, port was open, but signal lost
+      //   1             0                            n/a             ON                           RECONNECTING               host connected, port was open, but device is reconnecting to host
+
+      usb_serial_state_t prev_target_state = usb_target_state;
+
+      // 插线了吗
+      if (usb_state_mask & USB_STAT_ATTACHED)
+      
+            if (usb_cdc_dtr_state != USB_SERIAL_DTR_STATE_ON)            //电脑上的串口助手软件没有打开（没有把 DTR 置为 ON）
+                  usb_target_state = USB_SERIAL_STATE_ATTACHED;
+            
+            //USB 底层报告“已配置(CONFIGURED)” 且 “已准备就绪(READY)” 并且“没有被挂起(SUSPENDED)
+            else if ( (usb_state_mask & (USB_STAT_CONFIGURED | USB_STAT_SUSPENDED | USB_STAT_READY)) == (USB_STAT_CONFIGURED | USB_STAT_READY) )            
+                  usb_target_state = USB_SERIAL_STATE_OPENED;
+            
+            //如果 DTR 是 ON，但底层报告还没配置好，或者处于休眠（SUSPENDED）状态，说明掉线了或者信号丢了。状态变成 RECONNECTING（重连中）
+            else            
+                  usb_target_state = USB_SERIAL_INTERNAL_STATE_RECONNECTING;
+                  
+      else      
+            usb_target_state = USB_SERIAL_STATE_DETACHED;              //分公司已注销
+            usb_cdc_dtr_state = USB_SERIAL_DTR_STATE_DETACHED;     //营业中（DTR=ON）”的牌子强行扯下来
+     
+
+      if (usb_target_state == USB_SERIAL_INTERNAL_STATE_RECONNECTING)
+      
+            //// 如果已经是重连状态，重置 1 秒的定时器（相当于喂狗）
+            if (prev_target_state == USB_SERIAL_INTERNAL_STATE_RECONNECTING)
+                  APP_ERROR_CHECK(rtc_timer_reset_timeout(reconnect_timeout_channel));
+
+            // 如果刚刚进入重连状态，启动 1 秒的倒计时
+            else
+                  APP_ERROR_CHECK(rtc_timer_set_timeout(reconnect_timeout_channel, MS_TO_RTC_TIMEOUT_GEN(1000)));
+      
+      // 没在重连，就关掉定时器
+      else      
+            APP_ERROR_CHECK(rtc_timer_disable_timeout(reconnect_timeout_channel));      
+
+      //空函数，忽略跳过
+      USB_TRACE_STATE_CHANGE(usb_state_mask);
+
+
+
+----------------------
+
+//打开该usb端口的硬件总闸
+USB__UpdateEPHW( )  
+  EP_STAT * pEPStat;
+ 
+  const USB_HW_DRIVER * pDriver;
+
+  pDriver = USB_Global.pDriver;
+  pEPStat = USB_aEPStat;
+
+  for (i = USB_Global.NumEPs; --i != 0u; )  
+
+    //打开该usb端口的硬件总闸
+    //pDriver->pfUpdateEP(++pEPStat);
+      _UpdateEP(++pEPStat);
+
+   
+  //空函数，忽略跳过
+  //pDriver->pfEnable();
+     _Enable();
+
+
+
+-----------------------
+
+//打开该usb端口的硬件总闸
+
+_UpdateEP( pEPStat) USBD_API_USE     //  USBD_API_USE的作用是如果参数 pEPStat未被使用，编译是不要waring
+  unsigned PhyEP;
+
+  PhyEP = pEPStat->EPAddr & 0x7F;
+
+  if ((pEPStat->EPAddr & 0x80) != 0)              // IN端口
+    _pUSBRegs->EPINEN   |= (1 << PhyEP);     // 打开硬件总闸
+    _EPIN_Busy[PhyEP]    = 0;                         // 清空“正在忙”的标记
+    _EPIN_Enabled[PhyEP] = 0;                       // 清空 已开启中断的标记
+
+  else 
+    _pUSBRegs->EPOUTEN |= (1 << PhyEP);
+    _pUSBRegs->SIZE_EPOUT[PhyEP] = 0;
+    _EPOUT_Enabled[PhyEP] = 0;
+    _ExtraPacket_EPIndex  = 0;
+
+
+ -----------
+
+ //usb总线复位：地址清零，从锁死状态恢复，保留供电标志，重置状态为 ATTACHED + READY
+USB__OnBusReset( )  
+
+
+  //如果收到复位信号时，系统记录里竟然显示‘当前根本没插线（未连接）’， 赶紧往日志里记下log信息
+  if ((USB_Global.State & USB_STAT_ATTACHED) == 0 )  
+    USB_LOG((USB_MTYPE_CORE, "Bus RESET in unattached state!"));
+   
+  //设备刚插上电脑时，地址一律是 0
+  USB_Global.Addr = 0;
+
+  //把第i号端点的‘死锁/挂起（Halted）’状态强制清零，让它重新活过来，准备好接收或发送数据
+  for (i = 1; i < USB_Global.NumEPs; i++) 
+    USB_aEPStat[i].IsHalted = 0;
+
+  //只保留设备当前配置的第 0 位（自供电标志），把其他所有特殊状态（比如远程唤醒、USB 3.0 低功耗状态）全部清零
+  USB_Global.DeviceState &= 1;
+
+  //把设备状态强制更新为：原来的插上线（ATTACHED）状态 + 准备就绪（READY），并广而告之整个系统
+  USB__OnStatusChange((USB_Global.State & USB_STAT_ATTACHED) | USB_STAT_READY);
+ 
+
+
+
+
+
+ 
+
+
+===============================================uart CDC 中断之二（while中处理数据），接收数据==========================================================
+
+
+
+//接收pc发过来的包
+usb_serial_packet_received( data[],  length,  void* )
+
+
+    //Check for enable packet
+    switch(data[0])    
+
+        //DS PC想让我们开始通过 USB 发 ADC 数据了，我得先查查现在能不能发，没问题的话就启动采样机器，并把状态切到 USB 模式
+        case OMMO_COMMAND_USB_DATA_ENABLE:     开启 USB 数据流
+
+            if(data_mode != DATA_MODE_DISABLED || !adc_sensors_is_state_machine_configured())   // DS 正在发送数据，或没有configured，则不能开启USB 模式            
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_MODE);
+            
+            //DS 这个指令必须带 1 个参数（data[1]，代表 PC 指定的起始包 ID）
+            else if(length != 2)            //DS 查看指令的长度是否正确，如不正确，则不能开启USB 模式
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            
+            else                
+                //DS 打开桥接电源、开定时器、开 PPI 联动，开启adc采样
+                rror_code = adc_sensors_enable();
+
+                if(error_code == NRF_SUCCESS)                
+                    packet_id = data[1];                  // 把 PC 要求的第一包 ID 记下来
+                    data_mode = DATA_MODE_USB;            // 把全局模式切到 USB
+                
+                 //不管启动成功还是失败，都打包一个 ACK 回复
+                response_length = fill_in_ack_packet(response_buffer, convert_nrf_error_code_to_ommo_ack_code(error_code));
+
+                //更新 LED 状态（比如从白灯闪烁变成蓝灯呼吸，表示 USB 连接成功并在传数据）
+                set_leds();
+
+
+        //修改无线同步信号的接收频道（RF Channel）
+        case OMMO_COMMAND_USB_SET_SYNCH_CH_ID:
+
+            if(length != 2)  //OMMO_COMMAND_USB_SET_SYNCH_CH_ID 这个命令，必须要带 1 个参数（也就是频道号）          
+                response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_INVALID_DATA);
+            
+            else            
+                //设置底层无线模块，把接收同步信号的频段切换到 data[1]
+                AAA = convert_nrf_error_code_to_ommo_ack_code(comms_esb_set_synch_rx_channel(data[1]));
+                response_length = fill_in_ack_packet(response_buffer, AAA );  //data[1]：电脑发来的具体频道号（比如 0~100
+            
+
+    //不认识指令的处理
+    if(response_length == 0) //No response, try protocol agnostic commands
+        response_length = process_packet_received(data, length, response_buffer, sizeof(response_buffer));
+
+    //兜底返回的处理
+    if(response_length == 0) //No response, must be an unknown command
+        response_length = fill_in_ack_packet(response_buffer, OMMO_ACK_UNKNOWN_COMMAND);
+
+
+    //把刚刚的ACK包发给pc  （待完成展开）
+    //usb_serial_send_command_packet(response_buffer, response_length);
+      usb_serial.send_command_packet(response_buffer, response_length);
+
+
+
+
+
+
+
+
