@@ -166,12 +166,14 @@ main_event_queue.execute_forever() [main.cpp]
 
 
 
-【中断上下文 (ISR)】ADC 采样完成
+【中断上下文 (ISR)】ADC 采样完成    //z通道及SAADC采样完成后触发spi的END中断
   └─► sample_set_ready() [main.cpp]
         └─► usb_serial_write_data_packet_vargs() [usb_serial.hpp 内联]
               └─► write_data_packet_vargslist() [comms_packetizer.cpp]
                     ├─► COBS 编码后写入 tx_buffer_active (主/副缓冲区)
-                    └─► (标记数据已就绪，拉高 flush 标志)
+                    └─► (标记数据已就绪，拉高 flush 标志)                 //如timerout，则设置 flush_flag = true
+
+
 
 ════════════════ 上下文切换 (退出中断，回到 main_event_queue) ════════════════
 

@@ -593,9 +593,9 @@ nrfx_gpiote_init( )
 -------
 
 
-__STATIC_INLINE void nrf_saadc_task_trigger(nrf_saadc_task_t task)
+nrf_saadc_task_trigger(nrf_saadc_task_t task)
 
-    *( ( NRF_SAADC +  task)) = 0x1UL;
+    *( ( NRF_SAADC +  task)) = 0x1;
 
 
 

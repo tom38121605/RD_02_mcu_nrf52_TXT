@@ -1,0 +1,173 @@
+
+
+
+
+
+
+
+
+
+========================================== 上行 ========================================== 
+
+
+
+
+
+
+
+################################ 方法0###################################
+
+
+上行 ADC 数据 ：
+     。
+     。 sample_set_ready 
+     。
+     。 usb_serial_write_data_packet_vargs 
+     。
+     。 写入主 Tx Buffer 
+     。
+     。 事件队列触发 event_queue_start_tx_process 
+     。
+     。 切换双缓冲 
+     。
+     。 调到 comms_usb_serial::comms_transport_tx 
+     。
+     。 SEGGER 的 USBD_CDC_WriteAsync 
+     。
+     。 底层 EasyDMA 发送 
+     。
+     。 触发 static_usb_cdc_on_write_cplt 
+     。
+     。 回到 comms_packetizer::transport_write_complete 收尾。
+
+
+
+
+################################ 方法1 ###################################
+
+
+
+【中断上下文 (ISR)】ADC 采样完成
+  └─> sample_set_ready() [main.cpp]
+        └─> usb_serial_write_data_packet_vargs() [usb_serial.hpp 内联]
+              └─> write_data_packet_vargslist() [comms_packetizer.cpp]
+                    ├─> COBS 编码后写入 tx_buffer_active (主/副缓冲区)
+                    └─> (标记数据已就绪，拉高 flush 标志)
+
+
+
+════════════════ 上下文切换 (退出中断，回到 main_event_queue) ════════════════
+
+【主循环上下文 (Thread)】
+main_event_queue.execute_forever() [main.cpp]
+  │
+  ├─> 查任务：event_queue_start_tx_pending() [comms_packetizer.cpp] (检查 Tx Buffer 是否有货)
+  │     │
+  │     ▼
+  └─> event_queue_start_tx_process() [comms_packetizer.cpp]
+        │
+        ├─> 切换双缓冲 (tx_buffer_active 换成 tx_buffer_secondary)
+        ├─> 记录本次发送的指针区间 (tx_buffer_transport)
+        │
+        └─> initiate_tx()
+              │
+              └─> setup_next_tx()
+                    │
+                    └─> transport_device->comms_transport_tx() [comms_usb_serial.cpp]
+                          │
+                          ├─> 填充 write_io_ctx (数据指针、长度、完成回调 static_usb_cdc_on_write_cplt)
+                          │
+                          └─> USBD_CDC_WriteAsync() [USB_CDC.c]
+                                │
+                                └─> USBD_WriteAsync() [USB_Main.c]
+                                      │ (往队列塞入 DataParts)
+                                      └─> USBD_WriteOverlapped()
+                                            │
+                                            └─> pfStartTx() 
+                                                  └─> USB__Send()
+                                                        └─> _SendEPEx() [USB_HW_Nordic_nRF.c]
+                                                              └─> 启动底层 EasyDMA 发送
+
+════════════════ 硬件发送完毕，触发中断 ════════════════
+
+【中断上下文 (ISR)】USB 发送完成 (DMA 搬运完毕)
+  └─> _IRQHandler() [USB_HW_Nordic_nRF.c] (检测到 ENDEPIN)
+        └─> USB__OnTx() [USB_Main.c]
+              └─> (回调) static_usb_cdc_on_write_cplt() [comms_usb_serial.cpp]
+                    │
+                    └─> tx_complete_callback() (即 static_transport_write_complete)
+                          └─> transport_write_complete() [comms_packetizer.cpp]
+                                │
+                                ├─> 检查是否全部发完 (tx_buffer_transport 是否到达 end)
+                                │     ├─> 若没发完，调 setup_next_tx() 继续发
+                                │     └─> 若发完了，调 on_tx_complete() 收尾 (释放标志位)
+
+
+
+
+
+################################ 方法2 ###################################
+
+
+
+[ADC 硬件转换完毕 / 触发中断]
+   │
+   ▼
+【中断上下文 (ISR)】
+sample_set_ready() [main.cpp]
+   │ 1. 给数据加上时间戳、包 ID
+   │ 2. 调用 usb_serial_write_data_packet_vargs()
+   ▼
+comms_packetizer::write_data_packet_vargslist() [comms_packetizer.cpp]
+   │
+   ├─> 计算长度，确认当前 active_buffer 空间够不够
+   ├─> COBS 编码数据，写入 active_buffer
+   └─> 设标志位 (flush_flag = true)
+
+   
+════════════════ 上下文切换 (退出中断) ════════════════
+   
+【主循环上下文 (Thread)】
+main_event_queue 轮询
+   │
+   ▼
+event_queue_start_tx_process() [comms_packetizer.cpp]
+   │
+   ├─> 1. 锁临界区，切换 Buffer (把刚才写满的 Buffer 交给底层去发，准备用另一块接收新数据)
+   ├─> 2. 重置状态，调 initiate_tx()
+   │
+   ▼
+comms_usb_serial::comms_transport_tx() [comms_usb_serial.cpp]
+   │
+   └─> USBD_CDC_WriteAsync() -> 底层 SEGGER 协议栈
+         │
+         └─> 底层 EasyDMA 满血启动，把数据通过 USB 线打给电脑
+         
+════════════════ 异步回调触发 ════════════════
+
+[电脑接收完毕，nRF52 触发硬件中断]
+   │
+   ▼
+【中断上下文 (ISR)】
+_IRQHandler() -> USB__OnTx() -> static_usb_cdc_on_write_cplt() [comms_usb_serial.cpp]
+   │
+   └─> 回调 transport_write_complete() [comms_packetizer.cpp]
+         │
+         ├─> 检查：数据全发完了吗？
+         ├─> 是：on_tx_complete() (把状态清零，允许下一次发数据)
+         └─> 否：setup_next_tx() (继续发剩下的数据块)
+
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
