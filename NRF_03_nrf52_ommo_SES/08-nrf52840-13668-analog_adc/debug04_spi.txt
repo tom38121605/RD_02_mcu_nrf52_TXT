@@ -14,7 +14,7 @@ main
     //对所有的spi的cs引脚（P1.12, P0,5），设置为输出，初始为高电平
     port_master_init();
 
-
+    //设置sample_set_ready 发送数据回调函数
     //判断spi的组号，片选号是否在规定的范围内
     //取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
     //spi初始化
@@ -56,10 +56,24 @@ port_master_init()
 
 -----------
 
+//设置sample_set_ready 发送数据回调函数
+//判断spi的组号，片选号是否在规定的范围内
+//取得spi的常用参数： 引脚，频率16M，优先级1，模式1，MSB
+//spi初始化
+    标记spi引脚已使用
+    spi中断函数设置
+    spi引脚设置
+    设置FREQUENCY, spi的频率为16M
+    设置spi的中断优先级为1，使能spi的irq总中断
+    关闭spi0
+    设置spi的acq为成普通模式   
+
+//分配和建立ppi：DRDY变低（6 点） --   adc_ready_spi_read_ppi  (闹铃)   --   get_start_task （SPI硬件自动调用 SPIM TASK_START 自动发读数据指令）
 
 adc_sensors_init( sample_set_ready_callback_function)
 
-   adc_sample_set_ready_callback = sample_set_ready;  //sample_set_ready 发送数据函数
+   //设置sample_set_ready 发送数据回调函数
+   adc_sample_set_ready_callback = sample_set_ready;  
 
     。。。。。。
 
@@ -100,11 +114,6 @@ adc_ppi_init()
        AAA = nrf_spim_task_address_get(SPIM0, NRF_SPIM_TASK_START);    // &SPIM0 + TASKS_START 
  
    nrfx_ppi_channel_assign(adc_ready_spi_read_ppi, nrfx_gpiote_in_event_addr_get(OMMO_ADC_DATA_READY_PIN), AAA );  
-
-
-
-
-
 
 
 
