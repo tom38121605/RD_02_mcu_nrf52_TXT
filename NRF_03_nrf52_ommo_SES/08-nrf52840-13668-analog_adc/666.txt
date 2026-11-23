@@ -3,6 +3,75 @@
 
 
 
+参数： true
+
+event_queue_manager::execute_once_impl( in_main )
+ 
+    AAA = current_int_priority_get();  //取得当前模块的中断编号 ， APP_IRQ_PRIORITY_THREAD表示在main的while循环中
+
+    if (current_int_priority_get() ！= APP_IRQ_PRIORITY_THREAD )  //如果在其它中断里(不在main中)，则马上退出
+       STRING("event_queue called from IRQ");
+       return;
+
+
+    for(uint16_t i=0; i<num_registered_functions; i++)
+    
+        // Skip main-loop-only tasks when called from a nested/busy-wait context.
+        AAA= main_loop_only_flags[i];    //这个任务是否只能在主循环执行
+        BBB = in_main;                   //当现在是不是在主循环里
+        if( AAA && !BBB) continue;
+
+        // Prevent re-entrant execution: if this process function is already on the call stack (somewhere below), skip it.
+        const uint32_t bit = (1u << i);
+        if(process_executing_mask & bit) continue;
+
+        // Set the executing bit before pending/acquire so a nested execute_once_impl
+        // cannot re-enter this task while we are evaluating it.
+        process_executing_mask |= bit;
+
+        // Check pending — null pending means always run.
+        if(pending_functions[i] != nullptr)
+         
+            bool pending = (function_context[i] == nullptr)
+                ? ((event_queue_task_pending)pending_functions[i])()
+                : ((event_queue_task_pending_context)pending_functions[i])(function_context[i]);
+
+            if(!pending)
+            {
+                process_executing_mask &= ~bit;
+                continue;
+            }
+        
+
+        // Try to acquire resources — null acquire means always allowed.
+        if(acquire_functions[i] != nullptr)
+        
+            bool acquired = ((event_queue_task_acquire)acquire_functions[i])();
+
+            if(!acquired)
+             
+                process_executing_mask &= ~bit; // resource unavailable — skip; release is not called
+                continue;
+             
+         
+
+        TRACE_WITH_ARGS_2(TRACE_TYPE_TIME_FLASHADDR_U16, TRACE_LOCATION_EVENT_QUEUE_PROCESSING, (uint32_t)(size_t)process_functions[i], i);
+
+        if(function_context[i] == nullptr) ((event_queue_task_process)process_functions[i])();
+        else ((event_queue_task_process_context)process_functions[i])(function_context[i]);
+
+        process_executing_mask &= ~bit;
+
+        if(release_functions[i] != nullptr)
+            ((event_queue_task_release)release_functions[i])();
+   
+ 
+
+
+
+
+
+
 
 
 
