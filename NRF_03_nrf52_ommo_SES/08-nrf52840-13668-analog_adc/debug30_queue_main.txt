@@ -1,0 +1,96 @@
+main_event_queue 的工作流程    //以 tx_buffer_active  和  event_queue_start_tx_process为例
+
+
+
+
+
+
+
+
+
+============================================
+
+
+
+main( )
+
+
+    。。。。。
+
+
+    //清零已注册的任务数量 num_registered_functions
+    //清空标志位变量 process_executing_mask
+    //清空所有函数指针
+    main_event_queue.reset();
+
+
+    // 把usb tx加入到任务列表
+    // 检测usb状态变化  (先忽略跳过)
+    //usb_serial_add_tasks_to_event_queue(&main_event_queue);
+      usb_serial.add_tasks_to_event_queue(&main_event_queue);
+
+
+         // 数据包的处理任务
+         //comms_packetizer::add_tasks_to_event_queue(main_event_queue); 
+         //   event_queue->register_task(this, event_queue_start_tx_pending, event_queue_start_tx_process, nullptr, nullptr, true); 
+              
+              //把usb tx加入到任务列表
+              register_task_impl(this, event_queue_start_tx_pending, event_queue_start_tx_process, nullptr, nullptr, true); 
+
+
+         // 检测usb状态变化  (先忽略跳过)
+         event_queue->register_task(this, event_queue_state_change_pending, event_queue_state_change_process);
+
+
+
+    //Execute event queue (without sleep)
+    //main_event_queue.execute_forever();
+      execute_once_impl(true);
+
+
+
+
+
+---------
+
+//把usb tx加入到任务列表
+
+参数：this, event_queue_start_tx_pending, event_queue_start_tx_process, nullptr, nullptr, true
+
+event_queue_manager::register_task_impl( context,  pending_func,  process_func,  acquire_func,  release_func,  main_loop_only)
+ 
+    i = num_registered_functions;
+
+    function_context[i]     = this;
+    process_functions[i]    = event_queue_start_tx_process;
+    pending_functions[i]    = event_queue_start_tx_pendingc;
+    acquire_functions[i]    = nullptr;
+    release_functions[i]    = nullptr;
+    main_loop_only_flags[i] = true;       // 仅在主循环中运行 
+
+    num_registered_functions++;           //注册的总任务数加1
+
+ 
+
+
+---------
+
+//清零已注册的任务数量 num_registered_functions
+//清空标志位变量 process_executing_mask
+//清空所有函数指针
+
+event_queue_manager::reset( )
+
+    num_registered_functions = 0;
+    process_executing_mask = 0;
+    for(uint16_t i=0; i<EVENT_QUEUE_MAX_FUNCTIONS; i++)   //32
+    
+        acquire_functions[i]    = nullptr;
+        release_functions[i]    = nullptr;
+        main_loop_only_flags[i] = false;
+    
+
+ 
+
+
+
