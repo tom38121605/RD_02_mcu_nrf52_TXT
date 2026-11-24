@@ -45,9 +45,7 @@ main( )
 
     //Execute event queue (without sleep)
     //main_event_queue.execute_forever();
-      execute_once_impl(true);
-
-
+      while(1)  execute_once_impl(true);
 
 
 
@@ -59,19 +57,18 @@ main( )
 
 event_queue_manager::register_task_impl( context,  pending_func,  process_func,  acquire_func,  release_func,  main_loop_only)
  
-    i = num_registered_functions;
+    i = num_registered_functions;   //1  （前面有一个usb rx的任务）
 
-    function_context[i]     = this;
-    process_functions[i]    = event_queue_start_tx_process;
-    pending_functions[i]    = event_queue_start_tx_pendingc;
-    acquire_functions[i]    = nullptr;
-    release_functions[i]    = nullptr;
+    function_context[1]     = this;
+    process_functions[1]    = event_queue_start_tx_process;
+    pending_functions[1]    = event_queue_start_tx_pending;
+    acquire_functions[1]    = nullptr;
+    release_functions[1]    = nullptr;
     main_loop_only_flags[i] = true;       // 仅在主循环中运行 
 
-    num_registered_functions++;           //注册的总任务数加1
+    num_registered_functions++;           //2， 注册的总任务数加 1
 
  
-
 
 ---------
 
@@ -90,7 +87,20 @@ event_queue_manager::reset( )
         main_loop_only_flags[i] = false;
     
 
+
+
+
  
+
+
+
+
+
+
+
+
+
+
 
 
 
